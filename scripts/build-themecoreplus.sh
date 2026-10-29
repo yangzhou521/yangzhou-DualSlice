@@ -124,9 +124,11 @@ for arch in $ARCHS; do
 
   echo "build-themecoreplus.sh: compiling $arch (prefs bundle)"
   # 面板是 MH_BUNDLE，由设置 App 用 dlopen 加载；不挂站、所以不链 substrate。
+  # 注意：MH_BUNDLE 不能带 -install_name（ld 只在 -dynamiclib 下接受它，
+  # 否则报 "invalid argument '-install_name ...' only allowed with '-dynamiclib'"）；
+  # 面板的加载身份来自 CFBundleExecutable，本来也不需要 install name。
   # shellcheck disable=SC2086
   clang -bundle -arch "$arch" $SHARED_FLAGS $FRAMEWORKS $PREFS_LDFLAGS \
-      -install_name "@loader_path/$PREFS_BUNDLE" \
       "$PREFS_SRC/TCRootListController.m" \
       $SHARED_SRCS \
       -o "$BUILD/thin/$arch/$PREFS_BUNDLE"
@@ -200,7 +202,9 @@ cp "Support/$PRODUCT.plist" \
    "$STAGE/Library/MobileSubstrate/DynamicLibraries/$PRODUCT.plist"
 plutil -lint "$STAGE/Library/MobileSubstrate/DynamicLibraries/$PRODUCT.plist"
 
-cp "Support/${PREFS_BUNDLE}.plist" \
+# 面板入口：PreferenceLoader 读 L/P/Preferences/*.plist，文件名随意但要以 .plist 结尾。
+# 源文件叫 …PreferenceLoader.plist，装进包里按插件名 ThemeCorePlus.plist。
+cp "Support/ThemeCorePlusPreferenceLoader.plist" \
    "$STAGE/Library/PreferenceLoader/Preferences/$PRODUCT.plist"
 plutil -lint "$STAGE/Library/PreferenceLoader/Preferences/$PRODUCT.plist"
 
