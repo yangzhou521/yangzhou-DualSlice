@@ -1,0 +1,114 @@
+//
+//  ThemeCorePlusMain.m —— 装配、偏好变更、诊断。
+//
+//  时序是这套东西最容易出错的地方，所以写清楚：
+//   1. dyld 调构造函数时，SpringBoardHome 里的类不一定都已经注册完，SBIcon 的老子类更可能
+//      还没来；所以挂站不只在构造函数里做一遍，而是 0.0/0.5/2.0/6.0 秒各补一轮。
+//      每轮都重扫类表（objc_copyClassList 不缓存），新来的类也能吃到站。
+//   2. 每轮结束都重写一次诊断：注入有没有成功、站点挂了几个、主题解析成什么样，看诊断就够。
+//   3. 面板改完设置广播 Darwin 通知，这里收到就重读快照、重排桌面。
+//
+#import "ThemeCorePlusPrivate.h"
+#import "ThemeCorePlusHooks.h"
+#import "ThemeCorePlusStore.h"
+#import "ThemeCorePlusPaths.h"
+#import "ThemeCorePlusPreferences.h"
+#import "ThemeCorePlusKeys.h"
+#import "ThemeCorePlusVersion.h"
+
+// 诊断写到**目标进程自己的**偏好域：沙箱只允许进程写自己的域，SpringBoard 里的诊断在
+// com.apple.springboard 域。读法见 AGENTS.md。
+static void TCPWriteProcessPreference(NSString *key, id value) {
+    if (key.length == 0) return;
+    CFPreferencesSetAppValue((__bridge CFStringRef)key,
+                            (__bridge CFPropertyListRef)value,
+                            kCFPreferencesCurrentApplication);
+    CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+}
+
+// 普查清单：只在诊断里用，钩子点靠它的结果坐实，不靠猜。
+static NSArray<NSString *> *TCPCensusClassNames(void) {
+    return @[ @"SBIconBadgeView", @"SBIconAccessoryImage", @"SBIconImageView",
+              @"SBFolderIconImageView", @"SBFolderBackgroundView", @"SBFolderIconImageCache",
+              @"SBIcon", @"SBHIconAccessoryCountedMapImageTuple" ];
+}
+
+static void TCPWriteDiagnostics(void) {
+    TCPThemeStore *store = [TCPThemeStore shared];
+    NSMutableArray<NSString *> *sites = [NSMutableArray array];
+    for (NSString *description in TCPSiteDescriptions()) {
+        [sites addObject:description];
+        if (sites.count >= 40) break;
+    }
+    NSString *siteList = sites.count > 0 ? [sites componentsJoinedByString:@","] : @"-";
+    if (siteList.length > 700) siteList = [siteList substringToIndex:700];
+
+    NSString *roots = [TCPSourceThemeRoots() componentsJoinedByString:@"|"];
+    if (roots.length > 300) roots = [roots substringToIndex:300];
+
+    NSString *text = [NSString stringWithFormat:@"%@;sites=%lu[%@];roots=[%@]",
+                      [store diagnostics], (unsigned long)TCPTotalSiteCount(), siteList, roots];
+    TCPWriteProcessPreference(TCPKeyDiagnostics, text);
+
+    NSString *census = TCPCensusForClasses(TCPCensusClassNames(), 3600);
+    TCPWriteProcessPreference(@"ThemeCorePlusCensus", census);
+}
+
+// 让桌面把图标重新取一遍图。取不到就当没有这一步（有的版本没有这个方法）。
+static void TCPRelayoutIcons(void) {
+    Class controllerClass = objc_getClass("SBIconController");
+    if (controllerClass == Nil) return;
+    SEL sharedSelector = NSSelectorFromString(@"sharedInstance");
+    if (![controllerClass respondsToSelector:sharedSelector]) return;
+    id controller = ((id (*)(id, SEL))objc_msgSend)((id)controllerClass, sharedSelector);
+    if (controller == nil) return;
+    SEL relayoutSelector = NSSelectorFromString(@"relayoutIcons");
+    if ([controller respondsToSelector:relayoutSelector]) {
+        ((void (*)(id, SEL))objc_msgSend)(controller, relayoutSelector);
+    }
+}
+
+static void TCPReload(void) {
+    [[TCPThemeStore shared] reload];
+    TCPInstallIconSites();
+    TCPInstallBadgeSites();
+    TCPInstallFolderSites();
+    TCPInstallFileSites();
+    TCPRelayoutIcons();
+    TCPWriteDiagnostics();
+}
+
+static void TCPPreferencesChanged(CFNotificationCenterRef center,
+                                  void *observer,
+                                  CFNotificationName name,
+                                  const void *object,
+                                  CFDictionaryRef userInfo) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        TCPReload();
+        os_log(TCPLogHandle(), "TCPS_RELOAD site=%lu", (unsigned long)TCPTotalSiteCount());
+    });
+}
+
+__attribute__((constructor)) static void TCPInitialize(void) {
+    @autoreleasepool {
+        os_log(TCPLogHandle(), "ApelinLoaded com.yangzhou.themecoreplus-%{public}s", TCP_VERSION);
+        os_log(TCPLogHandle(), "TCPS_START v%{public}s bundle=%{public}s",
+               TCP_VERSION, [[NSBundle mainBundle] bundleIdentifier] ?: "?");
+
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+                                        NULL,
+                                        TCPPreferencesChanged,
+                                        (__bridge CFStringRef)TCPPreferencesChangedNotification,
+                                        NULL,
+                                        CFNotificationSuspensionBehaviorDeliverImmediately);
+
+        // 补挂几轮：SpringBoardHome 的类按需加载，晚到的类只有下一轮才扫得到。
+        for (NSNumber *delay in @[ @0.0, @0.5, @2.0, @6.0 ]) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                         (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                TCPReload();
+            });
+        }
+    }
+}

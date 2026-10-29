@@ -1,0 +1,305 @@
+//
+//  ThemeCorePlusHooks.m —— 「一站一槽」站点框架（见头文件里的 R1/R2）。
+//
+#import "ThemeCorePlusHooks.h"
+#import <substrate.h>
+
+#define TCP_SLOT_COUNT 24
+
+#define TCP_SLOT_INDEX_LIST(X) \
+    X(0)  X(1)  X(2)  X(3)  X(4)  X(5)  X(6)  X(7) \
+    X(8)  X(9)  X(10) X(11) X(12) X(13) X(14) X(15) \
+    X(16) X(17) X(18) X(19) X(20) X(21) X(22) X(23)
+
+#pragma mark - 站点账本
+
+static NSMutableArray<NSString *> *sSiteDescriptions = nil;
+static NSMutableSet<NSString *> *sInstalledKeys = nil;
+static NSUInteger sSlotsUsed[TCPSiteKindCount];
+static NSLock *sSiteLock = nil;
+
+static void TCPSiteBook(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        sSiteDescriptions = [NSMutableArray array];
+        sInstalledKeys = [NSMutableSet set];
+        sSiteLock = [[NSLock alloc] init];
+    });
+}
+
+BOOL TCPClassDeclaresMethod(Class cls, SEL sel) {
+    if (cls == Nil || sel == NULL) return NO;
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(cls, &count);
+    BOOL found = NO;
+    for (unsigned int i = 0; i < count; i++) {
+        if (method_getName(methods[i]) == sel) {
+            found = YES;
+            break;
+        }
+    }
+    if (methods) free(methods);
+    return found;
+}
+
+NSUInteger TCPTotalSiteCount(void) {
+    TCPSiteBook();
+    [sSiteLock lock];
+    NSUInteger total = sSiteDescriptions.count;
+    [sSiteLock unlock];
+    return total;
+}
+
+NSArray<NSString *> *TCPSiteDescriptions(void) {
+    TCPSiteBook();
+    [sSiteLock lock];
+    NSArray *copy = [sSiteDescriptions copy];
+    [sSiteLock unlock];
+    return copy;
+}
+
+static CGFloat TCPUIScale(void) {
+    static CGFloat scale = 0;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        CGFloat s = [UIScreen mainScreen].scale;
+        scale = (s >= 1.0) ? s : 3.0;
+    });
+    return scale;
+}
+
+#pragma mark - 图标站：结构体进、UIImage 出
+
+typedef UIImage *(*TCPIconImageInfoFn)(id, SEL, TCPIconImageInfo);
+
+static UIImage *TCPIconHandle(IMP *slot, id self, SEL _cmd, TCPIconImageInfo info) {
+    IMP original = *slot;
+    if (original == NULL) return nil;
+    UIImage *themed = TCPThemedIconImage(self, info);
+    if (themed != nil) return themed;
+    return ((TCPIconImageInfoFn)original)(self, _cmd, info);
+}
+
+#define TCP_DEFINE_ICON_SLOT(n)                                                \
+    static IMP tcpIconOrig##n = NULL;                                          \
+    static UIImage *tcpIconHook##n(id self, SEL _cmd, TCPIconImageInfo info) {  \
+        return TCPIconHandle(&tcpIconOrig##n, self, _cmd, info);                \
+    }
+TCP_SLOT_INDEX_LIST(TCP_DEFINE_ICON_SLOT)
+
+#define TCP_SLOT_PTR_ICON(n) &tcpIconOrig##n,
+#define TCP_FN_PTR_ICON(n) (IMP)tcpIconHook##n,
+static IMP *const kIconSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_ICON) };
+static const IMP kIconHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_ICON) };
+
+#pragma mark - 角标底板图站：无参、出 UIImage
+
+static UIImage *TCPBadgeBackHandle(IMP *slot, id self, SEL _cmd) {
+    IMP original = *slot;
+    if (original == NULL) return nil;
+    UIImage *themed = TCPThemedBadgeBackground(TCPUIScale());
+    if (themed != nil) return themed;
+    return ((UIImage *(*)(id, SEL))original)(self, _cmd);
+}
+
+#define TCP_DEFINE_BADGEBACK_SLOT(n)                                          \
+    static IMP tcpBadgeBackOrig##n = NULL;                                    \
+    static UIImage *tcpBadgeBackHook##n(id self, SEL _cmd) {                  \
+        return TCPBadgeBackHandle(&tcpBadgeBackOrig##n, self, _cmd);          \
+    }
+TCP_SLOT_INDEX_LIST(TCP_DEFINE_BADGEBACK_SLOT)
+
+#define TCP_SLOT_PTR_BADGEBACK(n) &tcpBadgeBackOrig##n,
+#define TCP_FN_PTR_BADGEBACK(n) (IMP)tcpBadgeBackHook##n,
+static IMP *const kBadgeBackSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_BADGEBACK) };
+static const IMP kBadgeBackHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_BADGEBACK) };
+
+#pragma mark - 角标 tuple 站：无参、出 tuple
+
+static id TCPBadgeTupleHandle(IMP *slot, id self, SEL _cmd) {
+    IMP original = *slot;
+    if (original == NULL) return nil;
+    id tuple = ((id (*)(id, SEL))original)(self, _cmd);
+    return TCPThemedBadgeTuple(tuple, TCPUIScale());
+}
+
+#define TCP_DEFINE_BADGETUPLE_SLOT(n)                                         \
+    static IMP tcpBadgeTupleOrig##n = NULL;                                   \
+    static id tcpBadgeTupleHook##n(id self, SEL _cmd) {                       \
+        return TCPBadgeTupleHandle(&tcpBadgeTupleOrig##n, self, _cmd);        \
+    }
+TCP_SLOT_INDEX_LIST(TCP_DEFINE_BADGETUPLE_SLOT)
+
+#define TCP_SLOT_PTR_BADGETUPLE(n) &tcpBadgeTupleOrig##n,
+#define TCP_FN_PTR_BADGETUPLE(n) (IMP)tcpBadgeTupleHook##n,
+static IMP *const kBadgeTupleSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_BADGETUPLE) };
+static const IMP kBadgeTupleHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_BADGETUPLE) };
+
+#pragma mark - 角标成图站：(文字, 字体, 高亮) 进、UIImage 出
+
+typedef UIImage *(*TCPBadgeTextFn)(id, SEL, NSString *, UIFont *, BOOL);
+
+static UIImage *TCPBadgeTextHandle(IMP *slot, id self, SEL _cmd, NSString *text, UIFont *font, BOOL highlighted) {
+    IMP original = *slot;
+    if (original == NULL) return nil;
+    UIImage *themed = TCPThemedBadgeTextImage(text, font, TCPUIScale());
+    if (themed != nil) return themed;
+    return ((TCPBadgeTextFn)original)(self, _cmd, text, font, highlighted);
+}
+
+#define TCP_DEFINE_BADGETEXT_SLOT(n)                                          \
+    static IMP tcpBadgeTextOrig##n = NULL;                                    \
+    static UIImage *tcpBadgeTextHook##n(id self, SEL _cmd, NSString *text,     \
+                                        UIFont *font, BOOL highlighted) {      \
+        return TCPBadgeTextHandle(&tcpBadgeTextOrig##n, self, _cmd, text, font, highlighted); \
+    }
+TCP_SLOT_INDEX_LIST(TCP_DEFINE_BADGETEXT_SLOT)
+
+#define TCP_SLOT_PTR_BADGETEXT(n) &tcpBadgeTextOrig##n,
+#define TCP_FN_PTR_BADGETEXT(n) (IMP)tcpBadgeTextHook##n,
+static IMP *const kBadgeTextSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_BADGETEXT) };
+static const IMP kBadgeTextHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_BADGETEXT) };
+
+#pragma mark - 文件夹底板站：无参、出 UIImage
+
+static UIImage *TCPFolderBackHandle(IMP *slot, id self, SEL _cmd) {
+    IMP original = *slot;
+    if (original == NULL) return nil;
+    UIImage *themed = TCPThemedFolderBackground(TCPUIScale());
+    if (themed != nil) return themed;
+    return ((UIImage *(*)(id, SEL))original)(self, _cmd);
+}
+
+#define TCP_DEFINE_FOLDERBACK_SLOT(n)                                         \
+    static IMP tcpFolderBackOrig##n = NULL;                                   \
+    static UIImage *tcpFolderBackHook##n(id self, SEL _cmd) {                 \
+        return TCPFolderBackHandle(&tcpFolderBackOrig##n, self, _cmd);        \
+    }
+TCP_SLOT_INDEX_LIST(TCP_DEFINE_FOLDERBACK_SLOT)
+
+#define TCP_SLOT_PTR_FOLDERBACK(n) &tcpFolderBackOrig##n,
+#define TCP_FN_PTR_FOLDERBACK(n) (IMP)tcpFolderBackHook##n,
+static IMP *const kFolderBackSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_FOLDERBACK) };
+static const IMP kFolderBackHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_FOLDERBACK) };
+
+#pragma mark - 槽位表
+
+typedef struct {
+    IMP *const *storage;
+    const IMP *hooks;
+} TCPSlotGroup;
+
+static const TCPSlotGroup kSlotGroups[TCPSiteKindCount] = {
+    { kIconSlotStorage,        kIconHookFns },        // TCPSiteKindIconImageInfo
+    { kBadgeBackSlotStorage,   kBadgeBackHookFns },   // TCPSiteKindBadgeBackground
+    { kBadgeTupleSlotStorage,  kBadgeTupleHookFns },  // TCPSiteKindBadgeTuple
+    { kBadgeTextSlotStorage,   kBadgeTextHookFns },   // TCPSiteKindBadgeTextImage
+    { kFolderBackSlotStorage,  kFolderBackHookFns },  // TCPSiteKindFolderBackground
+};
+
+#pragma mark - 挂站
+
+static BOOL TCPInstallOneSite(Class cls, SEL sel, TCPSiteKind kind) {
+    if (cls == Nil || sel == NULL || kind >= TCPSiteKindCount) return NO;
+
+    // R2：类自己声明了才挂（类方法与实例方法分别判断；两者都声明时优先类方法）。
+    BOOL asClassMethod = TCPClassDeclaresMethod(object_getClass(cls), sel);
+    BOOL asInstanceMethod = !asClassMethod && TCPClassDeclaresMethod(cls, sel);
+    if (!asClassMethod && !asInstanceMethod) return NO;
+    Class target = asClassMethod ? object_getClass(cls) : cls;
+    NSString *key = [NSString stringWithFormat:@"%@%@:%@",
+                     asClassMethod ? @"+" : @"-", NSStringFromClass(cls), NSStringFromSelector(sel)];
+
+    TCPSiteBook();
+    [sSiteLock lock];
+    BOOL already = [sInstalledKeys containsObject:key];
+    NSUInteger index = sSlotsUsed[kind];
+    BOOL exhausted = (index >= TCP_SLOT_COUNT);
+    [sSiteLock unlock];
+    if (already || exhausted) return NO;
+
+    IMP *slot = kSlotGroups[kind].storage[index];
+    IMP hook = kSlotGroups[kind].hooks[index];
+    IMP original = NULL;
+    MSHookMessageEx(target, sel, hook, &original);
+    if (original == NULL) return NO;
+    *slot = original;
+
+    [sSiteLock lock];
+    sSlotsUsed[kind] = index + 1;
+    [sInstalledKeys addObject:key];
+    [sSiteDescriptions addObject:key];
+    [sSiteLock unlock];
+    return YES;
+}
+
+NSUInteger TCPInstallSitesForClassPrefixes(NSArray<NSString *> *prefixes,
+                                           NSArray<NSString *> *excludingSubstrings,
+                                           NSArray<NSString *> *selectors,
+                                           TCPSiteKind kind) {
+    if (prefixes.count == 0 || selectors.count == 0) return 0;
+    // 不缓存类表：类是按需加载的，晚一轮再扫才能把 SpringBoardHome 的类带进来。
+    unsigned int count = 0;
+    Class *classes = objc_copyClassList(&count);
+    if (classes == NULL) return 0;
+
+    NSUInteger installed = 0;
+    for (unsigned int i = 0; i < count; i++) {
+        Class cls = classes[i];
+        if (cls == Nil) continue;
+        const char *raw = class_getName(cls);
+        if (raw == NULL) continue;
+        NSString *name = @(raw);
+        BOOL wanted = NO;
+        for (NSString *prefix in prefixes) {
+            if ([name hasPrefix:prefix]) { wanted = YES; break; }
+        }
+        if (!wanted) continue;
+        BOOL skipped = NO;
+        for (NSString *bad in excludingSubstrings) {
+            if (bad.length > 0 && [name containsString:bad]) { skipped = YES; break; }
+        }
+        if (skipped) continue;
+        for (NSString *selectorName in selectors) {
+            if (TCPInstallOneSite(cls, NSSelectorFromString(selectorName), kind)) installed++;
+        }
+    }
+    if (classes) free(classes);
+    return installed;
+}
+
+#pragma mark - 运行期普查
+
+NSString *TCPCensusForClasses(NSArray<NSString *> *classNames, NSUInteger limit) {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    NSUInteger used = 0;
+    for (NSString *name in classNames) {
+        if (used >= limit) break;
+        Class cls = objc_getClass(name.UTF8String);
+        if (cls == Nil) {
+            [parts addObject:[name stringByAppendingString:@"=absent"]];
+            used += name.length + 8;
+            continue;
+        }
+        NSMutableArray<NSString *> *methods = [NSMutableArray array];
+        for (int pass = 0; pass < 2; pass++) {
+            Class owner = (pass == 0) ? cls : object_getClass(cls);
+            unsigned int count = 0;
+            Method *list = class_copyMethodList(owner, &count);
+            for (unsigned int i = 0; i < count; i++) {
+                NSString *selectorName = NSStringFromSelector(method_getName(list[i]));
+                if (selectorName.length == 0) continue;
+                [methods addObject:(pass == 0 ? selectorName : [@"+" stringByAppendingString:selectorName])];
+            }
+            if (list) free(list);
+        }
+        NSString *joined = [methods componentsJoinedByString:@" "];
+        NSUInteger room = (limit > used) ? (limit - used) : 0;
+        if (joined.length > room) {
+            joined = room > 1 ? [joined substringToIndex:room - 1] : @"";
+        }
+        [parts addObject:[NSString stringWithFormat:@"%@=%@", name, joined]];
+        used += joined.length + name.length + 2;
+    }
+    return [parts componentsJoinedByString:@"\n"];
+}
