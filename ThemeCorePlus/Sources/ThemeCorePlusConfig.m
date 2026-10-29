@@ -1,6 +1,12 @@
 #import "ThemeCorePlusConfig.h"
 #import "ThemeCorePlusPreferences.h"
 
+// 头文件里 values 是对外只读（钩子里只许读）；内部 reload 要整个换掉快照，
+// 所以在类扩展里补一个 readwrite —— 直接写 _values 会绕过 copy 语义，快照就不原子了。
+@interface TCPConfig ()
+@property (atomic, copy, readwrite) NSDictionary *values;
+@end
+
 @implementation TCPConfig
 
 + (instancetype)shared {

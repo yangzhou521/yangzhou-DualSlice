@@ -72,6 +72,11 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   每个 (类, 选择器) 各有一个静态原 IMP 槽，原实现用函数指针直接调、绝不在包装函数里查表。
 - 诊断写进**目标进程自己的**偏好域（`kCFPreferencesCurrentApplication`），所以 SpringBoard 的在
   `com.apple.springboard` 域；日志用 `os_log`，subsystem 是包名，格式化符带 `%{public}`。
+  `TCP_VERSION` 是 NSString 字面量，格式化只能用 `%@`。
+- 面板 bundle **自带一份共享源码**（`SHARED_SRCS` = Paths/Config/Preferences/Store），
+  所以它不依赖 dylib 的符号（自己扫盘、自己读写偏好）。代价：设置进程里同一批类名被注册两次，
+  日志里会出现 "Class TCPThemeStore is implemented in both …" 的**预期告警**，功能无碍；
+  两个镜像各用各的实例，别试图让面板和 dylib 共享单例。
 
 ## 当前状态
 

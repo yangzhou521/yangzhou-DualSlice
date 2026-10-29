@@ -91,12 +91,17 @@ jobs:
             echo "=== .deb files ==="
             find ./packages -name "*.deb" -type f
           else
-            grep -E "error:|error |not found|undefined|ld: |clang: |fatal|No such file|missing" /tmp/tcp-build.log \
-              | head -n 10 > /tmp/tcp-errs.txt || true
-            tail -n 14 /tmp/tcp-build.log >> /tmp/tcp-errs.txt
-            while IFS= read -r line; do
-              echo "::error title=build-themecoreplus::$line"
-            done < /tmp/tcp-errs.txt
+            # GitHub 每个 step 只留 10 条注解：报错必须压成**一条**多行注解，否则真正的编译错误
+            # 会被后面的行挤掉（上一轮就是这么只看到 10 行、剩下的 TU 报什么全不知道）。
+            # % → %25、换行 → %0A，都是注解里的转义要求。
+            ERRCOUNT=$(grep -cE "error:|fatal error|1 error generated\." /tmp/tcp-build.log || true)
+            {
+              grep -E "error:|fatal error|1 error generated\." /tmp/tcp-build.log | head -n 25
+              echo "--- tail of build log ---"
+              tail -n 10 /tmp/tcp-build.log
+            } | awk '{ gsub(/%/,"%25"); gsub(/\r/,""); print }' > /tmp/tcp-errs.txt
+            BODY=$(awk 'BEGIN{ORS=""} NR>1{printf "%%0A"} {print}' /tmp/tcp-errs.txt)
+            echo "::error title=build-themecoreplus errlines=${ERRCOUNT}::${BODY}"
             exit 1
           fi
 

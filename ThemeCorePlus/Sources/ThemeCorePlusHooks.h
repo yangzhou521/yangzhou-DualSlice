@@ -14,6 +14,12 @@
 
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+// objc_msgSend 的真身：私有类的消息一律走它（见 ThemeCorePlusPrivate.h 的链接铁律），
+// 少了这个头文件 objc_msgSend 只是个未声明的符号，编译直接报错。
+#import <objc/message.h>
+// MSHookMessageEx：站点框架和 ThemeCorePlusFiles.m 都用它。头文件在 theos 的 vendor/include
+// （构建脚本的 -I$THEOS/vendor/include）。
+#import <substrate.h>
 #import <os/log.h>
 
 // 日志：subsystem 必须是包 id（apelin-tweak-runtime 的要求），apelin_log_read 才收得到。

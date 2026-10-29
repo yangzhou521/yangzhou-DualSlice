@@ -91,9 +91,12 @@ static void TCPPreferencesChanged(CFNotificationCenterRef center,
 
 __attribute__((constructor)) static void TCPInitialize(void) {
     @autoreleasepool {
-        os_log(TCPLogHandle(), "ApelinLoaded com.yangzhou.themecoreplus-%{public}s", TCP_VERSION);
-        os_log(TCPLogHandle(), "TCPS_START v%{public}s bundle=%{public}s",
-               TCP_VERSION, [[NSBundle mainBundle] bundleIdentifier] ?: "?");
+        // TCP_VERSION 是 @"0.6.0"（NSString 字面量），所以这里只能用 %@：写成 %s 会把它当
+        // C 字符串读，打出来是内存垃圾。ApelinLoaded 这一行是 apelin_package_confirm_loaded
+        // 的标记行，格式不能动。
+        os_log(TCPLogHandle(), "ApelinLoaded com.yangzhou.themecoreplus-%{public}@", TCP_VERSION);
+        os_log(TCPLogHandle(), "TCPS_START v%{public}@ bundle=%{public}@",
+               TCP_VERSION, [[NSBundle mainBundle] bundleIdentifier] ?: @"?");
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
                                         NULL,
