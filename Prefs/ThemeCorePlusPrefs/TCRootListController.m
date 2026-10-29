@@ -88,6 +88,11 @@ static NSString *TCPDiagnosticsText(void) {
 
 #pragma mark - 面板
 
+// 基类是 PSListController（它的真身由设置 App 在加载期提供，所以只声明、不实现）。
+// 漏了这一行会被当成根类（-Wobjc-root-class）：super 全部失效、父类方法全看不见。
+@interface TCRootListController : PSListController
+@end
+
 @implementation TCRootListController {
     // 自己缓存单元数组：PSListController 的内部 ivar 不是我们能碰的。
     NSArray *_tcpSpecifiers;
