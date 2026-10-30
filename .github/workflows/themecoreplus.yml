@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.8.0
+  VERSION: 0.8.1
 
 jobs:
   build:
@@ -149,7 +149,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.8.0
+          tag_name: themecoreplus-v0.8.1
           name: ThemeCorePlus v0.8.0
           body: |
             主题美化 +（ThemeCorePlus）v0.8.0 —— MarkTheme 式的主题引擎，作者 yangzhou。

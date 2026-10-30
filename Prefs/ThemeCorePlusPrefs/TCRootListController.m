@@ -392,14 +392,20 @@ static NSString *TCPDiagnosticsText(void) {
     }
 
     // 版面照 ThemeCore 原样（用户 2026-10-30 14:37 给的参照）：
-    //   通用 = 启用插件
+    //   通用 = 启用插件（+ 四项功能独立开关）
     //   主题 = 选择主题 + 刷新图标
     //   底部 = 作者
     // 我们比 ThemeCore 多的一样东西是角标素材支持，写在主题组脚注里。
-    // 旧的四项功能开关（图标/文件夹/角标/系统图片）默认全开，主题里没有对应素材时本来就是空转，
-    // 放在面板上只是噪声，撤掉。回滚按钮也不需要：主题列表顶部那行「系统原生外观」点一下就是回滚。
-    [specs addObject:[self tcpGroupWithHeader:@"通用" footer:nil]];
+    // 回滚不需要单独按钮：主题列表顶部那行「系统原生外观」点一下就是回滚。
+    // 用户 2026-10-30 14:49 明确「功能独立开关是一开始的要求」，所以四项开关加回来。
+    // 它们从来只是被从面板上撤掉，键与 dylib 侧的判断一直在（store 里默认全开）。
+    [specs addObject:[self tcpGroupWithHeader:@"通用"
+                                       footer:@"四项功能各自独立开关，默认全开；也可以叠着用（一个管图标、一个管角标）。"]];
     [specs addObject:[self tcpSwitchNamed:@"启用插件" key:TCPKeyEnabled]];
+    [specs addObject:[self tcpSwitchNamed:@"应用图标" key:TCPKeyIconsEnabled]];
+    [specs addObject:[self tcpSwitchNamed:@"文件夹" key:TCPKeyFoldersEnabled]];
+    [specs addObject:[self tcpSwitchNamed:@"角标" key:TCPKeyBadgesEnabled]];
+    [specs addObject:[self tcpSwitchNamed:@"系统界面图（状态栏 / 设置 / 电话 / 分享）" key:TCPKeyFilesEnabled]];
 
     NSString *assets = TCPAssetSummaryText();
     NSString *materialFooter = assets.length > 0
@@ -509,30 +515,13 @@ static NSString *TCPDiagnosticsText(void) {
 // 「刷新图标」—— 用户 14:21/14:22 点名要的功能：不注销就让图标生效。
 // 动作链：这里广播 Darwin 通知 → SpringBoard 里的插件收到 → TCPReload(YES) → 清掉视图与共用缓存，
 // 再叫每个图标视图当场重新出图（-updateImageAnimated:NO，走显示层站拿主题图）。
-// 等桌面把新诊断写回来（约 1.5 秒）再把真实计数报给用户 —— 不报「已经刷过了」这种空话。
+// 用户 14:49 要求**不要弹窗**（「这个提示没必要，正式版本要去除」）：点下去就静默刷新，
+// 只把状态行重算一遍，屏幕上的变化本身就是反馈。
 - (void)tcpRefreshIcons {
     TCPPostPreferencesChanged();
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        NSString *text = TCPDiagnosticsText();
-        NSRange start = [text rangeOfString:@"ref{"];
-        NSString *detail = nil;
-        if (start.location != NSNotFound) {
-            NSRange tail = NSMakeRange(start.location, text.length - start.location);
-            NSRange end = [text rangeOfString:@"}" options:0 range:tail];
-            detail = end.location == NSNotFound
-                ? [text substringWithRange:tail]
-                : [text substringWithRange:NSMakeRange(start.location, end.location - start.location + 1)];
-        }
-        NSString *message = detail.length > 0
-            ? [NSString stringWithFormat:@"%@\nviews = 找到的图标视图，pushed = 当场重新出图的个数。", detail]
-            : @"已通知桌面重取图标。若桌面没有任何变化，注销一次就一定能看到（那也说明桌面里的插件没跑起来）。";
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"刷新图标"
-                                                                      message:message
-                                                               preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
         [self reloadSpecifiers];
     });
 }
