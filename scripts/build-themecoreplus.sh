@@ -192,7 +192,7 @@ ldid -S "$PREFS_BIN"
 
 # ---- 打包 ----
 STAGE="$BUILD/stage"
-PREFS_STAGE="$STAGE/Library/PreferenceBundles/$PREFS_BUNDLE"
+PREFS_STAGE="$STAGE/Library/PreferenceBundles/$PREFS_BUNDLE.bundle"
 mkdir -p "$STAGE/Library/MobileSubstrate/DynamicLibraries" \
          "$STAGE/Library/PreferenceLoader/Preferences" \
          "$PREFS_STAGE" "$STAGE/DEBIAN"

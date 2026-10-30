@@ -94,8 +94,15 @@ static NSString *TCPDiagnosticsText(void) {
 @end
 
 @implementation TCRootListController {
-    // 自己缓存单元数组：PSListController 的内部 ivar 不是我们能碰的。
-    NSArray *_tcpSpecifiers;
+    // ★★ 这个名字是有承重的，别加自己的前缀（本机实测过）：
+    // PSListController 的表格数据源（numberOfSectionsInTableView: / tableView:numberOfRowsInSection:）
+    // 读的不是 -[self specifiers]，而是它自己那个名叫 _specifiers 的存储；子类里用同样的名字声明，
+    // 运行期就跟父类那一格合成同一个 ivar，写进去表格才看得见。
+    // 叫 _tcpSpecifiers 时（0.6.0 装机复现）：kvc _specifiers = null、表格 0 段、
+    // tableView:numberOfRowsInSection: 直接 NSRangeException 越界，面板一片空白但 specifiers() 返回 13。
+    // 对照 VerticalDockPrefs / SystemBoxPrefs / HammerItPrefs 三个能用面板：二进制里只有 _specifiers，
+    // 且都没有 setSpecifiers —— 它们靠的就是这个名字。
+    NSArray *_specifiers;
 }
 
 #pragma mark 生成单元
@@ -192,14 +199,14 @@ static NSString *TCPDiagnosticsText(void) {
 #pragma mark 生命周期
 
 - (NSArray *)specifiers {
-    if (_tcpSpecifiers == nil) {
-        _tcpSpecifiers = [self tcpBuildSpecifiers];
+    if (_specifiers == nil) {
+        _specifiers = [self tcpBuildSpecifiers];
     }
-    return _tcpSpecifiers;
+    return _specifiers;
 }
 
 - (void)reloadSpecifiers {
-    _tcpSpecifiers = nil;
+    _specifiers = nil;
     [super reloadSpecifiers];
 }
 
