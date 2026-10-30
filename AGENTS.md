@@ -80,9 +80,37 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 ## 当前状态
 
-- 两个产品都只走过云编译，**本机尚未装机验证过**；本文档随每次验证更新。
+- ThemeCorePlus 0.6.0 **已装机验证（2026-10-30）**：面板「主题美化 +」原先推入后空白（0 段 0 行）已修，
+  用户在屏幕上确认能正常进入。复核脚本 `probe-prefs-check.js`（在 icli 进程里 load 面板 bundle、
+  走真实生命周期）：`view()+viewWillAppear:` → **5 段 8 行 / 13 个单元**，重复进入与连续 reload 稳定。
+- 装机用的包：Release `themecoreplus-v0.6.0` 资产（GitHub Actions run 40983356266 编译），
+  100720 B，sha256 `beba61e58738a7b268e46f1482ac604d1a048dce7c6df15fe7662d55d61f98b7`，
+  装机副本 `/rootfs/var/mobile/Documents/themecoreplus-f351970.deb`。二进制里核对过新代码标记
+  `_tcpApplyingSpecifiers`（旧包没有）。**装包不会 reload 已跑的 SpringBoard**，改 dylib 必须重启进程才算数。
+- dylib 在 SpringBoard 里活着：`icli prefs read com.apple.springboard ThemeCorePlusDiagnostics`
+  = `v0.6.0;active=0;theme=-;gen=7;…;sites=10[-SBIcon:iconImageWithInfo:,…];roots=[…]`，
+  `ThemeCorePlusCensus` 里 SBIconBadgeView / SBIconImageView / SBFolderIconImageView 都有。
 - 未做（阶段二）：管理器 App（导入/解包 .deb、预编译不可变成品、revision 切换与回滚）、
   作者素材 `图标蒙板AnemoneEffects.zip`、只有 `IconBundles/icon.png` 的角标主题。
+
+### 面板空白：成因与修法（已修，2026-10-30）
+
+`PSListController` 的**段落缓存只在父类入口** `-[self setSpecifiers:]` 里重建；`-reloadSpecifiers`
+内部先把 `_specifiers` 置 nil 再走 `setSpecifiers:`，而面板之前在自己的 `reloadSpecifiers` 包装里
+直接动过 `_specifiers`/ivar，缓存就没重建 → 0 段 0 行（`-specifiers` 有值、KVC 也能看到 13 个单元，
+但表格没段没行）。**修法：specifier 数组只经 `setSpecifiers:` 落地，不再碰 ivar。**
+
+本机实测要点（`probe-prefs-check.js`）：
+- 探针跑在 **icli 自己进程**里，必须先 `NSBundle load` 面板 bundle，否则 `No ObjC class named TCRootListController`。
+- 只 `view()` 仍是 0 段（`viewDidLoad` 不是缓存重建点）；`view()+viewWillAppear:` 才是 5 段 8 行。
+- `reloadSpecifiers` 连调两次、`viewWillAppear:` 重入都稳定，不递归。
+
+取证坑（都踩过）：
+- `icli ui tree` 刚 push 完新页面时会**继续报上一页（根列表）的元素**，别据此断定 push 没成功；
+  以用户屏幕看到的为准，或去读该页自己写下的偏好副作用。
+- `icli screen shot --output` 收的是**真实路径**（`/var/mobile/Documents/x.jpg`），shell 侧要看它得用
+  `/rootfs/var/mobile/…`；两套命名空间写错时命令**静默成功、文件没落地**。
+- 列表里的目标行要「先滚到底 → 再用 `icli ui tap "<文字>"` 逐步回滚重试」，一次滚过头就找不到了。
 
 ## 外出取证：去别的 App，必须回到 Apelin
 

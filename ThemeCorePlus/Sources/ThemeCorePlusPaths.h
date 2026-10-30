@@ -3,7 +3,9 @@
 //
 //  两种路径必须分清（见 apelin-bootstrap-paths）：
 //   · 主题素材在**引导根**里（/Library/ThemeCore、/Library/Themes）：roothide 下是
-//     .jbroot-xxxx/…，rootless 下是 /var/jb/…，所以拼路径必须走 ApelinBootstrapPath()。
+//     .jbroot-xxxx/…（本机 = /var/containers/Bundle/Application/.jbroot-1368F5DC986DAB0C/Library/…），
+//     rootless 下是 /var/jb/…。**隐根哈希每次越狱都会变**，所以运行时解析（jbroot() → dladdr
+//     → 扫已加载镜像 → /var/jb → 空前缀），并且每个候选都先 stat 一次，谁真能打开就用谁。
 //   · 本插件自己的库在 **/var/mobile/Library/ThemeCorePlus**：系统路径，两种引导下
 //     都是真实路径，绝不能过隐根转换。
 //
@@ -11,8 +13,12 @@
 
 #import <Foundation/Foundation.h>
 
-// 主题搜索根，按优先级排列（前面的主题优先）。前两个是引导路径，最后一个是系统路径。
+// 主题搜索根，按优先级排列（前面的主题优先）：存在的引导根目录 + 存在的用户目录，已去重。
 NSArray<NSString *> *TCPSourceThemeRoots(void);
+
+// 诊断用：本进程里各候选策略对主题目录的可见性（try=[jbroot:1,…]）与最终采用的策略（pick=…）。
+// 装完机读 `icli prefs read <进程域> ThemeCorePlusDiagnostics` 就能看出根对不对。
+NSString *TCPSourceThemeRootsReport(void);
 
 // 这个路径是否落在某个主题搜索根里。用于文件覆盖钩子里的「自己人读自己素材不替换」护栏：
 // store 自己合成图标时会走 +[UIImage imageWithContentsOfFile:]，不拦住就会自我递归。

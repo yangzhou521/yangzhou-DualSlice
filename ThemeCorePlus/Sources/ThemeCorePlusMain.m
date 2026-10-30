@@ -46,8 +46,18 @@ static void TCPWriteDiagnostics(void) {
     NSString *roots = [TCPSourceThemeRoots() componentsJoinedByString:@"|"];
     if (roots.length > 300) roots = [roots substringToIndex:300];
 
-    NSString *text = [NSString stringWithFormat:@"%@;sites=%lu[%@];roots=[%@]",
-                      [store diagnostics], (unsigned long)TCPTotalSiteCount(), siteList, roots];
+    // 主题列表也写进诊断：装完机不用看屏幕就能知道「这个进程扫到了几个主题、是哪几个」。
+    NSArray<NSString *> *themes = [[TCPThemeStore shared] availableThemePaths];
+    NSMutableArray<NSString *> *themeNames = [NSMutableArray array];
+    for (NSString *path in themes) {
+        [themeNames addObject:path.lastPathComponent];
+        if (themeNames.count >= 4) break;
+    }
+    NSString *themeText = themeNames.count > 0 ? [themeNames componentsJoinedByString:@"|"] : @"-";
+
+    NSString *text = [NSString stringWithFormat:@"%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+                      [store diagnostics], (unsigned long)TCPTotalSiteCount(), siteList, roots,
+                      TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText];
     TCPWriteProcessPreference(TCPKeyDiagnostics, text);
 
     NSString *census = TCPCensusForClasses(TCPCensusClassNames(), 3600);
