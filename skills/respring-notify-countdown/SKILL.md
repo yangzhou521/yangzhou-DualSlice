@@ -18,6 +18,30 @@ description: 装 deb、注销（respring）、重启目标进程前，必须先�
    → 所以「5 秒后注销」这句话**必须写进聊天回复正文**，那才是用户一定会看到的唯一位置。
 2. 写过正文还不算，要**真的等**：`sh scripts/respring-guard.sh 5`（或 `sleep 5`），再执行。
 3. 注销前不查崩溃循环，就会把设备反复打成安全模式（那次 `consecutiveCrashCount=7`）。
+4. **（2026-10-30 11:36 实测，决定性）就在「发通知」这一下，Apelin 会被拉回前台**：
+   `icli button home` 后前台是 `com.apple.springboard`，连测 6 次都稳定停在桌面；一调
+   `apelin_notification_send`，0.35 秒内前台就变回 `wiki.qaq.apelin`，而进程号没变
+   （前后都是 pid 56376，不是重启，是被拉到前台）。App 一在前台，它自己的
+   `UNUserNotificationCenterDelegate` 就把横幅吞掉 —— 于是通知既不显示，也谈不上上岛。
+   → **推论：不要指望通知能被用户看到。** 倒计时只能在聊天正文里，且必须真等；
+     通知仍然照发（规矩不变、用户要求过），但把它当成「Apelin 不在前台时的一条补充」，
+     绝不能当成「用户已经知道了」。
+
+### 灵动岛（用户装的 DynamicX 1.5.1 + VisibleIsland）：Apelin 的通知不上岛
+
+用户 2026-10-30 反复问「为什么微信能上岛、你的不行」。查过的事实：
+
+- DynamicX hook 的是 SpringBoard 的横幅入口（`SBNotificationBannerDestination` /
+  `BulletinDestinationBanner`），偏好里 `NotificationEnabled=true`、
+  `NotificationSecondaryIslandEnabled=true`，**没有任何 App 白名单/黑名单**。
+- 微信的通知正常上岛 → DynamicX 本身在这台机器上没问题。
+- Apelin 的通知确实被系统投递（`/var/mobile/Library/UserNotifications/` 下会在发送时刻
+  新建一条 section 记录），但它是**本地即时通知**，且发通知时 App 被拉回前台（见上面第 4 条），
+  横幅根本没进 SpringBoard 的横幅通道 → DynamicX 没有东西可接。
+- 结论：**这不是 DynamicX 的 bug，也不是能靠改设置修好的**。要让倒计时上岛，只有两条路：
+  ① 自研一个 SpringBoard 侧的自绘倒计时 HUD（由 `scripts/respring-guard.sh` 发 Darwin 通知触发，
+     5 秒胶囊在屏幕顶部，不依赖 Apelin 通知）；② 反馈给 Apelin 修它的通知投递方式。
+  在 ① 做出来之前，倒计时就老老实实写在聊天正文里。
 
 ## 一、两种动作，两种规矩
 
