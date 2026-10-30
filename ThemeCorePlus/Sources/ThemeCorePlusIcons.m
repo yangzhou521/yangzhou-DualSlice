@@ -263,6 +263,12 @@ id TCPThemedDisplayReplacement(id original, id view) {
     TCPThemeStore *store = [TCPThemeStore shared];
     if (!store.active) return original;
 
+    // 上面那一站（iconImageWithInfo:）可能已经换过一次：拿到的是我们自己渲染的图就别再套一遍。
+    // 二次合成是「图标发糊 / 发白」的一个来源，且纯属白干。
+    if ([original isKindOfClass:[UIImage class]] && [store isRenderedImage:(UIImage *)original]) {
+        return original;
+    }
+
     sDisplayLook++;
 
     // 尺寸/缩放：UIImage 自带 scale；CGImage 没有，按屏幕缩放比折成点，

@@ -53,6 +53,10 @@ enum {
 
 #pragma mark - 状态与诊断文本
 
+// 下面两个函数互相引用：摘要函数在前面用诊断函数，所以先声明（少了这一行 CI 直接编译失败：
+// 隐式声明按 int 处理，ARC 下报 "implicit conversion of 'int' to 'NSString *'"）。
+static NSString *TCPDiagnosticsText(void);
+
 // 素材统计：从诊断里抠出「主题到底认出了哪些素材」那一段（图标/角标/系统图片/遮罩·底图·overlay·
 // 文件夹底板），面板只显示这一段，用户才知道自己的素材有没有被认出来。
 // 诊断本身是目标进程（SpringBoard）写的，本进程读不到时返回空串，面板就不显示这一块。
