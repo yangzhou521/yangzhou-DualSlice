@@ -29,6 +29,7 @@
 | `Support/SileoFix.plist` | SileoFix 的注入过滤器（`org.coolstar.SileoStore`） |
 | `docs/cases/sileowallpaper-searchbar-fix.md` | **专项案例**：SileoWallpaper 让 Sileo 搜索框点不进去 —— 病灶/分轮取证法/修法/复发流程 |
 | `docs/cases/themecoreplus-screen-ours-zero.md` | 专项案例：ThemeCorePlus 屏幕归属计数为 0 |
+| `docs/cases/fleet-watchdog-false-positive.md` | 专项案例：车队看护把「已结束的对话」当睡死，反复唤醒（误报诊断） |
 | `skills/sileo-searchbar-deadzone-fix/SKILL.md` | 上面这个案例的可复用技能（分轮取证 + 一站一槽 + hitTest 旁路） |
 | `scripts/errand-in-app.sh` | 外出取证：进目标 App → 点元素 → 截图/界面树 → **trap 里强制回 Apelin** |
 | `scripts/sync-skills.sh` | 本地技能目录 ↔ 仓库 `skills/` 双向同步（默认 push） |
