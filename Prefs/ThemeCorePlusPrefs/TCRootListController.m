@@ -53,6 +53,21 @@ enum {
 
 #pragma mark - 状态与诊断文本
 
+// 素材统计：从诊断里抠出「主题到底认出了哪些素材」那一段（图标/角标/系统图片/遮罩·底图·overlay·
+// 文件夹底板），面板只显示这一段，用户才知道自己的素材有没有被认出来。
+// 诊断本身是目标进程（SpringBoard）写的，本进程读不到时返回空串，面板就不显示这一块。
+static NSString *TCPAssetSummaryText(void) {
+    NSString *text = TCPDiagnosticsText();
+    NSRange start = [text rangeOfString:@"icon{look="];
+    if (start.location == NSNotFound) return @"";
+    NSRange tail = NSMakeRange(start.location, text.length - start.location);
+    NSRange end = [text rangeOfString:@";hit=[" options:0 range:tail];
+    if (end.location == NSNotFound) {
+        return [text substringWithRange:tail];
+    }
+    return [text substringWithRange:NSMakeRange(start.location, end.location - start.location)];
+}
+
 // 状态行以**实际解析结果**为准：说真话，别按配置猜。
 static NSString *TCPCurrentStatusLine(void) {
     TCPThemeStore *store = [TCPThemeStore shared];
@@ -322,8 +337,8 @@ static NSString *TCPDiagnosticsText(void) {
     return spec;
 }
 
-// 主题入口：根页一行「生效主题：<当前>」，点进去是我们自己的列表页（TCPThemeChooserController）。
-// detail 类交给 Preferences push —— 但那一页是纯 UIKit，没有 specifier 流程，见文件上半部分。
+// 主题入口：根页一行「选择主题」，右侧灰字写当前生效的（ThemeCore 就是这个样子：
+// 标题固定、状态在右边）。点进去是我们自己的列表页（TCPThemeChooserController）。
 - (PSSpecifier *)tcpThemeEntryRow {
     TCPThemeStore *store = [TCPThemeStore shared];
     NSArray<NSString *> *active = store.themePaths;
@@ -332,20 +347,22 @@ static NSString *TCPDiagnosticsText(void) {
         current = active.lastObject.lastPathComponent;   // 「液态玻璃.theme」→「液态玻璃」
         if ([current hasSuffix:@".theme"]) current = [current stringByDeletingPathExtension];
     }
-    NSString *title = @"生效主题：系统原生外观";
+    NSString *state = @"系统原生外观";
     if (current.length > 0) {
-        title = active.count > 1
-            ? [NSString stringWithFormat:@"生效主题：%@（%lu 层叠加）", current, (unsigned long)active.count]
-            : [NSString stringWithFormat:@"生效主题：%@", current];
+        state = active.count > 1
+            ? [NSString stringWithFormat:@"%@（%lu 层）", current, (unsigned long)active.count]
+            : current;
     }
 
-    return [PSSpecifier preferenceSpecifierNamed:title
-                                          target:self
-                                             set:nil
-                                             get:nil
-                                         detail:NSClassFromString(@"TCPThemeChooserController")
-                                            cell:TCPPSLinkCell
-                                            edit:nil];
+    PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:@"选择主题"
+                                                       target:self
+                                                          set:nil
+                                                          get:nil
+                                                       detail:NSClassFromString(@"TCPThemeChooserController")
+                                                         cell:TCPPSLinkCell
+                                                         edit:nil];
+    [spec setProperty:state forKey:@"value"];
+    return spec;
 }
 
 - (PSSpecifier *)tcpButtonNamed:(NSString *)name action:(SEL)action {
@@ -370,29 +387,27 @@ static NSString *TCPDiagnosticsText(void) {
         [specs addObjectsFromArray:fromPlist];
     }
 
-    TCPThemeStore *store = [TCPThemeStore shared];
-    [specs addObject:[self tcpGroupWithHeader:@"主题"
-                                       footer:[NSString stringWithFormat:
-                                               @"v%@ · %@\n点「生效主题」从 %lu 个主题里挑：可以多选（叠加），靠后的覆盖靠前的。",
-                                               TCP_VERSION, TCPCurrentStatusLine(),
-                                               (unsigned long)[store availableThemePaths].count]]];
-    [specs addObject:[self tcpSwitchNamed:@"启用主题美化" key:TCPKeyEnabled]];
+    // 版面照 ThemeCore 原样（用户 2026-10-30 14:37 给的参照）：
+    //   通用 = 启用插件
+    //   主题 = 选择主题 + 刷新图标
+    //   底部 = 作者
+    // 我们比 ThemeCore 多的一样东西是角标素材支持，写在主题组脚注里。
+    // 旧的四项功能开关（图标/文件夹/角标/系统图片）默认全开，主题里没有对应素材时本来就是空转，
+    // 放在面板上只是噪声，撤掉。回滚按钮也不需要：主题列表顶部那行「系统原生外观」点一下就是回滚。
+    [specs addObject:[self tcpGroupWithHeader:@"通用" footer:nil]];
+    [specs addObject:[self tcpSwitchNamed:@"启用插件" key:TCPKeyEnabled]];
+
+    NSString *assets = TCPAssetSummaryText();
+    NSString *materialFooter = assets.length > 0
+        ? [NSString stringWithFormat:@"已认出：%@\n点「刷新图标」当场生效，不用注销；角标素材也认（ThemeCore 不做角标）。", assets]
+        : @"点「刷新图标」当场生效，不用注销；角标素材也认（ThemeCore 不做角标）。";
+    [specs addObject:[self tcpGroupWithHeader:@"主题" footer:materialFooter]];
     [specs addObject:[self tcpThemeEntryRow]];
+    [specs addObject:[self tcpButtonNamed:@"刷新图标" action:@selector(tcpRefreshIcons)]];
 
-    [specs addObject:[self tcpGroupWithHeader:@"功能开关"
-                                       footer:@"四项默认全开：主题里没有对应素材时，插件本身就是空转。"]];
-    [specs addObject:[self tcpSwitchNamed:@"图标（主屏 / 文件夹 / 聚焦）" key:TCPKeyIconsEnabled]];
-    [specs addObject:[self tcpSwitchNamed:@"文件夹底板" key:TCPKeyFoldersEnabled]];
-    [specs addObject:[self tcpSwitchNamed:@"角标底图" key:TCPKeyBadgesEnabled]];
-    [specs addObject:[self tcpSwitchNamed:@"系统图片替换" key:TCPKeyFilesEnabled]];
-
-    [specs addObject:[self tcpGroupWithHeader:@"回滚"
-                                       footer:@"回滚只清配置，不动主题目录里的任何文件。"]];
-    [specs addObject:[self tcpButtonNamed:@"恢复系统原生外观" action:@selector(tcpRestoreNativeAppearance)]];
-    [specs addObject:[self tcpButtonNamed:@"重新扫描主题" action:@selector(tcpRescanThemes)]];
-
-    [specs addObject:[self tcpGroupWithHeader:@"诊断"
-                                       footer:[NSString stringWithFormat:@"%@\n作者：yangzhou", TCPDiagnosticsText()]]];
+    [specs addObject:[self tcpGroupWithHeader:nil
+                                       footer:[NSString stringWithFormat:@"作者：yangzhou　·　v%@\n%@",
+                                               TCP_VERSION, TCPCurrentStatusLine()]]];
     return specs;
 }
 
@@ -485,6 +500,37 @@ static NSString *TCPDiagnosticsText(void) {
     [[TCPThemeStore shared] reload];
     TCPPostPreferencesChanged();
     [self reloadSpecifiers];
+}
+
+// 「刷新图标」—— 用户 14:21/14:22 点名要的功能：不注销就让图标生效。
+// 动作链：这里广播 Darwin 通知 → SpringBoard 里的插件收到 → TCPReload(YES) → 清掉视图与共用缓存，
+// 再叫每个图标视图当场重新出图（-updateImageAnimated:NO，走显示层站拿主题图）。
+// 等桌面把新诊断写回来（约 1.5 秒）再把真实计数报给用户 —— 不报「已经刷过了」这种空话。
+- (void)tcpRefreshIcons {
+    TCPPostPreferencesChanged();
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        NSString *text = TCPDiagnosticsText();
+        NSRange start = [text rangeOfString:@"ref{"];
+        NSString *detail = nil;
+        if (start.location != NSNotFound) {
+            NSRange tail = NSMakeRange(start.location, text.length - start.location);
+            NSRange end = [text rangeOfString:@"}" options:0 range:tail];
+            detail = end.location == NSNotFound
+                ? [text substringWithRange:tail]
+                : [text substringWithRange:NSMakeRange(start.location, end.location - start.location + 1)];
+        }
+        NSString *message = detail.length > 0
+            ? [NSString stringWithFormat:@"%@\nviews = 找到的图标视图，pushed = 当场重新出图的个数。", detail]
+            : @"已通知桌面重取图标。若桌面没有任何变化，注销一次就一定能看到（那也说明桌面里的插件没跑起来）。";
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"刷新图标"
+                                                                      message:message
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        [self reloadSpecifiers];
+    });
 }
 
 @end

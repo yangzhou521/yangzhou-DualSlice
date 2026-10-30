@@ -81,6 +81,22 @@ static NSString *TCPScaleKey(NSInteger scale, BOOL large) {
     return [NSString stringWithFormat:@"%ld%@", (long)scale, large ? @"l" : @""];
 }
 
+// 按**文件名**里的 @2x/@3x 把 UIImage 的 scale 补回来。
+// +[UIImage imageWithContentsOfFile:] 不解析这个后缀，一律给 scale = 1，于是
+// 「SBBadgeBG@3x.png」（75×75 像素的正圆，本该 25 点）会变成 75 点的大图：
+// 角标画布、字号全按 75 点算，最后被系统压进角标的小框里就成了变形。
+// 素材一律是我们自己从主题目录读的，补倍率只为让 image.size 说真话。
+static UIImage *TCPImageWithNominalScale(UIImage *image, NSString *path) {
+    if (image == nil || path.length == 0) return image;
+    NSInteger nominal = 0;
+    TCPStripScaleSuffix([[path lastPathComponent] stringByDeletingPathExtension], &nominal);
+    if (nominal <= 0 || nominal == (NSInteger)image.scale) return image;
+    if (image.CGImage == NULL) return image;
+    return [UIImage imageWithCGImage:image.CGImage
+                               scale:(CGFloat)nominal
+                         orientation:image.imageOrientation];
+}
+
 // 点名素材表用的键：只有倍率，没有 -large 变体。
 static NSString *TCPPlainScaleKey(NSInteger scale) {
     return [NSString stringWithFormat:@"%ld", (long)scale];
@@ -754,6 +770,11 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     // store 自己读文件：这会经过 +[UIImage imageWithContentsOfFile:] 的替换钩子，
     // 但 ThemeCorePlusFiles.m 里有「主题目录内部的路径不替换」的护栏，不会自我递归。
     UIImage *image = [UIImage imageWithContentsOfFile:path];
+    // 关键：文件名里的 @2x/@3x 只有 +imageNamed: 才认，+imageWithContentsOfFile: 一律给 scale = 1。
+    // 于是 75×75 的 @3x 角标素材被当成「75 点」的大图（本该 25 点），画布与字号全跟着放大，
+    // 再被系统塞进角标的小框 —— 角标变形就是这么来的。这里按文件名把倍率补回去，
+    // 让 image.size 是真实点数。所有绘制路径都按显式矩形画，补倍率不会改变别的行为。
+    image = TCPImageWithNominalScale(image, path);
     if (image) [self.assetCache setObject:image forKey:key];
     return image;
 }

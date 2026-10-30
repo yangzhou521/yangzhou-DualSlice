@@ -116,8 +116,10 @@ NSString *TCPDisplayProbeReport(void);
 void TCPRefreshIconImages(void);
 NSString *TCPRefreshProbeReport(void);
 UIImage *TCPThemedBadgeBackground(CGFloat scale);
-UIImage *TCPThemedBadgeTextImage(NSString *text, UIFont *font, CGFloat scale);
+UIImage *TCPThemedBadgeBackgroundInBox(CGFloat scale, CGSize box);
+UIImage *TCPThemedBadgeTextImage(NSString *text, UIFont *font, CGFloat scale, CGSize systemBox);
 UIImage *TCPThemedFolderBackground(CGFloat scale);
+NSString *TCPBadgeProbeReport(void);
 
 // 类型安全替换（实现在 ThemeCorePlusHooks.m）：原返回什么类型就还什么类型，只把里面的图
 // 换成 themed；themed 为 nil、original 为 nil 或类型认不出时，原样返回 original。

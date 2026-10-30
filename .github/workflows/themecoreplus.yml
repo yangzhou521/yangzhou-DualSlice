@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.7.0
+  VERSION: 0.8.0
 
 jobs:
   build:
@@ -132,7 +132,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.7.0)
+    name: Release (themecoreplus-v0.8.0)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -149,30 +149,34 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.7.0
-          name: ThemeCorePlus v0.7.0
+          tag_name: themecoreplus-v0.8.0
+          name: ThemeCorePlus v0.8.0
           body: |
-            主题美化 +（ThemeCorePlus）v0.7.0 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.8.0 —— MarkTheme 式的主题引擎，作者 yangzhou。
 
-            v0.7.0 的新东西：**主题可以多选叠加**。设置面板里「生效主题」是勾选列表，
-            勾几个就叠几层，每行副标题写着「叠加第 N 层」——数字大的盖住数字小的：
-            桌面先按整条链建一次素材索引，上层没给的素材由下层补。
-            「液态玻璃」＋「角标：透明玻璃」这种组合终于能同时生效了（以前只能选一个）。
-            偏好键是 ThemePaths（有序数组），旧的 ThemePath / ThemeName 仍然读得懂。
+            v0.8.0 的三件事：
+
+            1. **「刷新图标」不再需要注销。** 面板上点一下就当场重取图：先让系统重新读一遍应用图标，
+               再把主屏上所有图标视图推一把（分两轮，0.7 秒后再来一次，专治「第一轮没接住」）。
+               碰到怎么推都不重画的图标视图（墙纸/文件夹那种被系统缓存的），就地把它从父视图摘掉
+               再装回去，逼它重新取图——只对当时停在主屏、没在被拖动的图标动手。
+            2. **角标素材不再变形。** 主题里的 SBBadgeBG@3x.png 是 75×75 像素，本该画在 25pt 的框里，
+               可是 UIImage 从文件读图不认文件名里的 @3x，一律当成 1 倍 → 画布被放大到 75pt 再硬塞进
+               小框，于是拉伸变形。现在读图时按文件名补回倍率，并且画布严格照素材自己的宽高比来：
+               一个字就配正方形画布，两个字符才拉长；素材两头是什么形状（圆角、尖角、异形角标）
+               就原样贴两头，绝不套一个圆形或方形上去。
+            3. **面板精简成两块** —— 通用（总开关）＋ 主题素材（主题选择、刷新图标）。
+               原来的四个功能开关撤掉了：它们缺省就是全开，主题里没对应素材时本来就是空转。
+               总开关缺省也是开，只有想临时停用才去关它。
+            诊断串里新增角标形状取证：`badge=1;asset=25x25;canvas=25x25;fit=…`，
+            `asset` 是素材尺寸、`canvas` 是实际画布尺寸 —— 两者宽高比一致即没变形。
 
             - 读 SnowBoard / IconBundles 主题**原素材**并现场合成：主屏与文件夹图标、文件夹底板、
               角标底图、系统图片覆盖（设置 / 电话 / 照片 / 共享 / 状态栏）。
-            - 设置 ▸ 主题美化 + 面板：勾选式多主题、四个功能开关、一键「恢复系统原生外观」。
+            - 多主题叠加：勾选顺序即叠加顺序，靠后的盖住靠前的。
             - 回滚只清配置，不动主题目录里的任何文件。
-            - 诊断串加了 themes=N[层1|层2]：一眼看出当前挂了哪几层。
             - arm64 + arm64e 双切片（A11 用户态是 arm64，只出 arm64e 的 dylib 不会被加载）。
             - roothide 包；rootless 需自己改脚本的第二个参数重编，未经设备验证。
-
-            v0.6.1 修的是「装上就让 SpringBoard 反复进安全模式」：图标站的结构体参数先前多写了
-            5 个保留字段，它就从「4 个 double、按 d0–d3 传值」变成了「按 x2 传指针」，
-            而系统根本不设 x2，于是包装函数在 tcpIconHookN+0x20 读 [x2] 当场崩
-            （KERN_INVALID_ADDRESS at 0x20）。现在结构体与系统 SBIconImageInfo 完全一致，
-            并加了编译期断言，谁再加字段 CI 直接编译失败。
           files: release/*.deb
 
       - name: Report release URL
@@ -180,7 +184,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.7.0/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.8.0/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'

@@ -93,14 +93,15 @@ void TCPInstallIconSites(void) {
 // 视图手里那张图早就在缓存里了。所以改设置后要做的两件事：清缓存 + 让视图按新 info 重取。
 // 打点写进诊断，下一轮不用看屏幕就能知道清缓存那一步到底调到了哪个方法名。
 static NSInteger sRefreshViews = 0;
+static NSInteger sRefreshPushed = 0;   // 真的被叫去重新出图的视图数（0 = 刷新没落到视图上）
 static NSInteger sRefreshModel = 0;
 static NSInteger sRefreshCache = 0;
 static NSInteger sRefreshCacheMiss = 0;
 static NSString *sRefreshPurgeName = nil;
 
 NSString *TCPRefreshProbeReport(void) {
-    return [NSString stringWithFormat:@"ref{views=%ld,model=%ld,cache=%ld,miss=%ld,purge=%@}",
-            (long)sRefreshViews, (long)sRefreshModel, (long)sRefreshCache,
+    return [NSString stringWithFormat:@"ref{views=%ld,pushed=%ld,model=%ld,cache=%ld,miss=%ld,purge=%@}",
+            (long)sRefreshViews, (long)sRefreshPushed, (long)sRefreshModel, (long)sRefreshCache,
             (long)sRefreshCacheMiss, sRefreshPurgeName ?: @"-"];
 }
 
@@ -137,7 +138,20 @@ static void TCPPurgeViewImageCache(id view) {
     sRefreshCacheMiss++;
 }
 
+// 让屏幕当场换图，不注销。2026-10-30 第二版：
+//   上一版只清缓存 → 屏幕上纹丝不动（清了缓存没人重新问，视图手里还攥着旧图）。
+//   这一版在清完之后**主动叫每个视图重新出图**：-updateImageAnimated:NO 是视图自己的
+//   正常重画入口，它会重新走 -contentsImage → 显示层站 → 我们的主题图。
+//   特意不再用 clearIconImageInfo + setIconImageInfo: 那条路（0.6.0 就是在那条路上崩的）。
+// 时序：必须在主线程（碰视图树 + 重新出图都是 UIKit 的事），非主线程就 hop 过去。
 void TCPRefreshIconImages(void) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            TCPRefreshIconImages();
+        });
+        return;
+    }
+
     Class baseClass = objc_getClass("SBIconImageView");
     if (baseClass == Nil) return;
 
@@ -147,10 +161,13 @@ void TCPRefreshIconImages(void) {
     sRefreshing = YES;
 
     SEL clearCached = NSSelectorFromString(@"clearCachedImages");
+    SEL updateImage = NSSelectorFromString(@"updateImageAnimated:");
+    SEL iconGetter = NSSelectorFromString(@"icon");
 
     // 桌面上「已经建出来」的图标视图全在这棵树里：主屏、Dock、文件夹里的小格、App 库。
-    // 上限只是防呆，正常一屏几十个。
+    // 上限只是防呆，正常一屏几十个。用指针去重：同一个视图只会被问一次。
     NSMutableArray *views = [NSMutableArray array];
+    NSMutableSet<NSValue *> *seenViews = [NSMutableSet set];
     NSMutableArray *stack = [NSMutableArray array];
     for (UIWindow *window in [UIApplication sharedApplication].windows) {
         [stack addObject:window];
@@ -160,23 +177,22 @@ void TCPRefreshIconImages(void) {
         UIView *view = [stack lastObject];
         [stack removeLastObject];
         if ([view isKindOfClass:baseClass]) {
-            [views addObject:view];
+            NSValue *key = [NSValue valueWithPointer:(__bridge const void *)view];
+            if (![seenViews containsObject:key]) {
+                [seenViews addObject:key];
+                [views addObject:view];
+            }
         }
         [stack addObjectsFromArray:view.subviews];
     }
 
     // 同一个缓存对象会被很多视图共享：按对象去重，别把整张缓存连清几遍。
     NSMutableSet<NSValue *> *purged = [NSMutableSet set];
+    NSUInteger pushed = 0;
     for (id view in views) {
         sRefreshViews++;
 
-        // 1) 原来这里 clearIconImageInfo + 原样 setIconImageInfo: 逼视图当场重取。
-        //    2026-10-30 的崩溃就出在这条路上：clearIconImageInfo 会同步走
-        //    updateImageAnimated: → contentsImage → SBHIconImageCache → 再进图标站，
-        //    与本机别的图标插件形成重入链（EXC_BAD_ACCESS at 0x1f）。改成只清缓存：
-        //    缓存清掉后视图下一次布局照样重取，代价是晚一帧，换来不崩。
-
-        // 2) 清共用缓存（每个缓存对象只清一次）
+        // 1) 清共用缓存（每个缓存对象只清一次）
         id cache = nil;
         SEL cacheGetter = NSSelectorFromString(@"iconImageCache");
         if ([view respondsToSelector:cacheGetter]) {
@@ -188,14 +204,24 @@ void TCPRefreshIconImages(void) {
             TCPPurgeViewImageCache(view);
         }
 
-        // 4) 视图自己的图袋
+        // 2) 视图自己的图袋
         if ([view respondsToSelector:clearCached]) {
             ((void (*)(id, SEL))objc_msgSend)(view, clearCached);
         }
+
+        // 3) 关键的一步：让视图当场重新出图。没有图标对象的（还没绑定模型的）跳过。
+        id icon = nil;
+        if ([view respondsToSelector:iconGetter]) {
+            icon = ((id (*)(id, SEL))objc_msgSend)(view, iconGetter);
+        }
+        if (icon == nil || ![view respondsToSelector:updateImage]) continue;
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(view, updateImage, NO);
+        pushed++;
     }
 
-    os_log(TCPLogHandle(), "TCPS_REFRESH views=%lu model=%ld cache=%ld purge=%{public}@",
-           (unsigned long)views.count, (long)sRefreshModel, (long)sRefreshCache,
+    sRefreshPushed += (NSInteger)pushed;
+    os_log(TCPLogHandle(), "TCPS_REFRESH views=%lu pushed=%lu model=%ld cache=%ld purge=%{public}@",
+           (unsigned long)views.count, (unsigned long)pushed, (long)sRefreshModel, (long)sRefreshCache,
            sRefreshPurgeName ?: @"-");
     sRefreshing = NO;
 }

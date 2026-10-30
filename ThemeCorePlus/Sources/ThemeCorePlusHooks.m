@@ -170,13 +170,31 @@ id TCPThemedImageReplacement(id original, UIImage *themed) {
     return original;
 }
 
+// 系统为这段文本准备的角标图尺寸 = 屏幕上角标该占多大。取回来当「盒子」交给角标合成，
+// 这样素材（@3x 补倍率后 25 点）与系统盒子（26 点上下）对得上，圆还是圆。
+// result 可能是 UIImage，也可能是 SBHIconAccessoryCountedMapImageTuple（它的 image 是 KVC 属性）。
+static CGSize TCPBadgeSystemBoxSize(id result) {
+    id image = nil;
+    if ([result isKindOfClass:[UIImage class]]) {
+        image = result;
+    } else if (TCPIsCountedMapImageTuple(result)) {
+        @try {
+            image = [result valueForKey:@"image"];
+        } @catch (NSException *exception) {
+            (void)exception;
+        }
+    }
+    if (![image isKindOfClass:[UIImage class]]) return CGSizeZero;
+    return ((UIImage *)image).size;
+}
+
 #pragma mark - 角标底板图站：无参
 
 static id TCPBadgeBackHandle(IMP *slot, id self, SEL _cmd) {
     IMP original = *slot;
     if (original == NULL) return nil;
     id result = ((id (*)(id, SEL))original)(self, _cmd);
-    return TCPThemedImageReplacement(result, TCPThemedBadgeBackground(TCPUIScale()));
+    return TCPThemedImageReplacement(result, TCPThemedBadgeBackgroundInBox(TCPUIScale(), TCPBadgeSystemBoxSize(result)));
 }
 
 #define TCP_DEFINE_BADGEBACK_SLOT(n)                                          \
@@ -197,7 +215,7 @@ static id TCPBadgeTupleHandle(IMP *slot, id self, SEL _cmd) {
     IMP original = *slot;
     if (original == NULL) return nil;
     id result = ((id (*)(id, SEL))original)(self, _cmd);
-    return TCPThemedImageReplacement(result, TCPThemedBadgeBackground(TCPUIScale()));
+    return TCPThemedImageReplacement(result, TCPThemedBadgeBackgroundInBox(TCPUIScale(), TCPBadgeSystemBoxSize(result)));
 }
 
 #define TCP_DEFINE_BADGETUPLE_SLOT(n)                                         \
@@ -220,7 +238,10 @@ static id TCPBadgeTextHandle(IMP *slot, id self, SEL _cmd, NSString *text, UIFon
     IMP original = *slot;
     if (original == NULL) return nil;
     id result = ((TCPBadgeTextFn)original)(self, _cmd, text, font, highlighted);
-    return TCPThemedImageReplacement(result, TCPThemedBadgeTextImage(text, font, TCPUIScale()));
+    // 角标盒子的高度就是屏幕上角标的高：一个字时宽也取这个值 → 正圆；
+    // 两个以上再按文字宽度加宽成圆头胶囊。盒子拿不到才退回素材自己的点数。
+    return TCPThemedImageReplacement(result,
+                                     TCPThemedBadgeTextImage(text, font, TCPUIScale(), TCPBadgeSystemBoxSize(result)));
 }
 
 #define TCP_DEFINE_BADGETEXT_SLOT(n)                                          \

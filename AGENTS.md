@@ -153,7 +153,12 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   本机量岛实测：`island=SBSystemApertureContainerView|125,18,125,37;src=aperture;cand=4`
   （候选清单还有 `UIView|125,18,125,37`、`_SBSystemApertureGainMapView|125,18,125,37`、
   `UIView|115,17,145,47`）—— 也就是说 DynamicX 的岛本体就是 **125×37、居中、y=18**，
-  胶囊现在按这个矩形画（屏幕上的观感以用户确认为准）。
+  胶囊现在按这个矩形画。**用户 2026-10-30 14:07 目视确认「基本可以」，之后先观察一段时间**。
+  验证法（本机唯一可行）：写 8 秒倒计时请求 → `icli button home` → 5.5 秒后 `icli screen shot`，
+  这时胶囊是橙色（最后 3 秒橙、最后 2 秒红），彩色块＝本插件画的、黑块＝岛/底衬，用户比对边界。
+  **本机 `icli screen describe` 与 `icli screen ocr` 都报 `screen capture failed`**（同一环境
+  `icli screen shot` 正常），所以「把屏幕读成文字」这条路在本机不可用，屏上观感只能靠用户看；
+  agent 自己也看不了图（读图工具回「模型不支持图像」）。截屏只用于这次比对，用完即删。
 - ThemeCorePlus **0.6.1 已装机（2026-10-30 12:05 起）**，SpringBoard 稳定、脱离安全模式：
   `icli prefs read com.apple.springboard ThemeCorePlusDiagnostics` =
   `v0.6.1;active=1;…;disp{look=125,hit=111};icon{look=12,skip=0,miss=8,hit=4}`（图标站在真干活）。
