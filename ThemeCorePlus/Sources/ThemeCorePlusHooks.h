@@ -76,6 +76,11 @@ NSString *TCPCensusForClasses(NSArray<NSString *> *classNames, NSUInteger limit)
 // 由 ThemeCorePlusIcons.m / ThemeCorePlusBadges.m / ThemeCorePlusFolders.m 实现。
 UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info);
 UIImage *TCPThemedBadgeBackground(CGFloat scale);
-id TCPThemedBadgeTuple(id originalTuple, CGFloat scale);
 UIImage *TCPThemedBadgeTextImage(NSString *text, UIFont *font, CGFloat scale);
 UIImage *TCPThemedFolderBackground(CGFloat scale);
+
+// 类型安全替换（实现在 ThemeCorePlusHooks.m）：原返回什么类型就还什么类型，只把里面的图
+// 换成 themed；themed 为 nil、original 为 nil 或类型认不出时，原样返回 original。
+// 铁律：绝不拿 UIImage 顶替别的类型 —— iOS 16.7 的角标元组就是这样把 SpringBoard 送进
+// 安全模式的（调用方向 UIImage 发元组的选择器 → unrecognized selector → abort）。
+id TCPThemedImageReplacement(id original, UIImage *themed);

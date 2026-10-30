@@ -1,11 +1,14 @@
 //
 //  ThemeCorePlusBadges.m —— 角标：把系统角标底板换成主题里的 SBBadgeBG。
 //
-//  iOS 16 的角标流程有好几处「同一件事」的入口，版本间来回搬过，所以三处候选全挂，
-//  存在才挂、拿到主题素材才替换：
-//   · -_checkoutBackgroundImage        出底板 UIImage（数字由视图自己画在上面）
+//  iOS 16 的角标流程有好几处「同一件事」的入口，版本间来回搬过，所以三处候选全挂：
+//   · -_checkoutBackgroundImage        出底板图（数字由视图自己画在上面）
 //   · -_checkoutBackgroundImageTuple   出 SBHIconAccessoryCountedMapImageTuple（底板 + 计数键）
 //   · +_checkoutImageForText:font:highlighted:  出「含数字的整图」，这时得自己把数字画上去
+//
+//  三站的「替换」全部交给 ThemeCorePlusHooks.m 的 TCPThemedImageReplacement：先让原实现
+//  出它该出的东西，再只把里面的图换成主题图。iOS 16.7 实测这三站出的都是
+//  SBHIconAccessoryCountedMapImageTuple，不是 UIImage —— 类型顶替必崩（安全模式）。
 //
 #import "ThemeCorePlusHooks.h"
 #import "ThemeCorePlusStore.h"
@@ -14,29 +17,6 @@ UIImage *TCPThemedBadgeBackground(CGFloat scale) {
     TCPThemeStore *store = [TCPThemeStore shared];
     if (!store.active) return nil;
     return [store badgeBackgroundImageForScale:scale];
-}
-
-id TCPThemedBadgeTuple(id originalTuple, CGFloat scale) {
-    UIImage *themed = TCPThemedBadgeBackground(scale);
-    if (themed == nil) return originalTuple;
-    // 有的版本这一站就是直接出图。
-    if ([originalTuple isKindOfClass:[UIImage class]]) return themed;
-    if (originalTuple == nil) return themed;
-
-    Class tupleClass = objc_getClass("SBHIconAccessoryCountedMapImageTuple");
-    if (tupleClass == Nil) return originalTuple;
-
-    SEL keySelector = NSSelectorFromString(@"countedMapKey");
-    if (![originalTuple respondsToSelector:keySelector]) return originalTuple;
-    id key = ((id (*)(id, SEL))objc_msgSend)(originalTuple, keySelector);
-
-    SEL initSelector = NSSelectorFromString(@"initWithImage:countedMapKey:");
-    if (key == nil || ![tupleClass instancesRespondToSelector:initSelector]) return originalTuple;
-
-    id instance = ((id (*)(id, SEL))objc_msgSend)((id)tupleClass, sel_registerName("alloc"));
-    if (instance == nil) return originalTuple;
-    id tuple = ((id (*)(id, SEL, UIImage *, id))objc_msgSend)(instance, initSelector, themed, key);
-    return tuple ?: originalTuple;
 }
 
 // 底板上画数字：底板是可拉伸的（主题里的 SBBadgeBG 就一张），横向按文字宽度拉伸，

@@ -92,19 +92,53 @@ TCP_SLOT_INDEX_LIST(TCP_DEFINE_ICON_SLOT)
 static IMP *const kIconSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_ICON) };
 static const IMP kIconHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_ICON) };
 
-#pragma mark - 角标底板图站：无参、出 UIImage
+#pragma mark - 类型安全替换：原返回什么类型，就还什么类型
 
-static UIImage *TCPBadgeBackHandle(IMP *slot, id self, SEL _cmd) {
+// iOS 16.7 实测（icli probe，2026-10-30）：
+//   +[SBIconBadgeView _checkoutImageForText:font:highlighted:] 返回的是
+//   SBHIconAccessoryCountedMapImageTuple —— 「一张图 + 一个计数键」的元组，不是 UIImage。
+//   计数键不是方法（respondsToSelector 为假）而是 KVC 属性，值形如 "3:.SFUI-Semibold:12.0:0"；
+//   图可以用 setValue:forKey:@"image" 就地换掉。
+// 拿 UIImage 顶替元组 = 调用方向 UIImage 发它不认识的选择器 = unrecognized selector →
+// abort → SpringBoard 安全模式（2026-10-30 反复崩就是这么来的，崩点
+// -[SBIconBadgeView _configureAnimatedForText:highlighted:animator:] 的 +240）。
+// 所以每个包装函数一律：先跑原实现拿到真正的返回对象，再只把里面的图换掉，绝不换类型。
+static BOOL TCPIsCountedMapImageTuple(id object) {
+    if (object == nil) return NO;
+    Class cls = object_getClass(object);
+    if (cls == Nil) return NO;
+    const char *name = class_getName(cls);
+    if (name == NULL) return NO;
+    if (![@(name) containsString:@"CountedMapImageTuple"]) return NO;
+    return [object respondsToSelector:NSSelectorFromString(@"image")];
+}
+
+id TCPThemedImageReplacement(id original, UIImage *themed) {
+    if (themed == nil || original == nil) return original;
+    if ([original isKindOfClass:[UIImage class]]) return themed;
+    if (TCPIsCountedMapImageTuple(original)) {
+        @try {
+            [original setValue:themed forKey:@"image"];
+        } @catch (NSException *exception) {
+            (void)exception;
+        }
+        return original;
+    }
+    return original;
+}
+
+#pragma mark - 角标底板图站：无参
+
+static id TCPBadgeBackHandle(IMP *slot, id self, SEL _cmd) {
     IMP original = *slot;
     if (original == NULL) return nil;
-    UIImage *themed = TCPThemedBadgeBackground(TCPUIScale());
-    if (themed != nil) return themed;
-    return ((UIImage *(*)(id, SEL))original)(self, _cmd);
+    id result = ((id (*)(id, SEL))original)(self, _cmd);
+    return TCPThemedImageReplacement(result, TCPThemedBadgeBackground(TCPUIScale()));
 }
 
 #define TCP_DEFINE_BADGEBACK_SLOT(n)                                          \
     static IMP tcpBadgeBackOrig##n = NULL;                                    \
-    static UIImage *tcpBadgeBackHook##n(id self, SEL _cmd) {                  \
+    static id tcpBadgeBackHook##n(id self, SEL _cmd) {                        \
         return TCPBadgeBackHandle(&tcpBadgeBackOrig##n, self, _cmd);          \
     }
 TCP_SLOT_INDEX_LIST(TCP_DEFINE_BADGEBACK_SLOT)
@@ -114,13 +148,13 @@ TCP_SLOT_INDEX_LIST(TCP_DEFINE_BADGEBACK_SLOT)
 static IMP *const kBadgeBackSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_BADGEBACK) };
 static const IMP kBadgeBackHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_BADGEBACK) };
 
-#pragma mark - 角标 tuple 站：无参、出 tuple
+#pragma mark - 角标 tuple 站：无参
 
 static id TCPBadgeTupleHandle(IMP *slot, id self, SEL _cmd) {
     IMP original = *slot;
     if (original == NULL) return nil;
-    id tuple = ((id (*)(id, SEL))original)(self, _cmd);
-    return TCPThemedBadgeTuple(tuple, TCPUIScale());
+    id result = ((id (*)(id, SEL))original)(self, _cmd);
+    return TCPThemedImageReplacement(result, TCPThemedBadgeBackground(TCPUIScale()));
 }
 
 #define TCP_DEFINE_BADGETUPLE_SLOT(n)                                         \
@@ -135,21 +169,20 @@ TCP_SLOT_INDEX_LIST(TCP_DEFINE_BADGETUPLE_SLOT)
 static IMP *const kBadgeTupleSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_BADGETUPLE) };
 static const IMP kBadgeTupleHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_BADGETUPLE) };
 
-#pragma mark - 角标成图站：(文字, 字体, 高亮) 进、UIImage 出
+#pragma mark - 角标成图站：(文字, 字体, 高亮) 进
 
-typedef UIImage *(*TCPBadgeTextFn)(id, SEL, NSString *, UIFont *, BOOL);
+typedef id (*TCPBadgeTextFn)(id, SEL, NSString *, UIFont *, BOOL);
 
-static UIImage *TCPBadgeTextHandle(IMP *slot, id self, SEL _cmd, NSString *text, UIFont *font, BOOL highlighted) {
+static id TCPBadgeTextHandle(IMP *slot, id self, SEL _cmd, NSString *text, UIFont *font, BOOL highlighted) {
     IMP original = *slot;
     if (original == NULL) return nil;
-    UIImage *themed = TCPThemedBadgeTextImage(text, font, TCPUIScale());
-    if (themed != nil) return themed;
-    return ((TCPBadgeTextFn)original)(self, _cmd, text, font, highlighted);
+    id result = ((TCPBadgeTextFn)original)(self, _cmd, text, font, highlighted);
+    return TCPThemedImageReplacement(result, TCPThemedBadgeTextImage(text, font, TCPUIScale()));
 }
 
 #define TCP_DEFINE_BADGETEXT_SLOT(n)                                          \
     static IMP tcpBadgeTextOrig##n = NULL;                                    \
-    static UIImage *tcpBadgeTextHook##n(id self, SEL _cmd, NSString *text,     \
+    static id tcpBadgeTextHook##n(id self, SEL _cmd, NSString *text,          \
                                         UIFont *font, BOOL highlighted) {      \
         return TCPBadgeTextHandle(&tcpBadgeTextOrig##n, self, _cmd, text, font, highlighted); \
     }
@@ -160,19 +193,18 @@ TCP_SLOT_INDEX_LIST(TCP_DEFINE_BADGETEXT_SLOT)
 static IMP *const kBadgeTextSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_BADGETEXT) };
 static const IMP kBadgeTextHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_BADGETEXT) };
 
-#pragma mark - 文件夹底板站：无参、出 UIImage
+#pragma mark - 文件夹底板站：无参
 
-static UIImage *TCPFolderBackHandle(IMP *slot, id self, SEL _cmd) {
+static id TCPFolderBackHandle(IMP *slot, id self, SEL _cmd) {
     IMP original = *slot;
     if (original == NULL) return nil;
-    UIImage *themed = TCPThemedFolderBackground(TCPUIScale());
-    if (themed != nil) return themed;
-    return ((UIImage *(*)(id, SEL))original)(self, _cmd);
+    id result = ((id (*)(id, SEL))original)(self, _cmd);
+    return TCPThemedImageReplacement(result, TCPThemedFolderBackground(TCPUIScale()));
 }
 
 #define TCP_DEFINE_FOLDERBACK_SLOT(n)                                         \
     static IMP tcpFolderBackOrig##n = NULL;                                   \
-    static UIImage *tcpFolderBackHook##n(id self, SEL _cmd) {                 \
+    static id tcpFolderBackHook##n(id self, SEL _cmd) {                       \
         return TCPFolderBackHandle(&tcpFolderBackOrig##n, self, _cmd);        \
     }
 TCP_SLOT_INDEX_LIST(TCP_DEFINE_FOLDERBACK_SLOT)
