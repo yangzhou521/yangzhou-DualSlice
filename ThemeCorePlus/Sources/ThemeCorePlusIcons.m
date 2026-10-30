@@ -535,6 +535,22 @@ void TCPRunScreenCensus(void) {
                             TCPCensusClassifyUIImage((UIImage *)contents);
                         }
                     }
+                    // 真正的绘制往往在内部子层上：view.layer.contents 是空的，
+                    // 图片挂在某个 sublayer 的 contents 里 —— 逐个子层看。
+                    for (CALayer *sub in view.layer.sublayers) {
+                        id subContents = sub.contents;
+                        if (subContents == nil) continue;
+                        sCensusLayerTotal++;
+                        if (TCPDisplayIsCGImage(subContents)) {
+                            if ([[TCPThemeStore shared] isRenderedCGImagePointer:(__bridge const void *)subContents]) {
+                                sCensusLayerOurs++;
+                            } else {
+                                sCensusLayerStock++;
+                            }
+                        } else if ([subContents isKindOfClass:[UIImage class]]) {
+                            TCPCensusClassifyUIImage((UIImage *)subContents);
+                        }
+                    }
                 }
                 [stack addObjectsFromArray:view.subviews];
             }
