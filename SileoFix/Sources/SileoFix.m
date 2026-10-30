@@ -114,7 +114,10 @@ static void SWFixField(UIView *field) {
 
 static void SWFixTree(UIView *v) {
     if (!v) return;
-    if ([v isKindOfClass:[UITextField class]] || [v isKindOfClass:[UISearchBar class]]) {
+    BOOL interesting = [v isKindOfClass:[UIControl class]];
+    Class barClass = NSClassFromString(@"UISearchBar");
+    if (barClass && [v isKindOfClass:barClass]) interesting = YES;
+    if (interesting && v.bounds.size.width > 1 && v.bounds.size.height > 1) {
         SWFixField(v);
     }
     for (UIView *sub in v.subviews) {
