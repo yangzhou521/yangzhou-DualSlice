@@ -24,7 +24,7 @@
 | `Support/CountdownHUD.plist` | HUD 的注入过滤器（只进 `com.apple.springboard`） |
 | `scripts/build-countdownhud.sh` | HUD 的构建脚本（**只在 CI 上跑**，不链接 substrate） |
 | `scripts/hud-notify.sh` | **一句话上岛**：`[秒数] <文案>` → 灵动岛纯文案提醒（8 秒默认），不注销、不装包 |
-| `.github/workflows/countdownhud.yml` | HUD 的云编译 + 发 Release（tag `countdownhud-v1.2.0`） |
+| `.github/workflows/countdownhud.yml` | HUD 的云编译 + 发 Release（tag `countdownhud-v1.4.2`） |
 | `SileoFix/Sources/SileoFix.m` | Sileo 搜索框死区修复本体（`hitTest:withEvent:` 旁路，v1.0.4）；原壁纸插件逐字节不改 |
 | `Support/SileoFix.plist` | SileoFix 的注入过滤器（`org.coolstar.SileoStore`） |
 | `docs/cases/sileowallpaper-searchbar-fix.md` | **专项案例**：SileoWallpaper 让 Sileo 搜索框点不进去 —— 病灶/分轮取证法/修法/复发流程 |
@@ -128,10 +128,13 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   案例文档：`docs/cases/countdownhud-safe-mode.md`（根因 / 三步修法 / 复发处理流程）。
 - **装入 SpringBoard 的新插件，注销后必须查 crash list**：`apelin_crash_list`（process=SpringBoard），
   有比本次注销更新的报告 = 装坏了（先 `irisin-cli remove` 回滚再排查），**无新报告才算装好**。
-  已装并实测通过：1.4.1（CI run 41117240700，装机后 03:47 起无新 SpringBoard 崩溃，不在安全模式）。
+  已装并实测通过：**1.4.2**（CI run 41119016871，commit d60538cf，tag `countdownhud-v1.4.2`，
+  2026-10-31 03:5x 装机 1.4.1→1.4.2，注销后诊断 `v1.4.2;shows=6;mode=count;
+  scene=SBSystemApertureWindowScene;haptic=4`，crash list 最新仍是 03:43 旧基线、**无新报告**，
+  不在安全模式）。纯文案（`!`）不震已实测；别的 App 在前台时胶囊照样消费请求（已实测）。
   技能 `respring-notify-countdown` 的「零、八」一节已写死这条。
 - 验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`
-  → `v1.4.0;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N;mode=count;haptic=N`；
+  → `v1.4.2;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N;mode=count;haptic=N`；
   量到的候选清单：`icli prefs read com.apple.springboard CountdownHUDIslandCandidates`
   （最多 8 行 `A|<类名>|x,y,w,h`，前缀 A = 在 Aperture 窗口里）；
   日志 `icli log syslog --subsystem com.yangzhou.countdownhud`。
