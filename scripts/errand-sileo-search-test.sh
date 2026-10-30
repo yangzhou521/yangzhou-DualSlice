@@ -5,7 +5,9 @@
 set -u
 SILEO=org.coolstar.SileoStore
 APELIN=wiki.qaq.apelin
-LOG=/rootfs/var/mobile/Library/Caches/sileofix.log
+# SileoFix 把日志写在 jbroot 命名空间的 /var/mobile/Library/Caches/；
+# shell（mobile）的 / 就是 jbroot，别加 /rootfs 前缀，加了会指向真实数据卷的另一处而读不到。
+LOG=/var/mobile/Library/Caches/sileofix.log
 START=$(date +%s)
 
 back() {
