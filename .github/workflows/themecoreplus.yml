@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.2
+  VERSION: 0.9.3
 
 jobs:
   build:
@@ -132,7 +132,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.2)
+    name: Release (themecoreplus-v0.9.3)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -149,27 +149,26 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.2
-          name: ThemeCorePlus v0.9.2
+          tag_name: themecoreplus-v0.9.3
+          name: ThemeCorePlus v0.9.3
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.2 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.3 —— MarkTheme 式的主题引擎，作者 yangzhou。
 
-            v0.9.2：
+            v0.9.3：
 
-            1. **面板只剩「主题」**：「选择主题」页里原来的「素材开关」四行（应用图标 / 文件夹 /
-               角标 / 系统界面图）整组删掉 —— 四类素材一律全换，面板上不留分类开关。
-               `IconsEnabled / FoldersEnabled / BadgesEnabled / FilesEnabled` 四个键不再读取、
-               不再写入（老偏好里留着什么都不理会）。
-            2. **主题行自己带素材清单**：每个主题那一行的副标题写「第 N 层 · 图标 84 · 角标 3 ·
-               界面图 7」，一类都没有就写「里面没有可用素材」—— 有没有素材一眼看见，不用猜。
-            3. **「系统原生外观」那行删掉**：这一页只剩主题。勾几个叠几层，再点一次 = 取消这一层；
-               全部取消就是系统原生外观（回滚不再占一行）。多选语义写在页脚。
-            4. 「运行日志」入口保留（开发期），右上角「分享」可直接发出来。
+            1. **「选择主题」页一律用系统开关**：每个主题行右端一颗 iOS 原生开关（与设置里「启用插件」
+               同款），点整行与拨开关走同一个写入口 —— 勾中的顺序就是叠加顺序，再点一次 = 取消这一层，
+               全部取消就是系统原生外观。
+            2. **这一页只剩主题行**：段落标题、页脚说明、「素材开关」四行、「系统原生外观」行全部删掉，
+               页面上只有主题。
+            3. **四类素材（应用图标 / 文件夹 / 角标 / 系统界面图）默认全开**：主题里有哪类就换哪类，
+               没有的那类既不生效也不加载。
 
             - 读 SnowBoard / IconBundles 主题**原素材**并现场合成：主屏与文件夹图标、文件夹底板、
               角标底图、系统图片覆盖（状态栏 / 拨号盘 / 设置 / 分享）。
-            - 角标勾上时，主题角标素材同时用在主屏图标与锁屏通知上。
+            - 角标勾上时，主题角标素材同时用在主屏图标上；素材什么形状就什么形状，不拉伸。
             - 多主题叠加：勾选顺序即叠加顺序，靠后的盖住靠前的。
+            - 面板里点「刷新图标」当场生效，不用注销。
             - 回滚只清配置，不动主题目录里的任何文件。
             - arm64 + arm64e 双切片（A11 用户态是 arm64，只出 arm64e 的 dylib 不会被加载）。
             - roothide 包；rootless 需自己改脚本的第二个参数重编，未经设备验证。
@@ -180,7 +179,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.2/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.3/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'

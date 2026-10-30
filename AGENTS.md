@@ -38,9 +38,14 @@
 
 改完源码 push 到 `main`：只有 `ThemeCorePlus/**`、`Prefs/**`、`Support/ThemeCorePlus*`、
 `scripts/build-themecoreplus.sh`、工作流自身变动才会触发（paths 过滤），以免白白重建已经验过的包。
-同一次运行里发 Release（静态 tag `themecoreplus-v0.9.2`，每次运行都重建资产，sha256/体积会变）。
+同一次运行里发 Release（静态 tag `themecoreplus-v0.9.3`，每次运行都重建资产，sha256/体积会变）。
 Release 资产地址：
-`https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.9.2/com.yangzhou.themecoreplus_0.9.2_iphoneos-arm64e.deb`
+`https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.9.3/com.yangzhou.themecoreplus_0.9.3_iphoneos-arm64e.deb`
+
+**tag 必须与包版本一致**：改版本时 `scripts/build-themecoreplus.sh` 的 `VERSION` 与工作流的
+`env.VERSION`、`tag_name`、release 名、`deb-url` 注解要一起改。2026-10-30 17:19 那次只改了脚本
+（0.9.3），工作流还写着 0.9.2，于是 0.9.3 的 deb 被发进了 `themecoreplus-v0.9.2` 那个 Release 里
+（现在该 Release 同时挂着 0.9.2 与 0.9.3 两个包），已在本提交修掉。
 
 可读的验证信息都写成 check-run annotation（`::notice/::error title=…`）：job 日志要登录才能看，
 公开仓库的 annotations 匿名可读（`/repos/{owner}/{repo}/check-runs/{id}/annotations`）。
