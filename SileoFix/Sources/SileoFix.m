@@ -212,7 +212,7 @@ static void sw_hook_sendEvent(id self, SEL _cmd, UIEvent *event) {
 
     for (UITouch *t in [event allTouches]) {
         if (t.phase != UITouchPhaseBegan) continue;
-        CGPoint p = [t locationInWindow];
+        CGPoint p = [t locationInView:win];
 
         UIView *hit = [win hitTest:p withEvent:event];
         if (!hit) continue;
