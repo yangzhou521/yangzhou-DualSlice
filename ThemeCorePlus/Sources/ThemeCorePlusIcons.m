@@ -72,14 +72,139 @@ void TCPInstallIconSites(void) {
                                         @"List", @"Accessory", @"Animator", @"Crossfade",
                                         @"Transition", @"Drag", @"Drop", @"Page", @"Scroll",
                                         @"Layout", @"Observer", @"Provider", @"Settings" ];
+    // generateIconImageWithInfo: 是真正的「生图」入口：本机运行期按 IMP 归属查出来的结果是
+    // MarkThemeRuntime.dylib 挂在 SBApplicationIcon:generateIconImageWithInfo:，ThemeCore 0.5.1
+    // 的二进制里也有同名方法；而我们原来只挂 getter（iconImageWithInfo:），在这台 16.7.16 上
+    // 一次都没被问过（诊断 look=0）。所以把生成站一起挂上：谁生成图标图，谁就被换成主题图。
     NSArray<NSString *> *selectors = @[ @"iconImageWithInfo:",
                                         @"unmaskedIconImageWithInfo:",
-                                        @"iconImageWithImageInfo:" ];
+                                        @"iconImageWithImageInfo:",
+                                        @"generateIconImageWithInfo:" ];
     NSUInteger installed = TCPInstallSitesForClassPrefixes(prefixes, excluding, selectors,
                                                            TCPSiteKindIconImageInfo);
     if (installed > 0) {
         os_log(TCPLogHandle(), "TCPS_ICON_SITES +%lu", (unsigned long)installed);
     }
+}
+
+#pragma mark - 即时生效：不注销也能换图
+
+// 为什么需要这一站：图标图进了 SBHIconImageCache（按 info 缓存），只换来图函数没用 ——
+// 视图手里那张图早就在缓存里了。所以改设置后要做的两件事：清缓存 + 让视图按新 info 重取。
+// 打点写进诊断，下一轮不用看屏幕就能知道清缓存那一步到底调到了哪个方法名。
+static NSInteger sRefreshViews = 0;
+static NSInteger sRefreshModel = 0;
+static NSInteger sRefreshCache = 0;
+static NSInteger sRefreshCacheMiss = 0;
+static NSString *sRefreshPurgeName = nil;
+
+NSString *TCPRefreshProbeReport(void) {
+    return [NSString stringWithFormat:@"ref{views=%ld,model=%ld,cache=%ld,miss=%ld,purge=%@}",
+            (long)sRefreshViews, (long)sRefreshModel, (long)sRefreshCache,
+            (long)sRefreshCacheMiss, sRefreshPurgeName ?: @"-"];
+}
+
+// SBIconImageView 自己声明的 -iconImageInfo / -setIconImageInfo: 用的就是这个结构：
+// 用例是「拿现值再设回去」，多读的字节不影响结果，少读才会让原实现读到垃圾。
+typedef struct {
+    CGSize size;
+    CGFloat scale;
+    CGFloat cornerRadius;
+} TCPIconImageInfoShort;
+
+// 图标图缓存对象上的清空方法：不同版本名字不同，按顺序试第一个存在的。
+// 都是无参方法 —— 带参数的那种（purgeCachedImagesForIcons:）要传图标集合，不在刷新路径上冒险。
+static void TCPPurgeViewImageCache(id view) {
+    static SEL sCacheGetter = NULL;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        sCacheGetter = NSSelectorFromString(@"iconImageCache");
+    });
+    if (![view respondsToSelector:sCacheGetter]) return;
+
+    id cache = ((id (*)(id, SEL))objc_msgSend)(view, sCacheGetter);
+    if (cache == nil) {
+        sRefreshCacheMiss++;
+        return;
+    }
+    for (NSString *name in @[ @"purgeCache", @"purgeAllCaches", @"purgeCaches",
+                              @"clearCache", @"removeAllObjects" ]) {
+        SEL sel = NSSelectorFromString(name);
+        if ([cache respondsToSelector:sel]) {
+            ((void (*)(id, SEL))objc_msgSend)(cache, sel);
+            sRefreshCache++;
+            sRefreshPurgeName = name;
+            return;
+        }
+    }
+    sRefreshCacheMiss++;
+}
+
+void TCPRefreshIconImages(void) {
+    Class baseClass = objc_getClass("SBIconImageView");
+    if (baseClass == Nil) return;
+
+    SEL clearInfo = NSSelectorFromString(@"clearIconImageInfo");
+    SEL infoGetter = NSSelectorFromString(@"iconImageInfo");
+    SEL infoSetter = NSSelectorFromString(@"setIconImageInfo:");
+    SEL clearCached = NSSelectorFromString(@"clearCachedImages");
+
+    // 桌面上「已经建出来」的图标视图全在这棵树里：主屏、Dock、文件夹里的小格、App 库。
+    // 上限只是防呆，正常一屏几十个。
+    NSMutableArray *views = [NSMutableArray array];
+    NSMutableArray *stack = [NSMutableArray array];
+    for (UIWindow *window in [UIApplication sharedApplication].windows) {
+        [stack addObject:window];
+    }
+    NSUInteger guard = 0;
+    while (stack.count > 0 && guard++ < 6000) {
+        UIView *view = [stack lastObject];
+        [stack removeLastObject];
+        if ([view isKindOfClass:baseClass]) {
+            [views addObject:view];
+        }
+        [stack addObjectsFromArray:view.subviews];
+    }
+
+    // 同一个缓存对象会被很多视图共享：按对象去重，别把整张缓存连清几遍。
+    NSMutableSet<NSValue *> *purged = [NSMutableSet set];
+    for (id view in views) {
+        sRefreshViews++;
+
+        // 1) 清掉视图手里的 info（否则它认为「图没变」不会重取）
+        if ([view respondsToSelector:clearInfo]) {
+            ((void (*)(id, SEL))objc_msgSend)(view, clearInfo);
+        }
+
+        // 2) 把当前 info 原样再设回去 —— 这一步会走生图管线，也就走到我们挂的站点上
+        if ([view respondsToSelector:infoGetter] && [view respondsToSelector:infoSetter]) {
+            TCPIconImageInfoShort info =
+                ((TCPIconImageInfoShort (*)(id, SEL))objc_msgSend)(view, infoGetter);
+            ((void (*)(id, SEL, TCPIconImageInfoShort))objc_msgSend)(view, infoSetter, info);
+            sRefreshModel++;
+        }
+
+        // 3) 清共用缓存（每个缓存对象只清一次）
+        id cache = nil;
+        SEL cacheGetter = NSSelectorFromString(@"iconImageCache");
+        if ([view respondsToSelector:cacheGetter]) {
+            cache = ((id (*)(id, SEL))objc_msgSend)(view, cacheGetter);
+        }
+        NSValue *key = cache ? [NSValue valueWithPointer:(__bridge const void *)cache] : nil;
+        if (cache == nil || ![purged containsObject:key]) {
+            if (key) [purged addObject:key];
+            TCPPurgeViewImageCache(view);
+        }
+
+        // 4) 视图自己的图袋
+        if ([view respondsToSelector:clearCached]) {
+            ((void (*)(id, SEL))objc_msgSend)(view, clearCached);
+        }
+    }
+
+    os_log(TCPLogHandle(), "TCPS_REFRESH views=%lu model=%ld cache=%ld purge=%{public}@",
+           (unsigned long)views.count, (long)sRefreshModel, (long)sRefreshCache,
+           sRefreshPurgeName ?: @"-");
 }
 
 #pragma mark - 显示层站：iOS 16 上真正决定屏幕上那张图的地方

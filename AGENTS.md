@@ -60,6 +60,13 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 ## 硬规矩
 
+- **装包 / 注销 / 重启目标进程之前，必须：① `apelin_notification_send` 通知 → ② 明说「5 秒后执行」并
+  `sleep 5` → ③ 才执行（`irisin-cli install`、`icli respring`、`icli app kill`）。** 用户 2026-10-30
+  反复要求过两次，仍然漏过，原因是这条只写在记忆里、没写进这个文件 —— 所以现在写在这里，且：
+  - 通知正文一律包含：动了什么、为什么、下一步要做什么；不超过两句话。
+  - 倒计时那一步用 `sh scripts/respring-guard.sh`（见下），不许绕过它直接 `icli respring`。
+  - `apelin_package_confirm_loaded(respring: true)` 也算注销：先用工具发通知，再调它。
+  - 只有「屏幕会黑一下」或「打断用户当前操作」才算；下载、云编译、读诊断不通知。
 - **不许 `-undefined dynamic_lookup` / `-undefined suppress`。** 缺符号就逐个写
   `-Wl,-U,_符号名`（面板的 `PSListController`/`PSSpecifier` 就是这么处理的）。
 - **不许给私有类写消息发送。** 代码里出现 `[SBIconController sharedInstance]` 就会多出一个

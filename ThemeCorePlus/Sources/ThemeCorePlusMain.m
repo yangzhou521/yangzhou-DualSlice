@@ -31,7 +31,10 @@ static NSArray<NSString *> *TCPCensusClassNames(void) {
     return @[ @"SBIconBadgeView", @"SBIconAccessoryImage", @"SBIconImageView",
               @"SBFolderIconImageView", @"SBFolderBackgroundView", @"SBFolderIconImageCache",
               @"SBHIconImageCache", @"SBIconImageCrossfadeView", @"SBHClockApplicationIconImageView",
-              @"SBIcon", @"SBHIconAccessoryCountedMapImageTuple" ];
+              @"SBIcon", @"SBHIconAccessoryCountedMapImageTuple",
+              // 以下三个是「不注销换图」那条路要用到的：视图（info 重设）、应用图标（生图）、
+              // 控制器（relayoutIcons）。方法名以普查结果为准，不靠猜。
+              @"SBIconView", @"SBApplicationIcon", @"SBIconController" ];
 }
 
 static void TCPWriteDiagnostics(void) {
@@ -56,8 +59,8 @@ static void TCPWriteDiagnostics(void) {
     }
     NSString *themeText = themeNames.count > 0 ? [themeNames componentsJoinedByString:@"|"] : @"-";
 
-    NSString *text = [NSString stringWithFormat:@"%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
-                      [store diagnostics], TCPDisplayProbeReport(),
+    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+                      [store diagnostics], TCPDisplayProbeReport(), TCPRefreshProbeReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
                       TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText];
     TCPWriteProcessPreference(TCPKeyDiagnostics, text);
@@ -112,6 +115,14 @@ static void TCPReload(void) {
     TCPInstallFolderSites();
     TCPInstallFileSites();
     TCPRelayoutIcons();
+    // 不注销就换图：先清桌面上已经建好的视图的缓存与 info，让它们按新主题重取一遍；
+    // relayoutIcons 是异步的，排出来的新视图这一轮还不存在，所以隔 0.7 秒再补一次。
+    TCPRefreshIconImages();
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        TCPRefreshIconImages();
+        TCPWriteDiagnostics();
+    });
     TCPWriteDiagnostics();
 }
 

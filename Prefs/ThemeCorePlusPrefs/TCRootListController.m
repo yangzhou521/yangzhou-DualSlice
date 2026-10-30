@@ -87,106 +87,134 @@ static NSString *TCPDiagnosticsText(void) {
     return text;
 }
 
-#pragma mark - 二级页：生效主题（行由我们自己造）
+#pragma mark - 二级页：生效主题（纯 UIKit 列表）
 
-// 为什么不再用 cell=PSLinkListCell + setValues:titles:：0.6.0 装机版点「生效主题」推入的那一页
-// 设备上是 0 段 0 行（同一份 specifier 在离线探针里却有 6 行），框架内部怎么取值我们验不到。
-// 这里只依赖一个必然成立的事实：PSListController 会为 detail 类 push 一页；那一页有什么行，
-// 由 -specifiers 自己说了算。
-@interface TCPThemeListController : PSListController
+// 之前那一版是 PSListController 子类 + PSLinkCell 行。装机后点进这一页，设置进程当场闪退，
+// 崩在 Preferences 内部给 specifier 准备元数据那一步（同一页在 icli 探针里却 1 段 6 行齐全，
+// 验不到真凶）。这一版换成纯 UIKit 的 UITableViewController：
+//   · 表格的数据源、代理、勾选、返回，全是 UIKit 公开 API，Preferences 一行都不碰；
+//   · Preferences 只负责把我们的控制器 push 进导航栈（它 push 任何 UIViewController 都行）；
+//   · 没有再覆盖 reloadSpecifiers / setSpecifiers:，也就没有那套段落缓存的坑。
+// 这样「点进来闪退」的入口在结构上就不存在了，页面本身也更好用：带副标题和勾选。
+@interface TCPThemeChooserController : UITableViewController
 @end
 
-@implementation TCPThemeListController {
-    NSArray *_specifiers;
-    BOOL _tcpApplyingSpecifiers;
+@implementation TCPThemeChooserController {
+    NSArray<NSString *> *_themePaths;   // 第 0 项固定为空串 = 系统原生外观
+    NSString *_currentPath;
 }
+
+- (instancetype)initWithStyle:(UITableViewStyle)style {
+    return [super initWithStyle:UITableViewStyleInsetGrouped];
+}
+
+- (instancetype)init {
+    return [super initWithStyle:UITableViewStyleInsetGrouped];
+}
+
+// 不重写 initWithNibName:bundle:：UITableViewController 的两个指定初始化器互相派发的话，
+// 重写它会变成递归。Preferences 无论用哪个入口建我们，得到的都是同一个可用的表格页。
 
 - (NSString *)title {
     return @"生效主题";
 }
 
-- (NSArray *)tcpBuildChoices {
-    TCPThemeStore *store = [TCPThemeStore shared];
-    [store reload];   // 进来就重扫：新加的主题立刻能选
-
-    NSString *current = store.themePath;
-    if (![current isKindOfClass:[NSString class]]) {
-        current = @"";
-    }
-
-    NSMutableArray *specs = [NSMutableArray array];
-    PSSpecifier *head = [PSSpecifier groupSpecifierWithName:@"选中即生效"];
-    // footer 里写扫盘结果：这一行就是「设置进程到底看见几个主题」的证据。
-    [head setProperty:[NSString stringWithFormat:@"%@\n扫到 %lu 个主题（另有「系统原生外观」）",
-                       TCPCurrentStatusLine(), (unsigned long)[store availableThemePaths].count]
-              forKey:@"footerText"];
-    [specs addObject:head];
-
-    NSMutableArray<NSString *> *paths = [NSMutableArray arrayWithObject:@""];
-    [paths addObjectsFromArray:[store availableThemePaths]];
-    for (NSString *path in paths) {
-        NSString *name = path.length > 0 ? path.lastPathComponent : @"系统原生外观";
-        PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:name
-                                                          target:self
-                                                             set:@selector(tcpChooseTheme:)
-                                                             get:nil
-                                                          detail:nil
-                                                            cell:TCPPSLinkCell
-                                                            edit:nil];
-        [spec setProperty:path forKey:@"tcpThemePath"];
-        if ([path isEqualToString:current]) {
-            [spec setProperty:@YES forKey:@"checked"];
-        }
-        [specs addObject:spec];
-    }
-    return specs;
+// Preferences 把 detail 控制器 push 进来之后，会给它塞几样东西（specifier、父控制器、根控制器）。
+// 我们是纯 UIKit 页，用不上它们；但**不接住**就会 unrecognized selector —— 这正是上一版二级页
+// 闪退的形态（探针里直接 alloc/init 就没事，因为探针不塞这些）。所以全部实现成空操作。
+- (void)setSpecifier:(id)specifier {}
+- (id)specifier { return nil; }
+- (void)setParentController:(id)parentController {}
+- (id)parentController { return nil; }
+- (void)setRootController:(id)rootController {}
+- (id)rootController { return nil; }
+// PSListController 的指定初始化器：Preferences 若按老路建 detail 页会调它，也收给同一个入口。
+- (instancetype)initForRootList {
+    return [super initWithStyle:UITableViewStyleInsetGrouped];
 }
 
-// 点一行：写 ThemePath、通知 SpringBoard、退回上一页。
-- (void)tcpChooseTheme:(PSSpecifier *)specifier {
-    id path = [specifier propertyForKey:@"tcpThemePath"];
-    if (![path isKindOfClass:[NSString class]]) {
-        path = @"";
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.tableView.rowHeight = 56.0;
+    [self tcpReloadThemes];
+}
+
+- (void)tcpReloadThemes {
+    TCPThemeStore *store = [TCPThemeStore shared];
+    [store reload];                       // 进来就重扫：新加的主题立刻能选
+    NSString *current = store.themePath;
+    _currentPath = [current isKindOfClass:[NSString class]] ? current : @"";
+    NSMutableArray<NSString *> *paths = [NSMutableArray arrayWithObject:@""];
+    [paths addObjectsFromArray:[store availableThemePaths]];
+    _themePaths = paths;
+    [self.tableView reloadData];
+}
+
+- (NSString *)tcpPathAtIndexPath:(NSIndexPath *)indexPath {
+    NSInteger row = indexPath.section == 0 ? 0 : indexPath.row + 1;
+    if (row < 0 || row >= (NSInteger)_themePaths.count) return @"";
+    return _themePaths[(NSUInteger)row];
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
+    return _themePaths.count > 0 ? 2 : 1;
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    if (section == 0) return 1;
+    return (NSInteger)_themePaths.count - 1;
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
+    if (section == 0) return nil;
+    return [NSString stringWithFormat:@"主题（%lu 个）", (unsigned long)(_themePaths.count - 1)];
+}
+
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    if (section != 1) return nil;
+    return @"选中即生效，不用注销：桌面图标会自己重取一遍图。";
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    static NSString *identifier = @"TCPThemeChoiceCell";
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
+    if (cell == nil) {
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
+                                      reuseIdentifier:identifier];
     }
 
-    if ([path length] > 0) {
+    NSString *path = [self tcpPathAtIndexPath:indexPath];
+    if (path.length == 0) {
+        cell.textLabel.text = @"系统原生外观";
+        cell.detailTextLabel.text = @"不套任何主题素材";
+    } else {
+        NSString *name = path.lastPathComponent;
+        if ([name hasSuffix:@".theme"]) name = [name stringByDeletingPathExtension];
+        cell.textLabel.text = name;
+        // 副标题写它所在的根目录名：面板扫到的主题可能来自 /Library/ThemeCore，也可能来自 /Library/Themes
+        NSString *root = [path stringByDeletingLastPathComponent].lastPathComponent;
+        cell.detailTextLabel.text = root.length > 0 ? root : path;
+    }
+    cell.accessoryType = [path isEqualToString:_currentPath] ? UITableViewCellAccessoryCheckmark
+                                                             : UITableViewCellAccessoryNone;
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    [tableView deselectRowAtIndexPath:indexPath animated:YES];
+
+    NSString *path = [self tcpPathAtIndexPath:indexPath];
+    if (path.length > 0) {
         TCPWritePreference(TCPKeyThemePath, path);
     } else {
         TCPWritePreference(TCPKeyThemePath, nil);   // 「系统原生外观」= 清掉
     }
-    TCPWritePreference(TCPKeyThemeName, nil);
-    TCPPostPreferencesChanged();
+    TCPWritePreference(TCPKeyThemeName, nil);       // 两个键只留一个，免得互相打架
+    TCPPostPreferencesChanged();                    // SpringBoard 收到立刻重读 + 重取图标图
 
+    _currentPath = path;
+    [tableView reloadData];
     [self.navigationController popViewControllerAnimated:YES];
-}
-
-- (NSArray *)specifiers {
-    if (_specifiers == nil) {
-        _specifiers = [self tcpBuildChoices];
-    }
-    return _specifiers;
-}
-
-- (void)reloadSpecifiers {
-    _specifiers = [self tcpBuildChoices];
-
-    if (_tcpApplyingSpecifiers) {
-        [super reloadSpecifiers];
-        return;
-    }
-
-    [super reloadSpecifiers];
-    // 同根面板：段落缓存只在父类 setSpecifiers: 入口里重建，改完数组必须再走一次它。
-    _tcpApplyingSpecifiers = YES;
-    [self setSpecifiers:_specifiers];
-    _tcpApplyingSpecifiers = NO;
-}
-
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
-    if (self.isViewLoaded) {
-        [self reloadSpecifiers];
-    }
 }
 
 @end
@@ -235,23 +263,27 @@ static NSString *TCPDiagnosticsText(void) {
     return spec;
 }
 
-// 主题选择：一行一个主题的开关（开 = 生效，关 = 回到系统原生）。
-// 为什么不再 push 二级页（TCPThemeListController）：0.6.0 装机版点进「生效主题」那一页，设置
-// 进程当场闪退（crash 报告的 lastException 是 unrecognized selector，reason 被系统截断；
-// 离线探针里同一页 view()+viewWillAppear: 却是 1 段 6 行齐全）—— 差别全在设置进程框架内部的
-// 私有准备流程里，我们看不到也验不了，所以索性不依赖它。根页的开关行一直好用（同一条 set/get
-// 机制），主题也走它：spec 上的 tcpThemePath 属性就是这一行代表的主题路径（空串 = 系统原生），
-// 读和写全在下面 readPreferenceValue: / setPreferenceValue:specifier: 里处理。
-- (PSSpecifier *)tcpThemeSwitchNamed:(NSString *)name path:(NSString *)path {
-    PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:name
-                                                      target:self
-                                                         set:@selector(setPreferenceValue:specifier:)
-                                                         get:@selector(readPreferenceValue:)
-                                                      detail:nil
-                                                        cell:TCPPSSwitchCell
-                                                        edit:nil];
-    [spec setProperty:(path ?: @"") forKey:@"tcpThemePath"];
-    return spec;
+// 主题入口：根页一行「生效主题：<当前>」，点进去是我们自己的列表页（TCPThemeChooserController）。
+// detail 类交给 Preferences push —— 但那一页是纯 UIKit，没有 specifier 流程，见文件上半部分。
+- (PSSpecifier *)tcpThemeEntryRow {
+    TCPThemeStore *store = [TCPThemeStore shared];
+    NSString *current = store.themeName;
+    if (![current isKindOfClass:[NSString class]] || current.length == 0) {
+        NSString *name = store.themePath.lastPathComponent;   // 「液态玻璃.theme」→「液态玻璃」
+        if ([name hasSuffix:@".theme"]) name = [name stringByDeletingPathExtension];
+        current = name;
+    }
+    NSString *title = current.length > 0
+        ? [NSString stringWithFormat:@"生效主题：%@", current]
+        : @"生效主题：系统原生外观";
+
+    return [PSSpecifier preferenceSpecifierNamed:title
+                                          target:self
+                                             set:nil
+                                             get:nil
+                                         detail:NSClassFromString(@"TCPThemeChooserController")
+                                            cell:TCPPSLinkCell
+                                            edit:nil];
 }
 
 - (PSSpecifier *)tcpButtonNamed:(NSString *)name action:(SEL)action {
@@ -279,16 +311,11 @@ static NSString *TCPDiagnosticsText(void) {
     TCPThemeStore *store = [TCPThemeStore shared];
     [specs addObject:[self tcpGroupWithHeader:@"主题"
                                        footer:[NSString stringWithFormat:
-                                               @"v%@ · %@\n一共扫到 %lu 个主题：打开一个就生效，关掉回到系统原生外观。",
+                                               @"v%@ · %@\n点「生效主题」从 %lu 个主题里挑一个：选中立刻生效，不用注销。",
                                                TCP_VERSION, TCPCurrentStatusLine(),
                                                (unsigned long)[store availableThemePaths].count]]];
     [specs addObject:[self tcpSwitchNamed:@"启用主题美化" key:TCPKeyEnabled]];
-    [specs addObject:[self tcpThemeSwitchNamed:@"系统原生外观" path:@""]];
-    for (NSString *themePath in [store availableThemePaths]) {
-        NSString *name = themePath.lastPathComponent;
-        if ([name hasSuffix:@".theme"]) name = [name stringByDeletingPathExtension];
-        [specs addObject:[self tcpThemeSwitchNamed:name path:themePath]];
-    }
+    [specs addObject:[self tcpThemeEntryRow]];
 
     [specs addObject:[self tcpGroupWithHeader:@"功能开关"
                                        footer:@"四项默认全开：主题里没有对应素材时，插件本身就是空转。"]];
@@ -346,14 +373,6 @@ static NSString *TCPDiagnosticsText(void) {
 - (id)readPreferenceValue:(id)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
 
-    // 主题开关：spec 上的 tcpThemePath（空串 = 系统原生外观）与当前生效路径相比。
-    NSString *choice = [specifier propertyForKey:@"tcpThemePath"];
-    if ([choice isKindOfClass:[NSString class]]) {
-        NSString *current = [TCPThemeStore shared].themePath;
-        if (![current isKindOfClass:[NSString class]]) current = @"";
-        return [choice isEqualToString:current] ? @YES : @NO;
-    }
-
     if ([key isEqualToString:TCPKeyThemePath]) {
         // 以实际生效的主题为准（也可能来自 ThemeName，或 shell 手写的路径）。
         NSString *active = [TCPThemeStore shared].themePath;
@@ -368,19 +387,6 @@ static NSString *TCPDiagnosticsText(void) {
 
 - (void)setPreferenceValue:(id)value specifier:(id)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
-
-    // 主题开关：这类 spec 没有 defaults/key，父类只会写一个没人读的键，所以自己落地。
-    // 打开 → 写这一行的路径；关掉 / 打开「系统原生外观」→ 清空 = 回原生。
-    NSString *choice = [specifier propertyForKey:@"tcpThemePath"];
-    if ([choice isKindOfClass:[NSString class]]) {
-        BOOL on = [value respondsToSelector:@selector(boolValue)] ? [value boolValue] : NO;
-        NSString *chosen = (on && choice.length > 0) ? choice : nil;
-        TCPWritePreference(TCPKeyThemePath, chosen);
-        TCPWritePreference(TCPKeyThemeName, nil);   // 两个键只留一个，免得互相打架
-        TCPPostPreferencesChanged();
-        [self reloadSpecifiers];                    // 其余开关按新快照重排
-        return;
-    }
 
     [super setPreferenceValue:value specifier:specifier];
 

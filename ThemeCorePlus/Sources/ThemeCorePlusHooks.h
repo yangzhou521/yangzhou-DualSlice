@@ -95,6 +95,11 @@ UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info);
 id TCPThemedDisplayReplacement(id original, id view);
 // 显示层打点：look/hit/未换原因，写进诊断。
 NSString *TCPDisplayProbeReport(void);
+
+// 即时生效：不注销，把桌面上已建好的图标视图的图缓存清掉、按当前 info 重取一遍。
+// 改完设置（面板广播、或 shell 手写偏好后 respring）由 ThemeCorePlusMain.m 调。
+void TCPRefreshIconImages(void);
+NSString *TCPRefreshProbeReport(void);
 UIImage *TCPThemedBadgeBackground(CGFloat scale);
 UIImage *TCPThemedBadgeTextImage(NSString *text, UIFont *font, CGFloat scale);
 UIImage *TCPThemedFolderBackground(CGFloat scale);
