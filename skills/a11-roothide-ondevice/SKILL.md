@@ -78,7 +78,8 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
 - 隐根：`@ROOTFS@` 是 `/rootfs`、`@PREFIX@` 为空、不存在 `/var/jb`、jbroot 名每次越狱都变，绝不写死；代码要打开 bootstrap 里的文件用 `ApelinBootstrapPath()`（头要从 apelin-bootstrap-paths 技能拷进 `Sources/`）。
 - **jbroot 前缀每次重新越狱都会变 —— 本机常识，永久记住**（用户 2026-10-30 18:04 原话：
   「隐根越狱、每次重新越狱（jbroot 前缀换了）都会变！这个常识现在写进硬性规定、记忆和技能包和上传云端！
-  免得你以后不知道！」）：
+  免得你以后不知道！」；2026-10-30 21:34 再次强调「以后所有的对话和工程在工作时想要构建、修改、
+  修复、编译插件的时候看看这个常识性的知识！」——**改代码、修 bug、编译出包之前都先想这条**）：
   - 引导根 = 容器 `/private/var/containers/Bundle/Application/.jbroot-<16 位十六进制>`。重新越狱
     （换引导 / 重装引导 / 重新引导）时**这个哈希会换**，整个引导根跟着改名搬家。
   - 跟着一起变的东西（都别记死）：Apelin 数据目录 `var/mobile/Documents/wiki.qaq.apelin`（在 jbroot 里）、
