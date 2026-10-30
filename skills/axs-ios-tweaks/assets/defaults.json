@@ -1,0 +1,13 @@
+{
+  "author": "Axs",
+  "class_prefix": "Axs",
+  "package_prefix": "com.axs",
+  "section": "Axs-Tweaks",
+  "version": "5.2.0",
+  "sdk_version": "16.5",
+  "minimum_ios": "14.0",
+  "repository_url": "https://axs66.github.io/pro",
+  "telegram_url": "tg://resolve?domain=wxfx8",
+  "telegram_fallback": "https://t.me/wxfx8",
+  "qq_url": "mqqapi://card/show_pslcard?src_type=internal&version=1&uin=678055716&card_type=group&source=qrcode"
+}

@@ -1,0 +1,10 @@
+        <dict>
+            <key>cell</key><string>PSTitleValueCell</string>
+            <key>cellClass</key><string>__PREFIX__SliderCell</string>
+            <key>label</key><string>数值参数</string>
+            <key>key</key><string>value</string>
+            <key>defaults</key><string>__DOMAIN__</string>
+            <key>default</key><real>1.0</real>
+            <key>min</key><real>0.0</real>
+            <key>max</key><real>2.0</real>
+        </dict>

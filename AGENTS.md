@@ -19,6 +19,10 @@
 | `Support/ThemeCorePlusPreferenceLoader.plist` | 设置里那一行的入口（bundle + 图标 + 控制器类） |
 | `Support/ThemeCorePlusIcon@2x/@3x.png` | 面板图标（MarkTheme16 的 App 图标，180×180） |
 | `scripts/build-themecoreplus.sh` | ThemeCorePlus 的构建脚本（**只在 CI 上跑**） |
+| `scripts/respring-guard.sh` | **唯一注销入口**：打印 5 秒倒计时再 `icli respring`（通知由会话先发） |
+| `scripts/errand-in-app.sh` | 外出取证：进目标 App → 点元素 → 截图/界面树 → **trap 里强制回 Apelin** |
+| `scripts/sync-skills.sh` | 本地技能目录 ↔ 仓库 `skills/` 双向同步（默认 push） |
+| `skills/` | 技能包副本（`apelin_skill_read` 读的是 `~/Documents/wiki.qaq.apelin/skills/`，这里只是版本化并上 GitHub） |
 | `.github/workflows/themecoreplus.yml` | ThemeCorePlus 的云编译 + 发 Release |
 | `Sources/`、`Support/AxsDualSliceTweak.plist`、`scripts/build-dualslice.sh`、`.github/workflows/dual-slice.yml` | 原来的双切片模板（AxsDualSlice），**别动** |
 | `Attachments/`、`probe1-3.js` | 素材与临时探针脚本 |

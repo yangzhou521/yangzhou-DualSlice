@@ -1,0 +1,11 @@
+Package: __DOMAIN__
+Name: __DISPLAY__
+Version: __VERSION__
+Architecture: iphoneos-arm
+Description: __DESCRIPTION__
+Maintainer: __AUTHOR__
+Author: __AUTHOR__
+Section: __SECTION__
+Depends: __DEPENDS__
+Icon: __REPOSITORY__/icon/__SLUG__.png
+Sileodepiction: __REPOSITORY__/sileodepiction/__SLUG__/js.json
