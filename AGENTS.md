@@ -19,7 +19,7 @@
 | `Support/ThemeCorePlusPreferenceLoader.plist` | 设置里那一行的入口（bundle + 图标 + 控制器类） |
 | `Support/ThemeCorePlusIcon@2x/@3x.png` | 面板图标（MarkTheme16 的 App 图标，180×180） |
 | `scripts/build-themecoreplus.sh` | ThemeCorePlus 的构建脚本（**只在 CI 上跑**） |
-| `scripts/respring-guard.sh` | **唯一注销入口**：先写 HUD 请求（装了 CountdownHUD 就出胶囊，v1.4.0 起先震一下最弱的触感）再终端倒计时 5 秒，最后 `sbreload`（通知由会话先发；`sbreload` 不弹批准卡） |
+| `scripts/respring-guard.sh` | **唯一注销入口**，四段：**先警告**（屏幕胶囊「⚠️ 要注销吗？在 Apelin 回「注销」或「取消」」+ 终端警告块 + **退出码 3**，什么都不做）→ **用户点头** → 带 `--confirm` 才倒计时 5 秒 → `sbreload`。不带 `--confirm` 永远不注销 |
 | `CountdownHUD/Sources/CountdownHUD.m` | 自绘胶囊（SpringBoard 顶层窗口）：倒计时「N 秒后注销」+ v1.2.0 起的**纯文案**（`!` 前缀，任务完成/进度），**不依赖通知** |
 | `Support/CountdownHUD.plist` | HUD 的注入过滤器（只进 `com.apple.springboard`） |
 | `scripts/build-countdownhud.sh` | HUD 的构建脚本（**只在 CI 上跑**，不链接 substrate） |
@@ -140,8 +140,13 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   日志 `icli log syslog --subsystem com.yangzhou.countdownhud`。
 - 卸载：`irisin-cli remove com.yangzhou.countdownhud`；不装它时脚本照样终端倒计时，只是屏幕上没有胶囊。
 
-**规矩：以后装包 / 注销 / 杀进程前，一律 `sh scripts/respring-guard.sh 5 <标签>`**（标签写清动作，
-如「注销」「装包」），让屏幕和聊天正文同时有 5 秒。
+**规矩（用户 2026-10-31 05:33 原话：「以后注销事件给我一个警告⚠️弹窗 让我决定要不注销！」）**：
+注销一律先 `sh scripts/respring-guard.sh 5 <标签>`（标签写清动作，如「注销」「装包」）—— 它**只警告、
+不注销**：屏幕胶囊弹「⚠️ 要注销吗？在 Apelin 回「注销」或「取消」」45 秒，终端打印警告块，**退出码 3**。
+等用户在 Apelin 明确回「注销 / 确定」之后，同一个动作才跑
+`sh scripts/respring-guard.sh --confirm 5 <标签>`（5 秒倒计时 + `sbreload`）。
+**没回话、回「取消/先别」、或者只是自己觉得该注销了 —— 一律停在警告那步，绝不加 `--confirm`。**
+`--confirm` 必须写在最前面。
 
 ## 每轮开动之前：本机全部技能 + 全部记忆 + GitHub 云端全部技能与项目（硬性规定）
 
@@ -208,10 +213,12 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   `apelin_screen_read_tree`、GitHub API 读 run 与 Release 状态。**不把查询推回用户、不让他截图或读屏替我、
   不来回确认**；查不到就换一条路（换命令 / 换域 / 换探针），不是回头问。
 - **全权限不免仪式**：装包（`irisin-cli install`）、注销、重启目标进程仍必须先
-  `apelin_notification_send` → 正文写「5 秒后执行」→ `sh scripts/respring-guard.sh 5 <标签>` 真等 5 秒 →
-  才执行（注销由该脚本内部 `sbreload` 完成；重启目标进程用 `sh scripts/device.sh kill <bid>` +
-  `sh scripts/device.sh launch <bid>`）；离开 Apelin 取证仍受 60 秒硬上限与「必须自己回来」约束；
-  截图每次仍需用户当次明确同意。
+  `apelin_notification_send` → 正文写清动作 → **注销先只警告**（`sh scripts/respring-guard.sh 5 <标签>`，
+  只弹胶囊警告、退出码 3、**不注销**），等用户明确回「注销 / 确定」后才
+  `sh scripts/respring-guard.sh --confirm 5 <标签>` 真倒计时 5 秒 + `sbreload`；装包这类要接着做动作的用
+  `RESPRING_GUARD_NO_RESPRING=1 sh scripts/respring-guard.sh --confirm 5 装包`；重启目标进程用
+  `sh scripts/device.sh kill <bid>` + `sh scripts/device.sh launch <bid>`；离开 Apelin 取证仍受 60 秒硬上限
+  与「必须自己回来」约束；截图每次仍需用户当次明确同意。
 - **Ask Before Using the Screen** 开着时，Apelin 自己的卡片仍会为读屏 / 交互 / 每条 icli 命令询问：
   那是用户的开关，只能他自己在设置里关，**我不代关**；但日常操作尽量走下一节的替代命令，别让用户反复点。
 - 仍然不碰：系统关键设置、别的包的删除 / 降级、Apelin / Irisin / 引导自身的包。
@@ -502,9 +509,11 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
     并写成规矩，让用户只看到「机器人又在等注销」。
   - 汇报用语：**改了哪个目标 → 重启了哪个进程（或为什么只能注销）→ 读到的诊断值**；不许只写「等注销后验证」。
   - 技能：`injected-tweak-restart-app`（本机技能目录与仓库 `skills/` 各一份）。
-- **装包 / 注销 / 重启目标进程之前，必须：① `apelin_notification_send` 通知 → ② 明说「5 秒后执行」并
-  真等 5 秒（`sh scripts/respring-guard.sh 5`）→ ③ 才执行。** 用户 2026-10-30 三次要求过、仍然漏过，
-  原因就是这条只写在记忆里 —— 现在同时写进本文件与技能 `respring-notify-countdown`。
+- **装包 / 注销 / 重启目标进程之前，必须：① `apelin_notification_send` 通知 → ② 正文写清要做什么 →
+  ③ 注销先只警告（`sh scripts/respring-guard.sh 5 <标签>`，弹胶囊、退出码 3、不注销）→ ④ 用户明确
+  回「注销 / 确定」后才 `sh scripts/respring-guard.sh --confirm 5 <标签>` 真等 5 秒并 `sbreload`。**
+  用户 2026-10-30 三次要求「先通知 + 5 秒」，2026-10-31 05:33 又加一条「注销必须我点头」；两条都写进
+  本文件与技能 `respring-notify-countdown`。
   - 涉及的动作：`irisin-cli install`（装包）、**注销**（`sbreload`，或 `scripts/respring-guard.sh`；本机**没有** `icli respring`，
     要用 icli 得写 `icli sb respring`，那会多弹一张批准卡）、`apelin_device_respring`、
     `apelin_package_confirm_loaded(respring: true)`、重启目标进程 `sh scripts/device.sh kill <bid>` + `launch <bid>`

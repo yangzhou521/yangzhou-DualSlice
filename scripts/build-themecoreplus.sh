@@ -98,7 +98,7 @@ SHARED_SRCS="$SRC/ThemeCorePlusPaths.m $SRC/ThemeCorePlusConfig.m \
 $SRC/ThemeCorePlusPreferences.m $SRC/ThemeCorePlusStore.m $SRC/ThemeCorePlusLog.m"
 TWEAK_SRCS="$SHARED_SRCS $SRC/ThemeCorePlusIcons.m $SRC/ThemeCorePlusFolders.m \
 $SRC/ThemeCorePlusBadges.m $SRC/ThemeCorePlusFiles.m $SRC/ThemeCorePlusHooks.m \
-$SRC/ThemeCorePlusMain.m"
+$SRC/ThemeCorePlusLayout.m $SRC/ThemeCorePlusMain.m"
 
 BUILD=build/themecoreplus
 DY="$BUILD/out/$PRODUCT.dylib"

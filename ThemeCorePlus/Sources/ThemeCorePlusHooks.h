@@ -133,6 +133,10 @@ BOOL TCPIconNeedsSystemComposite(id icon);
 UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *systemImage);
 // 动态图标合成打点：各叠了几张、混合模式、最后一次的像素量，写进诊断。
 NSString *TCPDynamicProbeReport(void);
+// 桌面图标布局的备份/恢复（用户 2026-10-31 05:30）：注销或 SpringBoard 崩溃后保住之前的图标布局。
+// 由 ThemeCorePlusLayout.m 实现；只在 SpringBoard 进程里动手。
+void TCPLayoutInstall(void);
+NSString *TCPLayoutDiagnostics(void);
 // 站点打点：记下「图标类 : 解析出的 bundle id」，用来判断时钟/日历是没被问还是没认出 id。
 void TCPNoteIconSiteClass(NSString *className);
 NSString *TCPIconIdentifierOf(id icon);

@@ -62,9 +62,9 @@ static void TCPWriteDiagnostics(void) {
 
     // 像素自检（gen{}/pix{}）原来写好了却没接进来，诊断里一直看不到 —— 2026-10-30 15:4x 接上：
     // 「图标没换」到底是①我们合成把图抹透明了、还是②屏幕上挂的压根不是我们那张图，靠这组数区分。
-    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
                       [store diagnostics], TCPDisplayProbeReport(), TCPRefreshProbeReport(),
-                      TCPIconProbeReport(), TCPDynamicProbeReport(),
+                      TCPIconProbeReport(), TCPDynamicProbeReport(), TCPLayoutDiagnostics(),
                       TCPBadgeProbeReport(), TCPIconPixelProbeReport(),
                       TCPScreenCensusReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
@@ -225,6 +225,10 @@ __attribute__((constructor)) static void TCPInitialize(void) {
         TCPLogLine(@"启动 v%@ bundle=%@ pid=%d",
                    TCP_VERSION, [[NSBundle mainBundle] bundleIdentifier] ?: @"?",
                    (int)[NSProcessInfo processInfo].processIdentifier);
+
+        // 桌面图标布局：先把上次的备份放回原位（早于 SBIconModel 读它），
+        // 之后系统每次保存布局都跟着存一份 —— 注销/崩溃不再丢布局。
+        TCPLayoutInstall();
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
                                         NULL,
