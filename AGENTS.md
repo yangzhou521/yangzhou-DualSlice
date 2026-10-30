@@ -211,6 +211,8 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   | 杀 App | `launchctl list` 找 pid → `kill -9 <pid>`（`device.sh kill <bid>`） | `icli app kill --force` |
   | 起 App | `uiopen --bundleid <bid>` | `icli app launch` |
   | 注销桌面 | `sbreload`（`respring-guard.sh` 已改用它） | `icli sb respring` |
+  | 看诊断（一串 `a=1;b=2;…`） | `sh scripts/device.sh diag <域> <键>`（按 `;` 拆成每行一条，好找 `pix{}` / `shows=`） | `icli prefs read` |
+  | `uiopen` 之后确认 App 真起了 / 真退了 | `sh scripts/device.sh wait <bid> [秒]` / `gone <bid> [秒]`（轮询 `launchctl list`，默认 15 秒，超时退出码 1） | `icli app frontmost` |
   | 前台是哪个 App | —（无替代） | `icli app frontmost` |
   | 界面树 / 点 / 打字 / 截图 | —（无替代） | `icli ui tree` / `ui tap` / `input` / `screen shot` |
 
@@ -221,6 +223,10 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   看可能还没落盘（正常，cfprefsd 懒刷新）。
 - `scripts/errand-in-app.sh` 的起 App / 回程已改用 `uiopen`；`icli app frontmost` 的校验默认关掉
   （省一张卡），要严格校验回程就 `ERRAND_VERIFY=1 sh scripts/errand-in-app.sh …`。
+- 实测记录（2026-10-31 02:5x）：`device.sh diag com.apple.springboard CountdownHUDDiagnostics` 把诊断
+  拆成了 15 行；`device.sh gone com.apple.springboard 3` → 「已退出（等了 0s）」；
+  `device.sh wait com.apple.mobilenotes 2` → 「已在跑（pid 32355，等了 0s）」；
+  `device.sh wait com.apple.mobilenotes abc` → 报「秒数要写整数」退出码 1。
 
 ## 硬规矩
 

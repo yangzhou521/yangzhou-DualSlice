@@ -29,8 +29,15 @@
 #   sh scripts/device.sh kill  com.apple.mobilenotes   # 杀进程前先通知 + 5 秒倒计时
 #   sh scripts/device.sh launch com.apple.mobilenotes
 #   sh scripts/device.sh respring                      # 注销：先 respring-guard.sh
+#   sh scripts/device.sh diag  com.apple.springboard ThemeCorePlusDiagnostics  # 诊断按 ';' 拆行
+#   sh scripts/device.sh wait  com.apple.mobilenotes [秒]   # 等进程起来（不给秒数=15）
+#   sh scripts/device.sh gone  com.apple.mobilenotes [秒]   # 等进程退出
 #   sh scripts/device.sh doctor                        # 这套工具齐不齐
 #
+# 为什么要 diag：插件诊断键是一长串 `a=1;b=2;...`，icli 时代靠 `icli prefs read` 看；
+# 现在 `device.sh read` 已经把值拿到了，diag 只是替用户把它拆成一目了然的每行一条，
+# 免得每次都要在长串里找 `pix{}` / `shows=`。
+
 set -u
 
 CMD=${1:-}
@@ -106,13 +113,51 @@ case "$CMD" in
     exec sbreload
     ;;
 
+  # 诊断键是一长串 `v0.9.6;active=1;...;pix{...}`，按 ';' 拆成每行一条，好找。
+  diag)
+    DOMAIN=${1:-}; KEY=${2:-}
+    [ -n "$DOMAIN" ] || die "用法: device.sh diag <domain> [key]"
+    need defaults
+    if [ -n "$KEY" ]; then
+      RAW=$(defaults read "$DOMAIN" "$KEY" 2>/dev/null) || die "读不到 $DOMAIN $KEY"
+    else
+      RAW=$(defaults read "$DOMAIN" 2>/dev/null) || die "读不到 $DOMAIN"
+    fi
+    printf '%s\n' "$RAW" | tr ';' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$'
+    ;;
+
+  # 等某个 App 起来 / 退出（不弹卡；`uiopen` 之后要确认它真起了，原先只能问 icli app frontmost）。
+  wait|gone)
+    BID=${1:-}; SECS=${2:-15}
+    [ -n "$BID" ] || die "用法: device.sh $CMD <bundle-id> [秒数]"
+    case "$SECS" in ''|*[!0-9]*) die "秒数要写整数（现在写的是 $SECS）";; esac
+    need launchctl
+    n=0
+    while [ "$n" -lt "$SECS" ]; do
+      PID=$(app_pid "$BID")
+      if [ "$CMD" = "wait" ]; then
+        if [ -n "$PID" ]; then echo "$BID 已在跑（pid $PID，等了 ${n}s）"; exit 0; fi
+      else
+        if [ -z "$PID" ]; then echo "$BID 已退出（等了 ${n}s）"; exit 0; fi
+      fi
+      sleep 1
+      n=$((n + 1))
+    done
+    if [ "$CMD" = "wait" ]; then
+      echo "$BID 在 ${SECS}s 内没起来" >&2
+    else
+      echo "$BID 在 ${SECS}s 内没有退出" >&2
+    fi
+    exit 1
+    ;;
+
   frontmost)
     echo "device.sh: 前台 App 只能问 icli（这一条会弹批准卡）：icli app frontmost" >&2
     exit 2
     ;;
 
   doctor)
-    for c in defaults launchctl killall uiopen sbreload plutil icli; do
+    for c in defaults launchctl kill ldrestart uiopen sbreload plutil awk tr sed grep sleep icli; do
       if command -v "$c" >/dev/null 2>&1; then
         echo "有   $c"
       else
