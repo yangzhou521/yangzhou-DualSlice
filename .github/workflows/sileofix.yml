@@ -109,7 +109,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (sileofix-v1.0.0)
+    name: Release (sileofix-v1.0.1)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -125,8 +125,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: sileofix-v1.0.0
-          name: SileoFix v1.0.0
+          tag_name: sileofix-v1.0.1
+          name: SileoFix v1.0.1
           body: |
             修 **SileoWallpaper** 壁纸插件导致的 Sileo 输入框失效：任意软件源页的
             「搜索软件包」点了没反应、键盘不弹、打不了字。
@@ -135,6 +135,8 @@ jobs:
             （类名以 SW 开头 / 名字含 Backdrop / UIVisualEffectView）而它既不是输入框的
             祖先也不是子孙，就把这块盖板的 userInteractionEnabled 设成 NO，触摸自然落到
             下面的输入框上。壁纸照旧，不改 SileoWallpaper 的安装内容。
+
+            若盖板类名认不出，还有一层兜底：窗口收到触摸时直接把焦点交给下面的控件。
 
             装后重启 Sileo 生效（`icli app kill org.coolstar.SileoStore --force`）。
             诊断：`icli log syslog --subsystem com.yangzhou.sileofix`
@@ -145,4 +147,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/sileofix-v1.0.0/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/sileofix-v1.0.1/$(basename "$DEB")"

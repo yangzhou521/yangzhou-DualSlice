@@ -118,7 +118,8 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   **全部**读完 ——
   `a11-roothide-ondevice`（本机 A11/roothide 的设备侧做法、云编译闭环、一站一槽钩子修法）、
   `axs-ios-tweaks`（Axs 个人约定的工程规范：命名空间、面板、滑条、Rootful/Rootless/Roothide 打包适配）、
-  `respring-notify-countdown`（装包/注销/杀进程前的通知与 5 秒倒计时、外出取证必回 Apelin）。
+  `respring-notify-countdown`（装包/注销/杀进程前的通知与 5 秒倒计时、外出取证必回 Apelin）、
+  `respring-coordinate-other-chats`（注销/装包/杀进程前先查全部工程与对话、先跟正在干活的对话打招呼再动手）。
   不许只挑一份读，也不许拿「我记得内容」代替真读；Apelin 内置技能照旧按任务需要读。
 - **全部记忆一起读**：`apelin_memory_list`（加 `all_projects: true` 就是全部工程、全部对话的记忆），
   给别的工程干活时用 `apelin_memory_list project: <folder|projectID>`；动手前先看记忆里已有的结论与坑，
@@ -176,6 +177,17 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 ## 硬规矩
 
+- **注销 / 装包 / 重启目标进程之前，先和本机其它工程、其它对话同步，不许打断它们的工作**（用户 2026-10-30
+  21:05 原话：「你注销的话和另一个对话说一下！不要打断它的工作！把这个写进记忆和技能包内！并同步到云端！
+  以后所有的对话和工程在工作时想要注销的时候都要查看搜索另外一些工作区的对话是否在工作！注销前要和别的对话
+  同步一下！」**所有工程、所有对话适用**）：
+  - 顺序：`apelin_project_list` → 每个工程 `apelin_conversation_list project: <folder>`（本工程也列），
+    把 `running` / `waitingForApproval` / 最近几分钟内有活动的对话挑出来（本对话排除）。
+  - 对每一个用 `apelin_conversation_send` 说清「约 N 秒后注销、原因、请把这一步收尾、离开 Apelin 的先回来」，
+    再用 `apelin_conversation_read`（`wait_seconds: 60`）等它这一回合结束；**绝不 `apelin_conversation_stop`**。
+  - 等超过约 120 秒仍没收尾 → **不硬注销**，正文说清「对话 A 还在做 X」，让用户决定。
+  - 协调完才进入下面那条「通知 → 正文写 5 秒 → 真等 5 秒 → 才执行」。
+  - 技能：`respring-coordinate-other-chats`（本机技能目录与仓库 `skills/` 各一份）。
 - **装包 / 注销 / 重启目标进程之前，必须：① `apelin_notification_send` 通知 → ② 明说「5 秒后执行」并
   真等 5 秒（`sh scripts/respring-guard.sh 5`）→ ③ 才执行。** 用户 2026-10-30 三次要求过、仍然漏过，
   原因就是这条只写在记忆里 —— 现在同时写进本文件与技能 `respring-notify-countdown`。

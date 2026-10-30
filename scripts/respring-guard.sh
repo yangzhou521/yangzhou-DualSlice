@@ -52,6 +52,9 @@ else
 fi
 
 echo "respring-guard: 通知发过了吗？没发就别往下走（apelin_notification_send）。"
+echo "respring-guard: 别的对话同步过了吗？没同步就别往下走（apelin_project_list，再对每个工程"
+echo "                 apelin_conversation_list project: <folder>，running/waitingForApproval 的先"
+echo "                 apelin_conversation_send 打招呼并等它收尾）。"
 echo "respring-guard: ${WAIT} 秒后${LABEL}"
 i=$WAIT
 while [ "$i" -gt 0 ]; do
