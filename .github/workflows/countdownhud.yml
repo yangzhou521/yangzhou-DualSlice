@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.1.1)
+    name: Release (countdownhud-v1.2.0)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,8 +133,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.1.1
-          name: CountdownHUD v1.1.1
+          tag_name: countdownhud-v1.2.0
+          name: CountdownHUD v1.2.0
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
 
@@ -152,6 +152,11 @@ jobs:
 
             触发：脚本把 `<epoch>|<秒数>|<标签>` 写进
             `/var/mobile/Library/Preferences/.countdownhud-request`，插件每 0.5 秒轮询一次。
+
+            v1.2.0：同一个胶囊兼作「纯文案」提醒 —— 标签以 `!` 开头时，屏幕上就是这句话本身
+            （不显示「N 秒后」前缀、不跳数字、不做绿→橙→红升级），N 秒后淡出。用于任务完成 /
+            阶段进度：`sh scripts/hud-notify.sh 8 "完成：…"`。诊断串末尾多了 `mode=plain|count`。
+
             验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`
             （另有 CountdownHUDIslandCandidates 列出量到的候选）。
           files: release/*.deb
@@ -161,4 +166,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.1.1/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.2.0/$(basename "$DEB")"

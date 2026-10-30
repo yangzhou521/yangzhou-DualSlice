@@ -20,10 +20,11 @@
 | `Support/ThemeCorePlusIcon@2x/@3x.png` | 面板图标（MarkTheme16 的 App 图标，180×180） |
 | `scripts/build-themecoreplus.sh` | ThemeCorePlus 的构建脚本（**只在 CI 上跑**） |
 | `scripts/respring-guard.sh` | **唯一注销入口**：先写 HUD 请求（装了 CountdownHUD 就出胶囊）再终端倒计时 5 秒，最后 `icli sb respring`（通知由会话先发） |
-| `CountdownHUD/Sources/CountdownHUD.m` | 自绘倒计时胶囊（SpringBoard 顶层窗口，「N 秒后注销」），**不依赖通知** |
+| `CountdownHUD/Sources/CountdownHUD.m` | 自绘胶囊（SpringBoard 顶层窗口）：倒计时「N 秒后注销」+ v1.2.0 起的**纯文案**（`!` 前缀，任务完成/进度），**不依赖通知** |
 | `Support/CountdownHUD.plist` | HUD 的注入过滤器（只进 `com.apple.springboard`） |
 | `scripts/build-countdownhud.sh` | HUD 的构建脚本（**只在 CI 上跑**，不链接 substrate） |
-| `.github/workflows/countdownhud.yml` | HUD 的云编译 + 发 Release（tag `countdownhud-v1.1.1`） |
+| `scripts/hud-notify.sh` | **一句话上岛**：`[秒数] <文案>` → 灵动岛纯文案提醒（8 秒默认），不注销、不装包 |
+| `.github/workflows/countdownhud.yml` | HUD 的云编译 + 发 Release（tag `countdownhud-v1.2.0`） |
 | `scripts/errand-in-app.sh` | 外出取证：进目标 App → 点元素 → 截图/界面树 → **trap 里强制回 Apelin** |
 | `scripts/sync-skills.sh` | 本地技能目录 ↔ 仓库 `skills/` 双向同步（默认 push） |
 | `scripts/sync-memory.sh` | 本地记忆 ↔ 仓库 `memory/memories.json` 双向同步（默认 push；`pull` 会覆盖本机，先看 diff） |
@@ -98,10 +99,15 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   字重 Semibold → Medium，数字用 `monospacedDigitSystemFontOfSize:` 让每秒跳动不左右抖。
   再要调就改 `CHApplyPillRect()` 里那一个系数（÷3 = 原来的 ×0.5 的 2/3），夹取范围 9~16pt。
   实际用的字号写进诊断 `font=`。
+- **纯文案提醒（v1.2.0 起）**：标签以 `!` 开头时不当倒计时看 —— 屏幕上就是这句话本身
+  （不带「N 秒后」前缀、不跳数字、不做绿→橙→红升级，一直系统绿），N 秒后淡出，超过 32 字截断加省略号。
+  用途：任务做完 / 阶段完成的进度提醒，用户去了别的对话、桌面或别的 App 时也能在岛上看到。
+  一条命令：`sh scripts/hud-notify.sh 8 "完成：<一句话>"`（不注销、不装包；注销那条路仍走
+  `scripts/respring-guard.sh`）。诊断串末尾多了 `mode=plain|count`。
 - 从 shell 写这个文件必须加真根前缀：`/rootfs/var/mobile/Library/Preferences/.countdownhud-request`
-  （脚本已包好，见 `scripts/respring-guard.sh`）。
+  （脚本已包好，见 `scripts/respring-guard.sh` 与 `scripts/hud-notify.sh`）。
 - 验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`
-  → `v1.1.1;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N`；
+  → `v1.2.0;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N;mode=count`；
   量到的候选清单：`icli prefs read com.apple.springboard CountdownHUDIslandCandidates`
   （最多 8 行 `A|<类名>|x,y,w,h`，前缀 A = 在 Aperture 窗口里）；
   日志 `icli log syslog --subsystem com.yangzhou.countdownhud`。
@@ -177,6 +183,21 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 ## 硬规矩
 
+- **每一件事做完都要在对话内说清结果；完成了还要用灵动岛胶囊 + 通知提醒他**（用户 2026-10-30 21:16
+  原话：「以后所有让你完全和修复的结果：如果修复和完成✅后都要在对话内和我说一下！如果我离开此对话去别的对话
+  和去系统桌面上和我本地安装的软件内都要用灵动岛胶囊通知我一下！给我提一下工作进程和工作进度！把这个写进记忆
+  和技能包内！并同步到云端！以后所有的对话和工程在工作时有初步己达成完成的有结果的任务结束时，都要给我一个
+  通知和提醒！」**所有工程、所有对话、永久适用**）：
+  - **对话内先说**：修复 / 功能 / 检查有结果，回复正文第一句就是结果（做了什么、验证了什么、还有什么没验），
+    不许只做完不说、也不许把结论埋在长报告里。
+  - **离开本对话时用胶囊**：用户很可能在这个回合结束后就切到别的对话、回桌面、或去已装 App 里看效果，
+    所以每件有结果的事都补一条胶囊 + 一条通知，让他不在 Apelin 时也看得见。
+    胶囊：`sh scripts/hud-notify.sh 8 "完成：<一句话>"`（v1.2.0 的纯文案模式，不注销、不装包）。
+    通知：`apelin_notification_send`（短标题 + 一两句结果与下一步；每回合 ≤3 条、间隔 ≥30 秒）。
+  - **阶段也提醒**：长活（云编译、装包、批量修复）每到一个有结论的节点就上岛一次，讲清进度到哪、
+    下一步是什么，别让用户对着黑箱等。
+  - **预览 / 试验也要有落点**：只做了一半、只验了一部分，就照实说「已验证 X、未验证 Y」，并给用户自查的路。
+  - 技能：`task-done-notify`（本机技能目录与仓库 `skills/` 各一份）。
 - **注销 / 装包 / 重启目标进程之前，先和本机其它工程、其它对话同步，不许打断它们的工作**（用户 2026-10-30
   21:05 原话：「你注销的话和另一个对话说一下！不要打断它的工作！把这个写进记忆和技能包内！并同步到云端！
   以后所有的对话和工程在工作时想要注销的时候都要查看搜索另外一些工作区的对话是否在工作！注销前要和别的对话
@@ -188,6 +209,17 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   - 等超过约 120 秒仍没收尾 → **不硬注销**，正文说清「对话 A 还在做 X」，让用户决定。
   - 协调完才进入下面那条「通知 → 正文写 5 秒 → 真等 5 秒 → 才执行」。
   - 技能：`respring-coordinate-other-chats`（本机技能目录与仓库 `skills/` 各一份）。
+- **注入型插件装好后不必注销桌面：灭掉目标 App（后台划掉）再打开就完全生效**（用户 2026-10-30 21:24 原话：
+  「这些注入型的插件在安装后 划掉后台重进软件和插件内就能实现功能完全注入！不必重新注销桌面！这个常识写进
+  硬性规定、记忆和技能包内！并同步到云端！以后所有的对话和工程在工作时想要注销的时候看看这个常识性的知识！
+  这些注入型的插件划掉后台重进软件和插件内就立即生效！」**所有工程、所有对话、永久适用**）：
+  - 原理：tweak 只在自己过滤器命中的进程**启动时**被 dyld 加载，所以改代码 / 装包之后重启那个进程就够了；
+    SpringBoard 只在插件本身注入 SpringBoard（如 CountdownHUD、桌面图标钩子）时才需要注销。
+  - 做法：App 类目标 → 干掉进程再重开（`icli app kill <bid> --force` + `icli app launch <bid>`，或用户自己上划
+    划掉再点开）；设置面板类 → 退出设置再进。**先想这一步，别一上来就 respring。**
+  - 验证：重开后读该 App 域里的诊断键，例如 `icli prefs read <bid> <Tweak>Diagnostics` 看版本号有没有变。
+  - 真要注销（SpringBoard 注入、改 plist 过滤器、改包布局）时，才走上面「先协调对话 → 通知 → 5 秒 → 执行」。
+  - 技能：`injected-tweak-restart-app`（本机技能目录与仓库 `skills/` 各一份）。
 - **装包 / 注销 / 重启目标进程之前，必须：① `apelin_notification_send` 通知 → ② 明说「5 秒后执行」并
   真等 5 秒（`sh scripts/respring-guard.sh 5`）→ ③ 才执行。** 用户 2026-10-30 三次要求过、仍然漏过，
   原因就是这条只写在记忆里 —— 现在同时写进本文件与技能 `respring-notify-countdown`。

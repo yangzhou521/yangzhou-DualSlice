@@ -1,5 +1,10 @@
 //
-// CountdownHUD.m —— SpringBoard 侧的自绘倒计时胶囊（「倒计时上岛」）
+// CountdownHUD.m —— SpringBoard 侧的自绘胶囊（「倒计时上岛」+ 纯文案提醒）
+//
+// v1.2.0：同一个胶囊多了一种「纯文案」用法 —— 标签以 `!` 开头时，屏幕上是这句话本身
+//   （不显示「N 秒后」前缀、不跳数字、不做绿→橙→红的倒计时升级），显示 N 秒后淡出。
+//   用途：任务做完 / 阶段完成 / 工作进度，用户去了别的对话、桌面或别的 App 时也能在岛上看到。
+//   例：`<epoch>|8|!完成：ThemeControl 设置面板`。诊断串因此多了 `mode=plain|count`。
 //
 // v1.1.1：文字压到原来的 2/3（位置系数「高度 × 0.5」→「高度 ÷ 3」，本机 125×37 的岛上
 //   约 12.3pt），并换成等宽数字 + Medium 字重 —— 用户 2026-10-30 反馈「字体太大、不够精致」。
@@ -38,7 +43,7 @@
 #import <math.h>
 #import <os/log.h>
 
-static NSString *const CHVersion = @"1.1.1";
+static NSString *const CHVersion = @"1.2.0";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static const NSTimeInterval CHPollInterval = 0.5;
 
@@ -82,6 +87,7 @@ static NSUInteger gRemaining = 0;
 static NSString *gLabelText = @"";
 static unsigned long gShows = 0;
 static unsigned long gLastSeconds = 0;
+static BOOL gPlainNotice = NO;   // v1.2.0：「!」开头的标签＝纯文案，不显示「N 秒后」，不跳数字
 
 // 量岛的结果
 static BOOL gFollowIsland = YES;          // 量到岛就跟着岛走
@@ -338,12 +344,13 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
 }
 
 static void CHWriteDiagnostics(void) {
-    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu",
+    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@",
                          CHVersion, gShows, gLastSeconds,
                          gLabelText.length ? gLabelText : @"-",
                          gFontSize,
                          gIslandDetail, gIslandSource,
-                         (unsigned long)gIslandCandidates];
+                         (unsigned long)gIslandCandidates,
+                         gPlainNotice ? @"plain" : @"count"];
     CFPreferencesSetAppValue(CFSTR("CountdownHUDDiagnostics"),
                              (__bridge CFStringRef)summary,
                              kCFPreferencesCurrentApplication);
@@ -416,15 +423,22 @@ static void CHBuildIfNeeded(void) {
 }
 
 static void CHPaint(void) {
-    // v1.1.1：常规色由白改绿（系统绿 #34C759）——用户要求；绿 → 橙 → 红 就是「还有 / 快到了 / 马上」。
-    UIColor *tint = [UIColor systemGreenColor];
-    if (gRemaining <= 2) {
-        tint = [UIColor colorWithRed:1.0 green:0.27 blue:0.23 alpha:1.0];
-    } else if (gRemaining <= 3) {
-        tint = [UIColor colorWithRed:1.0 green:0.62 blue:0.04 alpha:1.0];
+    if (gPlainNotice) {
+        // v1.2.0：纯文案（任务完成 / 进度提醒）——不是倒计时，所以不做绿→橙→红的升级，
+        // 也不带「N 秒后」前缀，屏幕上就是这句话本身。
+        gLabel.textColor = [UIColor systemGreenColor];
+        gLabel.text = gLabelText;
+    } else {
+        // v1.1.1：常规色由白改绿（系统绿 #34C759）——用户要求；绿 → 橙 → 红 就是「还有 / 快到了 / 马上」。
+        UIColor *tint = [UIColor systemGreenColor];
+        if (gRemaining <= 2) {
+            tint = [UIColor colorWithRed:1.0 green:0.27 blue:0.23 alpha:1.0];
+        } else if (gRemaining <= 3) {
+            tint = [UIColor colorWithRed:1.0 green:0.62 blue:0.04 alpha:1.0];
+        }
+        gLabel.textColor = tint;
+        gLabel.text = [NSString stringWithFormat:@"%lu 秒后%@", (unsigned long)gRemaining, gLabelText];
     }
-    gLabel.textColor = tint;
-    gLabel.text = [NSString stringWithFormat:@"%lu 秒后%@", (unsigned long)gRemaining, gLabelText];
 
     gPill.transform = CGAffineTransformMakeScale(1.08, 1.08);
     [UIView animateWithDuration:0.28
@@ -449,12 +463,12 @@ static void CHHide(void) {
                      }];
 }
 
-static void CHStartCountdown(NSUInteger seconds, NSString *label) {
+static void CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain) {
     if (seconds == 0 || seconds > 600) {
-        seconds = 5;
+        seconds = plain ? 8 : 5;
     }
     if (label.length == 0) {
-        label = @"注销";
+        label = plain ? @"完成" : @"注销";
     }
     CHBuildIfNeeded();
     if (gWindow == nil) {
@@ -468,6 +482,7 @@ static void CHStartCountdown(NSUInteger seconds, NSString *label) {
     gRemaining = seconds;
     gLastSeconds = (unsigned long)seconds;
     gLabelText = [label copy];
+    gPlainNotice = plain;
     gShows += 1;
 
     CHLayOut();
@@ -476,7 +491,8 @@ static void CHStartCountdown(NSUInteger seconds, NSString *label) {
     [gWindow bringSubviewToFront:gPill];
     CHPaint();
     CHWriteDiagnostics();
-    os_log(CHLog(), "HUD show secs=%lu label=%{public}@", (unsigned long)seconds, gLabelText);
+    os_log(CHLog(), "HUD show secs=%lu label=%{public}@ mode=%{public}@",
+           (unsigned long)seconds, gLabelText, plain ? @"plain" : @"count");
 
     gTimer = [NSTimer scheduledTimerWithTimeInterval:1.0
                                              repeats:YES
@@ -485,13 +501,17 @@ static void CHStartCountdown(NSUInteger seconds, NSString *label) {
             gRemaining -= 1;
             // 岛可能被 VisibleIsland / DynamicX 挪了或换了布局：每秒重新量一次。
             CHLayOut();
-            CHPaint();
+            if (!gPlainNotice) {
+                CHPaint(); // 纯文案不跳数字，不必每秒重画
+            }
             os_log(CHLog(), "HUD tick %lu", (unsigned long)gRemaining);
         } else {
             [timer invalidate];
             gTimer = nil;
-            gLabel.textColor = [UIColor colorWithRed:1.0 green:0.27 blue:0.23 alpha:1.0];
-            gLabel.text = [NSString stringWithFormat:@"现在%@", gLabelText];
+            if (!gPlainNotice) {
+                gLabel.textColor = [UIColor colorWithRed:1.0 green:0.27 blue:0.23 alpha:1.0];
+                gLabel.text = [NSString stringWithFormat:@"现在%@", gLabelText];
+            }
             os_log(CHLog(), "HUD finish");
             CHHide();
             CHWriteDiagnostics();
@@ -507,6 +527,7 @@ static void CHHandleRequest(NSString *content) {
     NSArray<NSString *> *parts = [content componentsSeparatedByString:@"|"];
     NSUInteger seconds = 5;
     NSString *label = @"注销";
+    BOOL plain = NO;
     if (parts.count >= 2) {
         NSInteger value = [parts[1] integerValue];
         if (value > 0 && value <= 600) {
@@ -520,8 +541,21 @@ static void CHHandleRequest(NSString *content) {
             label = candidate;
         }
     }
+    // v1.2.0：标签以「!」开头＝纯文案提醒（任务完成 / 进度），屏幕上就是这句话本身。
+    if ([label hasPrefix:@"!"]) {
+        plain = YES;
+        label = [label substringFromIndex:1];
+        label = [label stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (label.length == 0) {
+            label = @"完成";
+        }
+        // 单行显示，太长会被缩到看不清：留前 32 个字。
+        if (label.length > 32) {
+            label = [[label substringToIndex:31] stringByAppendingString:@"…"];
+        }
+    }
     dispatch_async(dispatch_get_main_queue(), ^{
-        CHStartCountdown(seconds, label);
+        CHStartCountdown(seconds, label, plain);
     });
 }
 

@@ -1,5 +1,5 @@
 // 读指定 run 的 job 注解（公开仓库匿名可读）
-var RUN = "41061274672";
+var RUN = "41059259047";
 var REPO = "yangzhou521/yangzhou-DualSlice";
 var NSData = ObjC.use('NSData');
 var NSURL = ObjC.use('NSURL');
