@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.4.2)
+    name: Release (countdownhud-v1.5.0)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,14 +133,26 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.4.2
-          name: CountdownHUD v1.4.2
+          tag_name: countdownhud-v1.5.0
+          name: CountdownHUD v1.5.0
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
 
             为什么不靠通知：Apelin 的本地通知在发送瞬间会把 App 拉回前台，横幅被它自己的
             UNUserNotificationCenterDelegate 吞掉，既看不到、也进不了灵动岛。这个插件不碰通知，
             直接在 SpringBoard 顶层窗口画。
+
+            v1.5.0：**注销前先弹一个系统样式的确认框，让用户自己决定**（用户 2026-10-31
+            05:33「以后注销事件给我一个警告⚠️弹窗 让我决定要不注销！」05:35「和 ios 系统桌面
+            弹窗一样的弹窗！无论在任何界面有注销事件发生它就给我一个弹窗！」）。
+            请求标签以 `?` 开头时不再画胶囊，而是在 SpringBoard 里 present 一个
+            UIAlertController（和桌面 / 设置里弹的完全同款：圆角面板 + 毛玻璃 + 两颗按钮），
+            标题「⚠️ 即将注销」，按钮「取消」/「立即注销」；窗口层级 30000000，高过一切 App
+            与灵动岛，所以任何界面都盖得住。用户点完把结果写进
+            `/var/mobile/Library/Preferences/.countdownhud-answer`（`<epoch>|confirm|cancel|timeout`），
+            脚本读到 confirm 才真的倒计时 + sbreload；**超时只写 timeout，绝不自动注销**。
+            诊断串末尾多了 `alerts=<次数>` 与 `ans=<最近答复>`，`mode=alert` 表示这次是弹窗。
+            铁律不变：构造函数阶段不碰任何 UIKit。
 
             v1.4.2：**震动必须排在 UIKit 就绪之后**。v1.4.1 把生成器改成惰性创建，但「第一次
             真要震时」那一刻往往正是 SpringBoard 刚起来、windowScene 还没拿到的时候 ——
@@ -199,4 +211,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.4.2/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.5.0/$(basename "$DEB")"

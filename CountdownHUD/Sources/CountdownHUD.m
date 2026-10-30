@@ -60,12 +60,16 @@
 #import <math.h>
 #import <os/log.h>
 
-static NSString *const CHVersion = @"1.4.2";
+static NSString *const CHVersion = @"1.5.0";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
+static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 static const NSTimeInterval CHPollInterval = 0.5;
 
 // 胶囊窗口的层级：既要盖在灵动岛（SystemAperture 那套）之上，也要盖在任何 App 之上。
 static const CGFloat CHWindowLevel = 20000000.0;
+
+// v1.5.0：注销确认弹窗要盖在胶囊（20000000）和系统 alert（2000）之上，任何界面都压得住。
+static const CGFloat CHAlertWindowLevel = 30000000.0;
 
 // 兜底尺寸：找不到岛的时候才用。
 static const CGFloat CHFallbackPillWidth = 190.0;
@@ -99,6 +103,22 @@ static os_log_t CHLog(void) {
 }
 @end
 
+// v1.5.0：注销确认弹窗的窗口。和胶囊窗口相反，这一层**必须吃触摸**（要能点「取消 / 立即注销」）。
+// 但它铺满全屏，所以点在弹窗面板之外时返回 nil —— 触摸照常落到下面的 App，
+// 不许因为弹了个窗就把整个屏幕锁死。
+@interface CHAlertWindow : UIWindow
+@end
+
+@implementation CHAlertWindow
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    if (hit == nil || hit == self || hit == self.rootViewController.view) {
+        return nil;
+    }
+    return hit;
+}
+@end
+
 static CHWindow *gWindow = nil;
 static UIView *gPill = nil;
 static UILabel *gLabel = nil;
@@ -110,6 +130,11 @@ static unsigned long gLastSeconds = 0;
 static BOOL gPlainNotice = NO;   // v1.2.0：「!」开头的标签＝纯文案，不显示「N 秒后」，不跳数字
 static NSUInteger gHaptics = 0;      // v1.4.0：累计震了几次（诊断串 haptic=）
 static NSString *gHapticToken = nil; // v1.4.0：已经为哪条请求震过（同一请求只震一次）
+
+// v1.5.0：注销确认弹窗的状态（诊断串里要报，所以和别的 static 放一起）。
+static BOOL gAskMode = NO;              // 这次是弹窗而不是胶囊 → mode=alert
+static unsigned long gAlerts = 0;       // 累计弹过几次
+static NSString *gAnswerDetail = @"-";  // 最近一次答复 confirm|cancel|timeout|-
 
 // 量岛的结果
 static BOOL gFollowIsland = YES;          // 量到岛就跟着岛走
@@ -382,15 +407,16 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
 }
 
 static void CHWriteDiagnostics(void) {
-    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu",
+    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@",
                          CHVersion, gShows, gLastSeconds,
                          gLabelText.length ? gLabelText : @"-",
                          gFontSize,
                          gIslandDetail, gIslandSource,
                          (unsigned long)gIslandCandidates,
-                         gPlainNotice ? @"plain" : @"count",
+                         gAskMode ? @"alert" : (gPlainNotice ? @"plain" : @"count"),
                          gSelfWindowDetail, gIslandWindowDetail,
-                         (unsigned long)gHaptics];
+                         (unsigned long)gHaptics,
+                         (unsigned long)gAlerts, gAnswerDetail];
     CFPreferencesSetAppValue(CFSTR("CountdownHUDDiagnostics"),
                              (__bridge CFStringRef)summary,
                              kCFPreferencesCurrentApplication);
@@ -548,6 +574,7 @@ static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain) {
     gLastSeconds = (unsigned long)seconds;
     gLabelText = [label copy];
     gPlainNotice = plain;
+    gAskMode = NO;   // v1.5.0：走胶囊就不是弹窗了（诊断串 mode= 要跟着变回来）
     gShows += 1;
 
     CHLayOut();
@@ -582,6 +609,148 @@ static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain) {
             CHWriteDiagnostics();
         }
     }];
+    return YES;
+}
+
+#pragma mark - 注销确认弹窗（v1.5.0）
+
+// 用户 2026-10-31 05:33 / 05:35：「以后注销事件给我一个警告⚠️弹窗 让我决定要不注销！」
+// 「和 ios 系统桌面弹窗一样的弹窗！无论在任何界面有注销事件发生它就给我一个弹窗！」
+//
+// 请求标签以 `?` 开头就走这条路：**不画胶囊**，直接在 SpringBoard 里 present 一个
+// UIAlertController（和桌面、设置里弹的完全同款：圆角面板 + 两颗按钮），
+// 标题「⚠️ 即将注销」，按钮「取消」/「立即注销」。
+// 窗口层级 CHAlertWindowLevel 高过一切 App 与灵动岛，所以任何界面都会盖上来。
+//
+// 用户点完把结果写进 CHAnswerPath：`<epoch>|confirm|cancel|timeout`，
+// 脚本读这一行才决定要不要真的往下走。**超时绝不自动注销** —— 这是「让我决定」的底线。
+static CHAlertWindow *gAlertWindow = nil;
+static UIAlertController *gAlert = nil;
+static NSTimer *gAlertTimeout = nil;
+
+static void CHWriteAnswer(NSString *verdict) {
+    // 带 epoch：脚本先记下自己写请求那一刻的时间，只认比它新的答复，不会被上一次的旧答案骗到。
+    NSString *line = [NSString stringWithFormat:@"%ld|%@\n",
+                      (long)[[NSDate date] timeIntervalSince1970], verdict];
+    NSError *err = nil;
+    BOOL ok = [line writeToFile:CHAnswerPath atomically:YES
+                       encoding:NSUTF8StringEncoding error:&err];
+    if (!ok) {
+        os_log(CHLog(), "answer write failed: %{public}@", err.localizedDescription);
+    }
+    gAnswerDetail = verdict;
+    os_log(CHLog(), "answer %{public}@ written=%d", verdict, ok ? 1 : 0);
+}
+
+// 只在真有 windowScene 时才建弹窗窗口（和胶囊同一个铁律：没挂 scene 的窗口不渲染）。
+static BOOL CHEnsureAlertWindow(void) {
+    UIWindowScene *scene = CHPickScene();
+    if (scene == nil) {
+        return NO;
+    }
+    if (gAlertWindow != nil && gAlertWindow.windowScene == scene) {
+        return YES;
+    }
+    if (gAlertWindow != nil) {
+        gAlertWindow.hidden = YES;
+        gAlertWindow = nil;
+        gAlert = nil;
+    }
+
+    CHAlertWindow *w = [[CHAlertWindow alloc] initWithWindowScene:scene];
+    w.windowLevel = CHAlertWindowLevel;
+    w.backgroundColor = [UIColor clearColor];
+    w.hidden = NO;
+
+    UIViewController *host = [[UIViewController alloc] init];
+    host.view.backgroundColor = [UIColor clearColor];
+    w.rootViewController = host;
+
+    gAlertWindow = w;
+    os_log(CHLog(), "alert window ready on %{public}@ (level=%.0f)",
+           CHClassNameOf(scene), w.windowLevel);
+    return YES;
+}
+
+static void CHDismissAlert(void) {
+    if (gAlertTimeout != nil) {
+        [gAlertTimeout invalidate];
+        gAlertTimeout = nil;
+    }
+    UIAlertController *a = gAlert;
+    gAlert = nil;
+    if (a != nil) {
+        [a dismissViewControllerAnimated:YES completion:^{
+            gAlertWindow.hidden = YES;
+        }];
+    } else if (gAlertWindow != nil) {
+        gAlertWindow.hidden = YES;
+    }
+}
+
+// 返回 NO ＝ 现在还没有 windowScene，这次没弹，请求留着下一拍再来（不算消费掉）。
+static BOOL CHShowAlert(NSUInteger seconds, NSString *label) {
+    if (!CHEnsureAlertWindow()) {
+        os_log(CHLog(), "no window scene yet, alert deferred");
+        return NO;
+    }
+    // 同一时刻只留一个弹窗：上一条还没收就先收掉。
+    if (gAlert != nil) {
+        if (gAlertTimeout != nil) {
+            [gAlertTimeout invalidate];
+            gAlertTimeout = nil;
+        }
+        [gAlert dismissViewControllerAnimated:NO completion:nil];
+        gAlert = nil;
+    }
+
+    gAskMode = YES;
+    gPlainNotice = NO;
+    gLabelText = [label copy];
+    gLastSeconds = (unsigned long)seconds;
+    gShows += 1;
+    gAlerts += 1;
+
+    UIAlertController *a =
+        [UIAlertController alertControllerWithTitle:@"⚠️ 即将注销"
+                                           message:label
+                                    preferredStyle:UIAlertControllerStyleAlert];
+    // 取消：什么都不做，只把 cancel 写回去。
+    [a addAction:[UIAlertAction actionWithTitle:@"取消"
+                                          style:UIAlertActionStyleCancel
+                                        handler:^(UIAlertAction *action) {
+        CHWriteAnswer(@"cancel");
+        CHDismissAlert();
+        CHWriteDiagnostics();
+    }]];
+    // 立即注销：写 confirm，脚本读到才会真的倒计时 + sbreload。
+    [a addAction:[UIAlertAction actionWithTitle:@"立即注销"
+                                          style:UIAlertActionStyleDestructive
+                                        handler:^(UIAlertAction *action) {
+        CHWriteAnswer(@"confirm");
+        CHDismissAlert();
+        CHWriteDiagnostics();
+    }]];
+
+    gAlert = a;
+    gAlertWindow.hidden = NO;
+    [gAlertWindow.rootViewController presentViewController:a animated:YES completion:nil];
+
+    // 超时：写 timeout，收掉弹窗，**绝不自动注销**。
+    if (seconds > 0) {
+        gAlertTimeout = [NSTimer scheduledTimerWithTimeInterval:(NSTimeInterval)seconds
+                                                        repeats:NO
+                                                          block:^(NSTimer *timer) {
+            gAlertTimeout = nil;
+            CHWriteAnswer(@"timeout");
+            CHDismissAlert();
+            CHWriteDiagnostics();
+            os_log(CHLog(), "alert timed out, nothing done");
+        }];
+    }
+
+    CHWriteDiagnostics();
+    os_log(CHLog(), "alert shown secs=%lu label=%{public}@", (unsigned long)seconds, gLabelText);
     return YES;
 }
 
@@ -639,10 +808,13 @@ static BOOL CHHandleRequest(NSString *content) {
     NSUInteger seconds = 5;
     NSString *label = @"注销";
     BOOL plain = NO;
+    BOOL ask = NO;
+    BOOL hasSeconds = NO;
     if (parts.count >= 2) {
         NSInteger value = [parts[1] integerValue];
         if (value > 0 && value <= 600) {
             seconds = (NSUInteger)value;
+            hasSeconds = YES;
         }
     }
     if (parts.count >= 3) {
@@ -663,6 +835,24 @@ static BOOL CHHandleRequest(NSString *content) {
         // 单行显示，太长会被缩到看不清：留前 32 个字。
         if (label.length > 32) {
             label = [[label substringToIndex:31] stringByAppendingString:@"…"];
+        }
+    }
+    // v1.5.0：标签以「?」开头＝**注销确认弹窗**（系统样式，任何界面都盖上来）。
+    // 这一条里的「秒数」不是倒计时，而是「弹窗挂多久没人理就自己收掉」（默认 60 秒），
+    // 超时写 timeout，**绝不自动注销**。
+    if ([label hasPrefix:@"?"]) {
+        ask = YES;
+        label = [label substringFromIndex:1];
+        label = [label stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (label.length == 0) {
+            label = @"注销";
+        }
+        // 弹窗正文单行显示，太长就截断。
+        if (label.length > 48) {
+            label = [[label substringToIndex:47] stringByAppendingString:@"…"];
+        }
+        if (!hasSeconds) {
+            seconds = 60;
         }
     }
     // v1.4.0：要动设备的动作（注销 / 装包 / 杀进程，也就是非 `!` 的倒计时）先把最弱的震动
@@ -691,7 +881,7 @@ static BOOL CHHandleRequest(NSString *content) {
                 gHapticToken = [content copy];
             }
         }
-        shown = CHStartCountdown(seconds, label, plain);
+        shown = ask ? CHShowAlert(seconds, label) : CHStartCountdown(seconds, label, plain);
     };
     if ([NSThread isMainThread]) {
         run();
