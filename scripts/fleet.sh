@@ -218,6 +218,33 @@ agent_of() {
   fi
 }
 
+# agent 是否在名册（agents.tsv 第1列短 id 或第3列全 session id）
+roster_has() {
+  a=${1:-}
+  [ -n "$a" ] || return 1
+  [ -s "$ROSTER" ] || return 1
+  awk -F"$TAB" -v a="$a" '$1 == a || $3 == a { found = 1 } END { exit(found ? 0 : 1) }' "$ROSTER"
+}
+
+# 把全 session id 归一成短 id（本来就是短 id就原样返回）
+roster_short() {
+  a=${1:-}
+  [ -n "$a" ] || return 1
+  if [ -s "$ROSTER" ]; then
+    s=$(awk -F"$TAB" -v a="$a" '$3 == a { print $1; exit }' "$ROSTER")
+    [ -n "$s" ] && { printf '%s' "$s"; return 0; }
+  fi
+  printf '%s' "$a"
+}
+
+# agent 是否在黑板（board.tsv 第1列）
+board_has() {
+  a=${1:-}
+  [ -n "$a" ] || return 1
+  [ -s "$BOARD" ] || return 1
+  awk -F"$TAB" -v a="$a" '$1 == a { found = 1 } END { exit(found ? 0 : 1) }' "$BOARD"
+}
+
 check_action() {
   case "${1:-}" in
     none|respring|install|kill|screen) ;;
@@ -1405,8 +1432,32 @@ cmd_rebalance() {
 # progress：实时刷新自己那行的「进展/下一步」与时间（不动工程/状态/任务/设备）。
 # 每跑完一小步就写一句 —— 别的对话 list 立刻看见你到哪了，不用 post 整行、也不用发消息。
 cmd_progress() {
-  msg=${1:-继续}
-  agent=$(agent_of "")
+  # 用法：progress [<agent>] <一句话>
+  # agent 可选：第一参数若命中名册/黑板里的 agent（短 id 或全 session id）就当作 agent，
+  # 否则第一参数属于文案的一部分。没给 agent 就 fallback $FLEET_AGENT；都没有就报错并打示例。
+  agent=""
+  msg="$*"
+  first=${1:-}
+  if [ -n "$first" ]; then
+    if roster_has "$first"; then
+      agent=$(roster_short "$first")
+      shift
+      msg="$*"
+      [ -n "$msg" ] || msg="继续"
+    fi
+  fi
+  if [ -z "$agent" ]; then
+    agent=$(agent_of "")
+  fi
+  if [ -z "$agent" ] || [ "$agent" = "unknown" ]; then
+    echo "fleet: 不知道你是谁。请这样用：FLEET_AGENT=<你的短 id> sh fleet.sh progress \"<一句话>\"" >&2
+    echo "fleet: 或：sh fleet.sh progress <agent短id> \"<一句话>\"" >&2
+    exit 2
+  fi
+  if ! roster_has "$agent" && ! board_has "$agent"; then
+    echo "fleet: '$agent' 不在名册也不在黑板上，不许新写一行。先 sh fleet.sh roster 看名册。" >&2
+    exit 2
+  fi
   cur=$(awk -F"$TAB" -v a="$agent" '$1 == a { print $2 "\t" $3 "\t" $4 "\t" $6; exit }' "$BOARD" 2>/dev/null) || cur=""
   if [ -z "$cur" ]; then
     echo "fleet: 你还没 post 过，先 post 一行再 progress" >&2
