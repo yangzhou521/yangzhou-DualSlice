@@ -19,9 +19,13 @@
 #
 # 用法：
 #   sh scripts/respring-guard.sh                 # 5 秒倒计时后 icli sb respring
+#   RESPRING_GUARD_NO_RESPRING=1 sh scripts/respring-guard.sh 5 装包   # 只倒计时
 #   sh scripts/respring-guard.sh 8 装包           # 8 秒，标签「装包」
 #
 set -eu
+
+# RESPRING_GUARD_NO_RESPRING=1：只倒计时，不注销（装包这类要自己接着做动作时用）。
+NO_RESPRING=${RESPRING_GUARD_NO_RESPRING:-0}
 
 WAIT=${1:-5}
 LABEL=${2:-注销}
@@ -56,4 +60,8 @@ while [ "$i" -gt 0 ]; do
   i=$((i - 1))
 done
 echo "respring-guard: 执行${LABEL}"
+if [ "$NO_RESPRING" = "1" ]; then
+  echo "respring-guard: 只倒计时，不注销（RESPRING_GUARD_NO_RESPRING=1）"
+  exit 0
+fi
 exec icli sb respring

@@ -1,10 +1,19 @@
 //
 // CountdownHUD.m —— SpringBoard 侧的自绘倒计时胶囊（「倒计时上岛」）
 //
-// 为什么要它：Apelin 的本地通知在发送瞬间会把 App 拉回前台，横幅被它自己的
-// UNUserNotificationCenterDelegate 吞掉，既看不到、也进不了 DynamicX 的灵动岛
-// （详见 AGENTS.md 与技能 respring-notify-countdown）。所以注销 / 装包前的 5 秒，
-// 由这个插件自己画在屏幕上，不依赖任何通知。
+// v1.1.0：胶囊不再用写死的 190×44，而是**量着岛画**。
+//   本机的「灵动岛」不是硬件自带的（iPhone10,1 = iPhone 8），是 DynamicX 用系统那套
+//   SBSystemAperture* 造出来的假岛；外观还被 IslandGlass 换肤、位置由 VisibleIsland 的
+//   yPos 调。所以启动时（以及显示期间每秒）我们在 SpringBoard 自己的窗口里找那只横向
+//   胶囊 —— 优先 SystemAperture 窗口里的容器视图 —— 把它的 frame 原样拿来当胶囊的 frame：
+//   尺寸、位置自然和岛一致，岛一动（被 VisibleIsland 挪、DynamicX 换布局）也跟着动。
+//   找不到（没装岛类插件）才退回写死的 190×44 / 安全区顶 +6。
+//
+//   量到了什么，写在诊断里：
+//     icli prefs read com.apple.springboard CountdownHUDDiagnostics
+//     → v1.1.0;shows=N;last=5s;label=注销;island=<类名>|x,y,w,h;src=aperture;cand=N
+//   候选清单另写一条 CountdownHUDIslandCandidates（最多 8 行：`A|<类名>|x,y,w,h`，
+//   前缀 A = 该候选在 SystemAperture 窗口里），量错了好回头核对。
 //
 // 触发方式（故意不用 Darwin 通知：本机没有 notifyutil，icli 也不发通知）：
 //   脚本把请求写进 /var/mobile/Library/Preferences/.countdownhud-request，
@@ -12,10 +21,10 @@
 //   读失败 / 文件不存在都只是什么都不做。
 //
 // 规矩（AGENTS.md 硬规矩）：
-//   - 不用私有类发消息：这里只用公开的 UIWindow / UIView / UILabel / NSTimer。
+//   - 不用私有类发消息：只用公开的 UIWindow / UIView / UILabel / NSTimer，
+//     岛是「按类名认出来的」，不是拿私有类去调的。
 //   - 没有 MSHookMessageEx，连 substrate 都不链，全部逻辑在 constructor 里起一个轮询。
-//   - 诊断写进目标进程自己的偏好域（kCFPreferencesCurrentApplication = com.apple.springboard）：
-//     `icli prefs read com.apple.springboard CountdownHUDDiagnostics`
+//   - 诊断写进目标进程自己的偏好域（kCFPreferencesCurrentApplication = com.apple.springboard）。
 //   - 日志走 os_log，subsystem 是包名，格式化符带 %{public}。
 //
 
@@ -23,13 +32,20 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <dispatch/dispatch.h>
+#import <math.h>
 #import <os/log.h>
 
-static NSString *const CHVersion = @"1.0.0";
+static NSString *const CHVersion = @"1.1.0";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static const NSTimeInterval CHPollInterval = 0.5;
-static const CGFloat CHPillWidth = 190.0;
-static const CGFloat CHPillHeight = 44.0;
+
+// 兜底尺寸：找不到岛的时候才用。
+static const CGFloat CHFallbackPillWidth = 190.0;
+static const CGFloat CHFallbackPillHeight = 44.0;
+
+// 岛胶囊的「理想」尺寸（真机灵动岛紧凑态），只用于在多个候选里排序。
+static const CGFloat CHIdealIslandWidth = 126.0;
+static const CGFloat CHIdealIslandHeight = 37.0;
 
 static os_log_t CHLog(void) {
     static os_log_t log = NULL;
@@ -64,6 +80,13 @@ static NSString *gLabelText = @"";
 static unsigned long gShows = 0;
 static unsigned long gLastSeconds = 0;
 
+// 量岛的结果
+static BOOL gFollowIsland = YES;          // 量到岛就跟着岛走
+static NSString *gIslandDetail = @"-";    // 诊断串：<类名>|x,y,w,h
+static NSString *gIslandSource = @"none"; // aperture / classname / none
+static NSUInteger gIslandCandidates = 0;
+static CGRect gIslandRect = CGRectZero;
+
 static UIWindowScene *CHActiveScene(void) {
     UIApplication *app = [UIApplication sharedApplication];
     if (app == nil) {
@@ -84,24 +107,273 @@ static UIWindowScene *CHActiveScene(void) {
     return nil;
 }
 
+static NSString *CHClassNameOf(id obj) {
+    return obj != nil ? NSStringFromClass([obj class]) : @"nil";
+}
+
+#pragma mark - 量岛：在 SpringBoard 自己的窗口里找岛的胶囊矩形
+
+static BOOL CHHasIslandWord(NSString *name) {
+    if (name.length == 0) {
+        return NO;
+    }
+    if ([name rangeOfString:@"Island" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        return YES;
+    }
+    return [name rangeOfString:@"Aperture" options:NSCaseInsensitiveSearch].location != NSNotFound;
+}
+
+// 把 view 的 frame 换到本插件窗口（gWindow）的坐标系。
+// 窗口都是贴着屏幕的，跨窗口换算用窗口原点补差就够了。
+static CGRect CHRectInHUDWindow(UIView *view) {
+    CGRect rect = [view convertRect:view.bounds toView:nil]; // toView:nil = 该 view 所在窗口的坐标系
+    UIWindow *w = view.window;
+    if (w != nil) {
+        rect.origin.x += w.frame.origin.x;
+        rect.origin.y += w.frame.origin.y;
+    }
+    if (gWindow != nil) {
+        rect.origin.x -= gWindow.frame.origin.x;
+        rect.origin.y -= gWindow.frame.origin.y;
+    }
+    return rect;
+}
+
+static BOOL CHLooksLikeIslandPill(CGRect r, CGFloat screenWidth) {
+    if (!isfinite(r.origin.x) || !isfinite(r.origin.y) ||
+        !isfinite(r.size.width) || !isfinite(r.size.height)) {
+        return NO;
+    }
+    if (r.size.width < 70.0 || r.size.width > 260.0) {
+        return NO;
+    }
+    if (r.size.height < 20.0 || r.size.height > 70.0) {
+        return NO;
+    }
+    if (r.size.width < r.size.height * 1.2) { // 横向胶囊，不是方块
+        return NO;
+    }
+    if (r.origin.y < -4.0 || CGRectGetMaxY(r) > 120.0) { // 只在屏幕顶上
+        return NO;
+    }
+    if (r.origin.x < 0.0 || CGRectGetMaxX(r) > screenWidth + 0.5) {
+        return NO;
+    }
+    return YES;
+}
+
+static void CHCollectPills(UIView *view, NSMutableArray *out, int depth) {
+    if (view == nil || depth > 12) {
+        return;
+    }
+    if (gWindow != nil && (view == gWindow || [view isDescendantOfView:gWindow])) {
+        return; // 别把自己的胶囊当成岛
+    }
+    if (view.hidden || view.alpha < 0.05) {
+        return;
+    }
+    CGRect r = CHRectInHUDWindow(view);
+    if (CHLooksLikeIslandPill(r, gWindow.bounds.size.width)) {
+        [out addObject:@[ CHClassNameOf(view), [NSValue valueWithCGRect:r] ]];
+    }
+    NSArray<UIView *> *subs = view.subviews;
+    for (NSUInteger i = 0; i < subs.count; i++) {
+        CHCollectPills(subs[i], out, depth + 1);
+    }
+}
+
+// 候选打分：SystemAperture 窗口里的、名字像岛本体的、尺寸最接近真机岛的赢。
+static double CHPillScore(NSString *cls, CGRect r, BOOL inApertureWindow) {
+    double score = 0.0;
+    if (inApertureWindow) {
+        score += 5.0;
+    }
+    if ([cls rangeOfString:@"Aperture" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        score += 1.0;
+    }
+    if ([cls rangeOfString:@"Container" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        score += 0.6;
+    }
+    if ([cls rangeOfString:@"Background" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        score += 0.4;
+    }
+    if ([cls rangeOfString:@"Label" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        score -= 0.8;
+    }
+    score -= fabs(r.size.width - CHIdealIslandWidth) / CHIdealIslandWidth;
+    score -= fabs(r.size.height - CHIdealIslandHeight) / CHIdealIslandHeight;
+    return score;
+}
+
+static NSArray<UIWindow *> *CHWindows(void) {
+    NSMutableArray<UIWindow *> *list = [NSMutableArray array];
+    UIApplication *app = [UIApplication sharedApplication];
+    for (UIScene *scene in app.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) {
+            continue;
+        }
+        for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+            if (![list containsObject:w]) {
+                [list addObject:w];
+            }
+        }
+    }
+    return list;
+}
+
+// 量岛。成功返回 YES 并把矩形写进 *outRect。
+static BOOL CHMeasureIsland(CGRect *outRect) {
+    if (gWindow == nil) {
+        return NO;
+    }
+    NSArray<UIWindow *> *windows = CHWindows();
+    if (windows.count == 0) {
+        return NO;
+    }
+
+    NSString *bestClass = nil;
+    CGRect bestRect = CGRectZero;
+    BOOL bestInAperture = NO;
+    double bestScore = -1.0e9;
+    NSUInteger candidates = 0;
+    NSMutableArray<NSString *> *dump = [NSMutableArray array];
+
+    for (UIWindow *w in windows) {
+        if (w == gWindow) {
+            continue;
+        }
+        BOOL inAperture = CHHasIslandWord(CHClassNameOf(w));
+        NSMutableArray *pills = [NSMutableArray array];
+        CHCollectPills(w, pills, 0);
+        for (NSArray *entry in pills) {
+            NSString *cls = entry[0];
+            CGRect r = [entry[1] CGRectValue];
+            candidates += 1;
+            NSString *line = [NSString stringWithFormat:@"%@|%@|%.0f,%.0f,%.0f,%.0f",
+                              inAperture ? @"A" : @"-", cls,
+                              r.origin.x, r.origin.y, r.size.width, r.size.height];
+            if (dump.count < 8) {
+                [dump addObject:line];
+            }
+        }
+    }
+
+    // 第一轮：只看 SystemAperture 窗口里的候选。
+    for (UIWindow *w in windows) {
+        if (w == gWindow) {
+            continue;
+        }
+        BOOL inAperture = CHHasIslandWord(CHClassNameOf(w));
+        if (!inAperture) {
+            continue;
+        }
+        NSMutableArray *pills = [NSMutableArray array];
+        CHCollectPills(w, pills, 0);
+        for (NSArray *entry in pills) {
+            NSString *cls = entry[0];
+            CGRect r = [entry[1] CGRectValue];
+            double score = CHPillScore(cls, r, YES);
+            if (score > bestScore) {
+                bestScore = score;
+                bestClass = cls;
+                bestRect = r;
+                bestInAperture = YES;
+            }
+        }
+    }
+
+    // 第二轮：没有 Aperture 窗口，才退而认「类名里带 Island/Aperture」的视图。
+    if (bestClass == nil) {
+        for (UIWindow *w in windows) {
+            if (w == gWindow) {
+                continue;
+            }
+            NSMutableArray *pills = [NSMutableArray array];
+            CHCollectPills(w, pills, 0);
+            for (NSArray *entry in pills) {
+                NSString *cls = entry[0];
+                CGRect r = [entry[1] CGRectValue];
+                if (!CHHasIslandWord(cls)) {
+                    continue;
+                }
+                double score = CHPillScore(cls, r, NO);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestClass = cls;
+                    bestRect = r;
+                    bestInAperture = NO;
+                }
+            }
+        }
+    }
+
+    gIslandCandidates = candidates;
+    NSString *dumpText = (dump.count > 0) ? [dump componentsJoinedByString:@"\n"] : @"-";
+    CFPreferencesSetAppValue(CFSTR("CountdownHUDIslandCandidates"),
+                             (__bridge CFStringRef)dumpText,
+                             kCFPreferencesCurrentApplication);
+    CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+
+    if (bestClass == nil || CGRectIsEmpty(bestRect)) {
+        gIslandSource = @"none";
+        gIslandDetail = @"-";
+        os_log(CHLog(), "no island pill found (candidates=%lu)", (unsigned long)candidates);
+        return NO;
+    }
+
+    NSString *cls = bestClass.length > 48 ? [bestClass substringToIndex:48] : bestClass;
+    gIslandSource = bestInAperture ? @"aperture" : @"classname";
+    gIslandDetail = [NSString stringWithFormat:@"%@|%.0f,%.0f,%.0f,%.0f",
+                     cls, bestRect.origin.x, bestRect.origin.y,
+                     bestRect.size.width, bestRect.size.height];
+    gIslandRect = bestRect;
+    if (outRect != NULL) {
+        *outRect = bestRect;
+    }
+    os_log(CHLog(), "island pill %{public}@ src=%{public}@ cand=%lu",
+           gIslandDetail, gIslandSource, (unsigned long)candidates);
+    return YES;
+}
+
 static void CHWriteDiagnostics(void) {
-    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@",
+    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;island=%@;src=%@;cand=%lu",
                          CHVersion, gShows, gLastSeconds,
-                         gLabelText.length ? gLabelText : @"-"];
+                         gLabelText.length ? gLabelText : @"-",
+                         gIslandDetail, gIslandSource,
+                         (unsigned long)gIslandCandidates];
     CFPreferencesSetAppValue(CFSTR("CountdownHUDDiagnostics"),
                              (__bridge CFStringRef)summary,
                              kCFPreferencesCurrentApplication);
     CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
 }
 
+#pragma mark - 摆放与绘制
+
+// 把胶囊摆到给定矩形上：圆角取半高（岛的胶囊形），字号跟着高度走，宽了自动缩。
+static void CHApplyPillRect(CGRect rect) {
+    gPill.frame = rect;
+    gPill.layer.cornerRadius = MIN(rect.size.height, rect.size.width) / 2.0;
+    gLabel.frame = gPill.bounds;
+    CGFloat size = rect.size.height * 0.5;
+    size = MAX(11.0, MIN(size, 19.0));
+    gLabel.font = [UIFont systemFontOfSize:size weight:UIFontWeightSemibold];
+}
+
 static void CHLayOut(void) {
+    CGRect island = CGRectZero;
+    if (gFollowIsland && CHMeasureIsland(&island)) {
+        CHApplyPillRect(island);
+        return;
+    }
     CGRect bounds = gWindow.bounds;
     CGFloat top = gWindow.safeAreaInsets.top;
     if (top <= 0.0) {
-        top = 20.0;
+        top = 20.0; // iPhone 8 这类无刘海机型的状态栏高度
     }
-    gPill.frame = CGRectMake((bounds.size.width - CHPillWidth) / 2.0,
-                             top + 6.0, CHPillWidth, CHPillHeight);
+    CHApplyPillRect(CGRectMake((bounds.size.width - CHFallbackPillWidth) / 2.0,
+                               top + 6.0,
+                               CHFallbackPillWidth,
+                               CHFallbackPillHeight));
 }
 
 static void CHBuildIfNeeded(void) {
@@ -119,9 +391,9 @@ static void CHBuildIfNeeded(void) {
     gWindow.userInteractionEnabled = NO;
     gWindow.hidden = YES;
 
-    gPill = [[UIView alloc] initWithFrame:CGRectMake(0, 0, CHPillWidth, CHPillHeight)];
+    gPill = [[UIView alloc] initWithFrame:CGRectMake(0, 0, CHFallbackPillWidth, CHFallbackPillHeight)];
     gPill.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.86];
-    gPill.layer.cornerRadius = CHPillHeight / 2.0;
+    gPill.layer.cornerRadius = CHFallbackPillHeight / 2.0;
     gPill.layer.masksToBounds = YES;
     gPill.userInteractionEnabled = NO;
 
@@ -130,7 +402,7 @@ static void CHBuildIfNeeded(void) {
     gLabel.textColor = [UIColor whiteColor];
     gLabel.font = [UIFont systemFontOfSize:19.0 weight:UIFontWeightSemibold];
     gLabel.adjustsFontSizeToFitWidth = YES;
-    gLabel.minimumScaleFactor = 0.7;
+    gLabel.minimumScaleFactor = 0.55;
     gLabel.userInteractionEnabled = NO;
 
     [gPill addSubview:gLabel];
@@ -204,6 +476,8 @@ static void CHStartCountdown(NSUInteger seconds, NSString *label) {
                                                block:^(NSTimer *timer) {
         if (gRemaining > 1) {
             gRemaining -= 1;
+            // 岛可能被 VisibleIsland / DynamicX 挪了或换了布局：每秒重新量一次。
+            CHLayOut();
             CHPaint();
             os_log(CHLog(), "HUD tick %lu", (unsigned long)gRemaining);
         } else {

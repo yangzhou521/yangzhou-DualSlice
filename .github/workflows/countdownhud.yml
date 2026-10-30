@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.0.0)
+    name: Release (countdownhud-v1.1.0)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,8 +133,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.0.0
-          name: CountdownHUD v1.0.0
+          tag_name: countdownhud-v1.1.0
+          name: CountdownHUD v1.1.0
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
 
@@ -142,9 +142,14 @@ jobs:
             UNUserNotificationCenterDelegate 吞掉，既看不到、也进不了灵动岛。这个插件不碰通知，
             直接在 SpringBoard 顶层窗口画。
 
+            v1.1.0：胶囊不再写死 190×44，改为在 SpringBoard 自己的窗口里找灵动岛容器
+            （优先 SystemAperture 窗口），按它的 frame 摆放 —— 尺寸与位置和岛一致，
+            岛被 VisibleIsland 挪动或 DynamicX 换布局时每秒跟进。
+
             触发：脚本把 `<epoch>|<秒数>|<标签>` 写进
             `/var/mobile/Library/Preferences/.countdownhud-request`，插件每 0.5 秒轮询一次。
-            验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`。
+            验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`
+            （另有 CountdownHUDIslandCandidates 列出量到的候选）。
           files: release/*.deb
 
       - name: Report release URL
@@ -152,4 +157,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.0.0/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.1.0/$(basename "$DEB")"
