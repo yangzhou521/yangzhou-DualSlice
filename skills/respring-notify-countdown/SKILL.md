@@ -1,6 +1,6 @@
 ---
 name: respring-notify-countdown
-description: 装 deb、注销（respring）、重启目标进程前，必须先让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用。
+description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 respring-coordinate-other-chats），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用。
 ---
 
 # 通知 + 倒计时 5 秒，取证后回 Apelin
@@ -43,6 +43,19 @@ description: 装 deb、注销（respring）、重启目标进程前，必须先�
      5 秒胶囊在屏幕顶部，不依赖 Apelin 通知）；② 反馈给 Apelin 修它的通知投递方式。
   在 ① 做出来之前，倒计时就老老实实写在聊天正文里。
 
+## 零、五、注销前先和别的对话同步（用户 2026-10-30 21:05 定的硬规矩）
+
+原话：「你注销的话和另一个对话说一下！不要打断它的工作！把这个写进记忆和技能包内！并同步到云端！以后所有的
+对话和工程在工作时想要注销的时候都要查看搜索另外一些工作区的对话是否在工作！注销前要和别的对话同步一下！」
+
+- `apelin_project_list` + 对每个工程（含本工程）`apelin_conversation_list project: <folder>`，
+  把 `running` / `waitingForApproval` / 最近几分钟内有活动的对话挑出来（本对话排除）。
+- 对每一个用 `apelin_conversation_send` 说清「约 N 秒后注销，原因 X，请把当前这一步收尾、离开 Apelin 的先自己回来」，
+  再用 `apelin_conversation_read`（`wait_seconds: 60`）等它这一回合结束。**绝不 `apelin_conversation_stop`。**
+- 等超过约 120 秒仍没收尾：**不硬注销**，在回复正文说清「对话 A 还在做 X」让用户决定。
+- 协调完才进入下面的「通知 → 正文写 5 秒 → 真等 5 秒」三步。
+- 细则见技能 `respring-coordinate-other-chats`。
+
 ## 一、两种动作，两种规矩
 
 ### A. 会让屏幕黑一下 / 打断用户当前操作的动作 —— 必须通知 + 倒计时 5 秒
@@ -53,7 +66,7 @@ description: 装 deb、注销（respring）、重启目标进程前，必须先�
   Apelin 的 `apelin_device_respring`、`apelin_package_confirm_loaded`（`respring: true`）同样算注销。
 - 重启目标进程：`icli app kill <bundle-id> --force`
 
-**固定四步，顺序不能变：**
+**固定四步，顺序不能变（第 0 步＝先和别的对话同步，见上一节）：**
 
 1. **前置检查（新增，最重要）**：`apelin_crash_list`（process 填目标进程，如 SpringBoard），
    读最新报告的 `consecutiveCrashCount` 与崩溃栈。
