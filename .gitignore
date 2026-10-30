@@ -5,12 +5,8 @@
 # ---------------------------------------------------------------------------
 
 # ---- 协作黑板：运行时快照（由 scripts/fleet.sh snapshot 生成）---------------
-# 协调群的 session id 仍版本化（fleet/coordinator.txt，别的对话/新机器靠它找群）；
-# 其余是实时状态，每次 snapshot 都变，不该上云。
-fleet/board.tsv
-fleet/agents.tsv
-fleet/inbox.tsv
-fleet/links.tsv
+# 这三个**有意**继续版本化：技能 fleet-shared-board 写明快照是「方便上云和换机时看见」。
+# （2026-10-31 02:2x：曾尝试摘掉，发现与设计意图冲突，已回滚并与 f8fbdbd5 对接后再定。）
 
 # ---- 一过性探针脚本与素材 ------------------------------------------------
 # 取证用的 icli probe JS（probe*.js）用完即弃；结论请写进 docs/cases/ 或记忆。
