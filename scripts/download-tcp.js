@@ -2,7 +2,7 @@
 // 用法： icli probe scripts/download-tcp.js
 // 版本变了只改 VERSION（tag 与资产名都跟着它，tag 规则：themecoreplus-v<VERSION>）。
 // 落盘路径用真根前缀，Files 里能看见，irisin-cli 也认这个路径。
-var VERSION = '0.9.13';
+var VERSION = '0.9.14';
 var urlStr = 'https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v'
     + VERSION + '/com.yangzhou.themecoreplus_' + VERSION + '_iphoneos-arm64e.deb';
 var destPath = '/var/mobile/Documents/themecoreplus-' + VERSION + '.deb';
