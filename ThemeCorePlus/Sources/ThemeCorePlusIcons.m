@@ -51,19 +51,8 @@ static NSString *TCPIconBundleIdentifier(id icon) {
 // 定义在下面「图标像素自检」那节：把合成的图量一遍像素（C 要求先声明后使用）。
 static void TCPNoteComposedImage(UIImage *image, NSString *bundleID);
 
-// 时钟 / 日历是系统动态图标（实时指针 / 当天日期）。0.9.5 曾对这两个 bundle ID 一刀切跳过，
-// 结果是主题里明明带了整幅素材也永远不加载（用户 2026-10-31 04:08「还是不能正常加载」）。
-// 0.9.11 改成「看素材」：
-//   · 时钟 —— 主题表盘（ClockIconBackgroundSquare）由 Store 登记成 mobiletimer 的图标底图，
-//     我们只交表盘、不画指针，系统的 SBHClockApplicationIconImageView 自己在上面画实时指针；
-//   · 日历 —— 只认 IconBundles 里的整幅图标（-large），
-//     Bundles/<bid>/icon.png 那种小图（常常是空白或纯色）依旧不用，免得又变回「图标不显示」。
-static BOOL TCPThemeHasFullSizeIcon(TCPThemeStore *store, NSString *bundleID, CGFloat scale) {
-    NSString *path = [store iconPathForBundleID:bundleID scale:scale];
-    if (path.length == 0) return NO;
-    NSString *name = [path lastPathComponent].lowercaseString;
-    return [name containsString:@"-large"];
-}
+// 时钟 / 日历是系统动态图标（实时指针 / 当天日期）：主题素材只有静态底图，整幅替换必然丢内容。
+// 处理方式见下面 TCPThemedIconImage 里「一律不替换」那一段。
 
 UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info) {
     if (icon == nil || info.size.width <= 0 || info.size.height <= 0) return nil;
@@ -73,8 +62,13 @@ UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info) {
     TCPThemeStore *store = [TCPThemeStore shared];
     if (!store.active) return nil;
 
-    if ([bundleID isEqualToString:@"com.apple.mobilecal"] &&
-        !TCPThemeHasFullSizeIcon(store, bundleID, info.scale)) {
+    // 时钟 / 日历是系统动态图标（实时指针 / 当天日期）。本机主题素材里没有动态内容：
+    // ClockIconBackgroundSquare 是透明玻璃底、IconBundles/mobilecal-large 只有底图没数字。
+    // 0.9.11 把这两样交给系统之后，屏幕上就是「时钟空白、日历只有底图没有日期」
+    // （用户 2026-10-31 04:55 实测）。在做出「主题底 + 系统动态层」的分层方案之前，
+    // 这两个一律不替换 —— 宁可样式和别的图标不同，也不能让用户看不见时间与日期。
+    if ([bundleID isEqualToString:@"com.apple.mobiletimer"] ||
+        [bundleID isEqualToString:@"com.apple.mobilecal"]) {
         return nil;
     }
 

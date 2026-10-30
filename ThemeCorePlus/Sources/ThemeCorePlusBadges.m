@@ -168,6 +168,13 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
             layer.backgroundColor = NULL;
             touched = YES;
         }
+        // SBDarkeningImageView 的红底/暗化底是画在 layer.contents 里的：只清 backgroundColor 时
+        // 它自己那张图还在，屏幕上就是「我们的角标 + 系统红底」两层（用户 2026-10-31 04:53
+        // 「一个图标二层、一个图标一层」）。contents 不是我们的图就一并清掉。
+        if (layer.contents != NULL && !TCPBadgeLayerIsOurs(layer)) {
+            layer.contents = nil;
+            touched = YES;
+        }
         if (touched) cleared++;
         if (names.count < 6) {
             [names addObject:[NSString stringWithFormat:@"%@%@",
