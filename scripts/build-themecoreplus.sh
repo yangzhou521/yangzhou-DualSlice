@@ -1,7 +1,6 @@
 #!/bin/sh
 #
 # ThemeCorePlus —— 双切片（arm64 + arm64e）deb 的构建脚本。
-# retry CI trigger for 0.9.7
 #
 # 形状照抄本仓库的 scripts/build-dualslice.sh（那份在 CI 上跑通过）：clang 直编，不用 Theos
 # 的构建规则，只跑在 CI 的 macOS runner 上。开发机是 iPhone10,1（A11），没有可用工具链，

@@ -195,6 +195,13 @@ jobs:
             1. **面板副标题去除素材标签**：「图标 84 · 文件夹底板 · 角标 2 · 界面图 7」这类数量与类型
                标签全部去掉，选择主题页每行只留主题名和右端开关，与 ThemeCore 0.5.1 一样简洁。
 
+            2. **角标入口名普查进诊断**（为修「角标两层」铺路）：SpringBoard 里类名带
+               SBIconBadge / SBHIconAccessory / SBIconAccessory 的类，各自声明了哪些名字里含
+               image / background / checkout / badge 的方法，全部写进
+               `ThemeCorePlusBadgeMethods`。iOS 版本之间角标入口名会换，先读真名再挂站，
+               不靠猜（猜错的代价是安全模式）。本机已查到：整个进程里只有
+               `SBIconBadgeView` 声明了 `+_checkoutImageForText:font:highlighted:`。
+
             v0.9.6：
 
             1. **修掉「时钟、日历图标不显示」**：主题里若带了 com.apple.mobiletimer / com.apple.mobilecal

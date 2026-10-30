@@ -110,6 +110,19 @@ static void TCPWriteDiagnostics(void) {
                                                           @[ @"displayedImage", @"contentsImage",
                                                              @"squareContentsImage", @"iconImageWithInfo:",
                                                              @"setIconImageInfo:" ], 1200));
+
+    // 角标站的「真名」普查（0.9.7）：类名带这些字样的类，各自声明了哪些名字里含
+    // image / background / checkout / badge 的方法。本机刚普查到的结果是
+    // `SBIconBadgeView=+_checkoutImageForText:font:highlighted:` —— 整个 SpringBoard 进程里
+    // 只有这一个类声明了三条候选站里的一条，也就是说 iOS 16.7.16 的角标走的是「合成」那条路，
+    // ThemeCore 0.5.1 挂的 _checkoutBackgroundImage 在这里永远轮不到。把方法名清单留在诊断里，
+    // 以后换版本先读它、再决定挂哪一站，不靠猜（猜错 = 安全模式）。
+    TCPWriteProcessPreference(@"ThemeCorePlusBadgeMethods",
+                              TCPClassMethodCensusForSubstrings(@[ @"SBIconBadge",
+                                                                   @"SBHIconAccessory",
+                                                                   @"SBIconAccessory" ],
+                                                                @"(?i)image|background|checkout|badge",
+                                                                2500));
 }
 
 // 让桌面把图标重新取一遍图。取不到就当没有这一步（有的版本没有这个方法）。
