@@ -117,6 +117,19 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   `UISelectionFeedbackGenerator`（系统点选 / 滚轮那一下，全系统最弱一档）震一下，**再**画胶囊 ——
   同一请求只震一次（没拿到 windowScene 的重试不重复震），纯文案提醒（`!`）不震。
   诊断串末尾多了 `haptic=<累计次数>`，不用听声音也能确认震过几次。
+- **铁律：注入 SpringBoard 的插件，构造函数阶段禁止碰任何 UIKit API**（`UIScreen` / `UIFeedbackGenerator` /
+  `UIWindow` / `UIView` / `UIFont`…）。1.4.0 在 dyld 构造函数里就 `CHPrepareHaptic()` 创建
+  `UISelectionFeedbackGenerator` → `+[UIScreen mainScreen]` 抛断言 → `NSAssertionHandler` → `abort`
+  （SIGABRT）→ SpringBoard 崩溃循环 → **安全模式**（报告 `SpringBoard-2026-10-31-033134.ips`）。
+  `@try/@catch` 救不了（`NSAssertionHandler` 走 abort，不是可捕获异常）。
+  修法三步：①1.4.1 惰性创建（构造函数只预热，不 new）；②1.4.2 震动严格排在 UIKit 就绪之后 ——
+  先 `CHEnsureWindow()` 拿到真实 windowScene（= UIKit 已活着）才打震动，再画胶囊；
+  ③需要 UIKit 的一律延迟到主线程 + 拿到 scene 之后。
+  案例文档：`docs/cases/countdownhud-safe-mode.md`（根因 / 三步修法 / 复发处理流程）。
+- **装入 SpringBoard 的新插件，注销后必须查 crash list**：`apelin_crash_list`（process=SpringBoard），
+  有比本次注销更新的报告 = 装坏了（先 `irisin-cli remove` 回滚再排查），**无新报告才算装好**。
+  已装并实测通过：1.4.1（CI run 41117240700，装机后 03:47 起无新 SpringBoard 崩溃，不在安全模式）。
+  技能 `respring-notify-countdown` 的「零、八」一节已写死这条。
 - 验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`
   → `v1.4.0;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N;mode=count;haptic=N`；
   量到的候选清单：`icli prefs read com.apple.springboard CountdownHUDIslandCandidates`

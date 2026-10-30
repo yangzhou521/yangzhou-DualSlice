@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.8
+  VERSION: 0.9.9
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.8)
+    name: Release (themecoreplus-v0.9.9)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,10 +185,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.8
-          name: ThemeCorePlus v0.9.8
+          tag_name: themecoreplus-v0.9.9
+          name: ThemeCorePlus v0.9.9
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.8 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.9 —— MarkTheme 式的主题引擎，作者 yangzhou。
+
+            v0.9.9：
+
+            1. **普查认得真正的图标视图**：上一版普查只数 `UIImageView`，而桌面图标视图是
+               私有类 `SBIconImageView` / `SBFolderIconImageView`（不是 `UIImageView` 的子类），
+               图标根本没进统计，显示成「ours=0」的假象。现在按类名找出所有
+               `SB*IconImageView` 类，逐个问 `displayedImage`，分出 ours / stock，
+               诊断新增 `icon{views,ours,stock}` 与 `is=[样本]`。
 
             v0.9.8：
 
@@ -263,7 +271,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.8/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.9/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'
