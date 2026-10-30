@@ -3,6 +3,7 @@
 //
 // v1.1.1：文字压到原来的 2/3（位置系数「高度 × 0.5」→「高度 ÷ 3」，本机 125×37 的岛上
 //   约 12.3pt），并换成等宽数字 + Medium 字重 —— 用户 2026-10-30 反馈「字体太大、不够精致」。
+//   同一版里常规字色由白改成系统绿 #34C759，仍是「绿 → 橙（剩 3 秒）→ 红（剩 ≤2 秒）」。
 // v1.1.0：胶囊不再用写死的 190×44，而是**量着岛画**。
 //   本机的「灵动岛」不是硬件自带的（iPhone10,1 = iPhone 8），是 DynamicX 用系统那套
 //   SBSystemAperture* 造出来的假岛；外观还被 IslandGlass 换肤、位置由 VisibleIsland 的
@@ -404,7 +405,7 @@ static void CHBuildIfNeeded(void) {
 
     gLabel = [[UILabel alloc] initWithFrame:gPill.bounds];
     gLabel.textAlignment = NSTextAlignmentCenter;
-    gLabel.textColor = [UIColor whiteColor];
+    gLabel.textColor = [UIColor systemGreenColor];
     gLabel.font = [UIFont monospacedDigitSystemFontOfSize:12.5 weight:UIFontWeightMedium];
     gLabel.adjustsFontSizeToFitWidth = YES;
     gLabel.minimumScaleFactor = 0.55;
@@ -415,7 +416,8 @@ static void CHBuildIfNeeded(void) {
 }
 
 static void CHPaint(void) {
-    UIColor *tint = [UIColor whiteColor];
+    // v1.1.1：常规色由白改绿（系统绿 #34C759）——用户要求；绿 → 橙 → 红 就是「还有 / 快到了 / 马上」。
+    UIColor *tint = [UIColor systemGreenColor];
     if (gRemaining <= 2) {
         tint = [UIColor colorWithRed:1.0 green:0.27 blue:0.23 alpha:1.0];
     } else if (gRemaining <= 3) {

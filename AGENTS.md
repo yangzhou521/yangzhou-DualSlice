@@ -23,7 +23,7 @@
 | `CountdownHUD/Sources/CountdownHUD.m` | 自绘倒计时胶囊（SpringBoard 顶层窗口，「N 秒后注销」），**不依赖通知** |
 | `Support/CountdownHUD.plist` | HUD 的注入过滤器（只进 `com.apple.springboard`） |
 | `scripts/build-countdownhud.sh` | HUD 的构建脚本（**只在 CI 上跑**，不链接 substrate） |
-| `.github/workflows/countdownhud.yml` | HUD 的云编译 + 发 Release（tag `countdownhud-v1.1.0`） |
+| `.github/workflows/countdownhud.yml` | HUD 的云编译 + 发 Release（tag `countdownhud-v1.1.1`） |
 | `scripts/errand-in-app.sh` | 外出取证：进目标 App → 点元素 → 截图/界面树 → **trap 里强制回 Apelin** |
 | `scripts/sync-skills.sh` | 本地技能目录 ↔ 仓库 `skills/` 双向同步（默认 push） |
 | `skills/` | 技能包副本（`apelin_skill_read` 读的是 `~/Documents/wiki.qaq.apelin/skills/`，这里只是版本化并上 GitHub） |
@@ -76,17 +76,24 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 - 文件内容 `<epoch>|<秒数>|<标签>`，例如 `1761794460|5|注销`；**内容变了才触发**，同名不重复触发；
   插件刚加载时已存在的旧内容只记下不触发。
 - 触发后弹一个顶层窗口（`windowLevel = 10000000`，`hitTest` 返回 nil 不吃触摸），显示
-  「5 秒后注销」，最后 3 秒橙色、最后 2 秒红色，到 0 显示「现在注销」再淡出。
+  「5 秒后注销」：常规字色 **系统绿 `#34C759`**（v1.1.1 起，原为白 `#FFFFFF`），
+  最后 3 秒橙 `rgb(255,158,10)`、最后 2 秒红 `rgb(255,69,59)`，到 0 显示「现在注销」再淡出
+  （那一帧也是同一支红，代码里写了两处：`CHPaint()` 与倒计时结束的 block，改红要一起改）。
 - **胶囊的尺寸与位置 = 岛的尺寸与位置（v1.1.0 起）**：本机的岛是 DynamicX 用系统
   `SBSystemAperture*` 那套造的假岛，位置由 VisibleIsland 的 `yPos` 调。插件不写死尺寸，
   而是每秒（显示期间）在自己之外的窗口里找那只横向胶囊 —— 优先类名带 `Island`/`Aperture`
   的窗口（`src=aperture`），退而认类名带岛字样的视图（`src=classname`）；多个候选按
   「是否在 Aperture 窗口 / 类名像不像岛本体 / 尺寸离 126×37 有多远」打分取最高。找不到
   才退回写死的 190×44、安全区顶 +6（`src=none`）。选中项一并写进诊断（见下）。
+- **文字尺寸 = 胶囊高度 ÷ 3（v1.1.1 起）**：原来取高度的一半（本机岛上 18.5pt），用户
+  2026-10-30 15:38 反馈「字体太大、不够精致」，压到 2/3（= 高度 ÷ 3，同一只岛 12.3pt），
+  字重 Semibold → Medium，数字用 `monospacedDigitSystemFontOfSize:` 让每秒跳动不左右抖。
+  再要调就改 `CHApplyPillRect()` 里那一个系数（÷3 = 原来的 ×0.5 的 2/3），夹取范围 9~16pt。
+  实际用的字号写进诊断 `font=`。
 - 从 shell 写这个文件必须加真根前缀：`/rootfs/var/mobile/Library/Preferences/.countdownhud-request`
   （脚本已包好，见 `scripts/respring-guard.sh`）。
 - 验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`
-  → `v1.1.0;shows=N;last=5s;label=注销;island=<类名>|x,y,w,h;src=aperture;cand=N`；
+  → `v1.1.1;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N`；
   量到的候选清单：`icli prefs read com.apple.springboard CountdownHUDIslandCandidates`
   （最多 8 行 `A|<类名>|x,y,w,h`，前缀 A = 在 Aperture 窗口里）；
   日志 `icli log syslog --subsystem com.yangzhou.countdownhud`。
