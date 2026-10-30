@@ -147,6 +147,13 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 ## 当前状态
 
+- **CountdownHUD 1.1.0 已装机（2026-10-30 12:2x）**：CI run 41002300177（提交 `27363e43`）编译，
+  `com.yangzhou.countdownhud_1.1.0_iphoneos-arm64e.deb` 14032 B，装机副本
+  `/rootfs/var/mobile/Documents/countdownhud-1.1.0.deb`；注销后新代码生效。
+  本机量岛实测：`island=SBSystemApertureContainerView|125,18,125,37;src=aperture;cand=4`
+  （候选清单还有 `UIView|125,18,125,37`、`_SBSystemApertureGainMapView|125,18,125,37`、
+  `UIView|115,17,145,47`）—— 也就是说 DynamicX 的岛本体就是 **125×37、居中、y=18**，
+  胶囊现在按这个矩形画（屏幕上的观感以用户确认为准）。
 - ThemeCorePlus 0.6.0 **已装机验证（2026-10-30）**：面板「主题美化 +」原先推入后空白（0 段 0 行）已修，
   用户在屏幕上确认能正常进入。复核脚本 `probe-prefs-check.js`（在 icli 进程里 load 面板 bundle、
   走真实生命周期）：`view()+viewWillAppear:` → **5 段 8 行 / 13 个单元**，重复进入与连续 reload 稳定。
