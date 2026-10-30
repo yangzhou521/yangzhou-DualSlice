@@ -361,20 +361,11 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     NSString *name = path.lastPathComponent;
     if ([name hasSuffix:@".theme"]) name = [name stringByDeletingPathExtension];
     cell.textLabel.text = name;
-    // 副标题两段：先说它是什么（第几层 / 来自哪个主题根），再说它自己带哪些素材 ——
-    // 用户 16:0x 要的就是「在选择主题里就看得到素材」，别再让人猜开了开关为什么没反应。
-    NSString *prefix = nil;
-    NSInteger layer = [self tcpLayerForPath:path];
-    if (layer > 0) {
-        prefix = [NSString stringWithFormat:@"第 %ld 层", (long)layer];
-    } else {
-        // 面板扫到的主题可能来自 /Library/ThemeCore，也可能来自 /Library/Themes
-        NSString *root = [path stringByDeletingLastPathComponent].lastPathComponent;
-        prefix = root.length > 0 ? root : path;
-    }
-    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@",
-                                 prefix, [self tcpMaterialTagsForPath:path]];
+    // 副标题只说素材标签：用户 2026-10-30 反馈不要「第 N 层」前缀（重复且多余），
+    // 主题根来源也不写（面板扫到的根对用户没意义），只留它自己带哪些素材。
+    cell.detailTextLabel.text = [self tcpMaterialTagsForPath:path];
     // 右端：系统开关，开 = 这一层生效（与设置里「启用插件」那颗开关同款）
+    NSInteger layer = [self tcpLayerForPath:path];
     cell.tcpSwitch.enabled = YES;
     cell.tcpSwitch.tag = (NSInteger)indexPath.row;
     cell.tcpSwitch.on = (layer > 0);

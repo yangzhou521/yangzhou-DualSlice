@@ -710,12 +710,17 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
 // 候选主题：带 .theme 后缀的目录，以及虽然没有后缀但确实装了素材的目录（例如「角标：透明玻璃」）。
 - (NSArray<NSString *> *)availableThemePaths {
     NSMutableArray<NSString *> *result = [NSMutableArray array];
+    NSMutableSet<NSString *> *seenNames = [NSMutableSet set];
     NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *root in TCPSourceThemeRoots()) {
         for (NSString *entry in [[fm contentsOfDirectoryAtPath:root error:NULL] sortedArrayUsingSelector:@selector(compare:)]) {
             NSString *full = [root stringByAppendingPathComponent:entry];
             BOOL isDir = NO;
             if (![fm fileExistsAtPath:full isDirectory:&isDir] || !isDir) continue;
+            // 同名主题只列第一个：/Library/ThemeCore 与 /Library/Themes 两个根里常有同名目录，
+            // 不去重的话面板里就出现两行一样的（用户 2026-10-30 反馈「重复行」）。
+            NSString *dirKey = entry.lowercaseString;
+            if ([seenNames containsObject:dirKey]) continue;
             BOOL looksLikeTheme = [entry.pathExtension.lowercaseString isEqualToString:@"theme"];
             for (NSString *probe in @[ @"IconBundles", @"Bundles", @"AnemoneEffects", @"Info.plist" ]) {
                 if ([fm fileExistsAtPath:[full stringByAppendingPathComponent:probe]]) {
@@ -723,7 +728,10 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
                     break;
                 }
             }
-            if (looksLikeTheme) [result addObject:full];
+            if (looksLikeTheme) {
+                [result addObject:full];
+                [seenNames addObject:dirKey];
+            }
         }
     }
     return result;
@@ -893,8 +901,13 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
         cornerRadius = size.width * 0.2237;
         roundCorners = YES;
     }
+    // 0.9.6 修「双份素材」残留：上游站（SBIcon 那组）传系统真圆角（≈13.50），
+    // 显示层站（SBIconImageView）传 0；遮罩可用时圆角根本不影响合成结果（遮罩先裁了），
+    // 但缓存键带了它 → 同一份素材留两条缓存、合成两份叠在屏幕上。
+    // 现在遮罩可用时缓存键不带 cornerRadius，两站共用一条缓存、只渲染一张图。
+    CGFloat cacheRadius = maskUsable ? 0 : (roundCorners ? cornerRadius : 0);
     NSString *cacheKey = [NSString stringWithFormat:@"%lu|%@|%.0fx%.0f|%.2f|%.2f",
-                          (unsigned long)self.generation, path, size.width, size.height, scale, (roundCorners ? cornerRadius : 0)];
+                          (unsigned long)self.generation, path, size.width, size.height, scale, cacheRadius];
     UIImage *cached = [self.renderedCache objectForKey:cacheKey];
     if (cached) return cached;
 

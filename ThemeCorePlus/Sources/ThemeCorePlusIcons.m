@@ -56,6 +56,15 @@ UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info) {
     NSString *bundleID = TCPIconBundleIdentifier(icon);
     if (bundleID.length == 0) return nil;
 
+    // 时钟与日历是系统动态图标（实时指针 / 日期翻动），不要用主题里的静态图替换 ——
+    // 主题素材里常带 com.apple.mobiletimer / com.apple.mobilecal 的 icon.png，
+    // 替换了就变成一张死图（没有指针、没有当天日期），用户看到的就是「不显示」。
+    // 这两个 bundle ID 一律跳过，让系统的动态生成原样跑。
+    if ([bundleID isEqualToString:@"com.apple.mobiletimer"] ||
+        [bundleID isEqualToString:@"com.apple.mobilecal"]) {
+        return nil;
+    }
+
     TCPThemeStore *store = [TCPThemeStore shared];
     if (!store.active) return nil;
 

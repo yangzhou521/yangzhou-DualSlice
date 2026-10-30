@@ -1,6 +1,6 @@
 ---
 name: respring-notify-countdown
-description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 cross-chat-coordination），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用。
+description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 cross-chat-coordination），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用；注销前必须先让用户在屏幕上真看见倒计时（回复正文 + 灵动岛胶囊；通知不算知情），并读 CountdownHUD 诊断确认胶囊真显示了。
 ---
 
 # 通知 + 倒计时 5 秒，取证后回 Apelin
@@ -67,6 +67,42 @@ description: 注销、装 deb、重启目标进程前，必须先和本机其它
 - 验证用诊断键（`icli prefs read <bid> <Tweak>Diagnostics` 看版本号），不要用「屏幕黑没黑」当证据。
 - 只有插件本身注入 SpringBoard（桌面图标、HUD…）、或改了过滤器 plist / 包布局，才走注销的完整四步。
 - 细则见技能 `injected-tweak-restart-app`。
+
+## 零、七、注销前必须让用户**在屏幕上**真的看见（2026-10-30 23:42 事故的根因，必读）
+
+用户 23:42 原话：「上次注销前用户还是不知情！这个根本性问题也是没解决！」
+
+**「通知」不是知情通道，唯一可靠的知情通道是「用户的眼睛」。** 三条通道的优先顺序不许颠倒：
+
+| 通道 | 什么时候可见 | 能不能当「用户已知情」 |
+| --- | --- | --- |
+| **聊天回复正文** | 永远（用户正看 Apelin 时就是这里） | ✅ 必须写，且必须写清「N 秒后注销 / 为什么 / 下一步」 |
+| **屏幕上的灵动岛胶囊**（CountdownHUD） | 用户在看桌面 / 别的 App 时 | ✅ 唯一能跨 App 的通道 —— 注销前就靠它 |
+| `apelin_notification_send` 通知 | 只在 Apelin **不在前台**时 | ❌ 发通知这一下会把 Apelin 拉回前台，横幅被自己吞掉（见 §零） |
+
+**根因（2026-10-30 23:42 定位，HUD v1.3.0 已修）**：在这之前胶囊在屏幕上**根本不会出现** ——
+老代码量不到 windowScene 时退回 `[[UIWindow alloc] initWithFrame:]`，而 iOS 13+ 里
+**没有 windowScene 的窗口完全不参与渲染**：窗口对象、子视图、`isHidden=NO`、诊断计数 `shows` 全都正常，
+屏幕上一个像素都没有。于是「发了通知 + 写了正文 + 真等了 5 秒」全做了，用户仍然毫不知情。
+v1.3.0 起：拿不到 scene 就**不显示、也不消费这条请求**（0.5 秒后的下一拍重试）；窗口一律
+`initWithWindowScene:` + `rootViewController`，层级 `20000000`（压得住灵动岛那套 SystemAperture）。
+
+**动注销之前先确认胶囊真的显示了**（这是「用户已知情」的唯一证据）：
+
+```sh
+# 1) 发请求（respring-guard.sh 已包好；只想上岛提醒用 hud-notify.sh）
+sh scripts/respring-guard.sh 5 注销        # 加 RESPRING_GUARD_NO_RESPRING=1 只倒计时、不注销
+# 2) 读诊断：shows 必须比上一次大，win= 里必须有真实场景与层级
+icli prefs read com.apple.springboard CountdownHUDDiagnostics
+#   v1.3.0;shows=3;last=5s;label=注销;font=12.3;island=…|x,y,w,h;src=aperture;cand=4;
+#          mode=count;win=CHWindow|scene=UIWindowScene|lvl=20000000|bounds=390x844;islandWin=…|lvl=…
+# 3) shows 不涨 / scene 不是 UIWindowScene / src=none → 胶囊没显示，
+#    先修 HUD（icli log syslog --subsystem com.yangzhou.countdownhud），别假装通知到位就注销。
+```
+
+- `win=…|scene=…` 里的 scene 必须是 `UIWindowScene`；是 `-` 或空 = 没挂上场景，屏幕上等于看不见。
+- `islandWin=…|lvl=…` 是岛那只窗口的层级 —— 它必须**小于**自己窗口的 `lvl`，否则胶囊被岛盖住。
+- `shows` 归零 = SpringBoard 刚载入新代码；`shows` 不涨 = 这一条请求没显示（没有 scene 时插件会自动重试）。
 
 ## 一、两种动作，两种规矩
 
