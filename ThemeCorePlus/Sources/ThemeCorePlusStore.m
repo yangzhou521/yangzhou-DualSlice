@@ -972,48 +972,6 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
     }
 }
 
-- (UIImage *)composedClockFaceForSize:(CGSize)size
-                                scale:(CGFloat)scale
-                         cornerRadius:(CGFloat)cornerRadius {
-    if (size.width <= 0 || size.height <= 0) return nil;
-    if (scale <= 0) scale = 2.0;
-
-    // 只认分层底图。主题若只给了整张带指针的静态图（IconBundles/com.apple.mobiletimer-large.png），
-    // 这里返回 nil、保持系统原样 —— 拿那张图顶上去就是把活钟拍死（0.9.6 踩过）。
-    UIImage *face = [self imageForNamedAsset:@"ClockIconBackgroundSquare" scale:scale];
-    if (!face) return nil;
-
-    BOOL maskUsable = (self.maskPath.length > 0 && !self.maskSkipped);
-    BOOL roundCorners = cornerRadius > 0;
-    if (self.maskSkipped && size.width > 0) {
-        cornerRadius = size.width * 0.2237;
-        roundCorners = YES;
-    }
-    CGFloat cacheRadius = maskUsable ? 0 : (roundCorners ? cornerRadius : 0);
-    NSString *cacheKey = [NSString stringWithFormat:@"%lu|clockface|%.0fx%.0f|%.2f|%.2f",
-                          (unsigned long)self.generation, size.width, size.height, scale, cacheRadius];
-    UIImage *cached = [self.renderedCache objectForKey:cacheKey];
-    if (cached) return cached;
-
-    @synchronized (self) {
-        UIImage *mask = maskUsable ? [self cachedImageAtPath:self.maskPath size:CGSizeZero] : nil;
-        UIImage *rendered = TCPRenderIcon(face, nil, mask, nil, size, scale, cornerRadius, roundCorners);
-        if (rendered) {
-            [self.renderedCache setObject:rendered forKey:cacheKey];
-            if (self.renderedImages.count < 400) {
-                [self.renderedImages addObject:rendered];
-            }
-            [self.renderedImagePointers addObject:
-                [NSValue valueWithPointer:(__bridge const void *)rendered]];
-            if (rendered.CGImage && self.renderedCGPointers.count < 800) {
-                [self.renderedCGPointers addObject:
-                    [NSValue valueWithPointer:(const void *)rendered.CGImage]];
-            }
-        }
-        return rendered;
-    }
-}
-
 // 这张图是不是本插件合成的：认 UIImage 本身，也认它背后的 CGImage。
 - (BOOL)isRenderedImage:(UIImage *)image {
     if (!image) return NO;

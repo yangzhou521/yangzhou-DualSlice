@@ -66,7 +66,7 @@ static BOOL sBadgeComposedServed = NO;
 static BOOL sBadgeHiding = NO;
 static NSMutableArray<UIImage *> *sBadgeRenderedImages = nil;
 static NSInteger sBadgeSysLook = 0, sBadgeSysHidden = 0, sBadgeSysWait = 0;
-static NSInteger sBadgeLayoutCalls = 0, sBadgeConfigCalls = 0, sBadgeMoveCalls = 0;
+static NSInteger sBadgeLayoutCalls = 0, sBadgeConfigCalls = 0, sBadgeMoveCalls = 0, sBadgeLayCalls = 0;
 static NSString *sBadgeSysTree = nil;
 
 // 我们合成过的角标图（底板、整图、纯数字三种都记）。角标站拿到的 self 是**类对象**
@@ -100,8 +100,10 @@ static BOOL TCPBadgeLayerIsOurs(CALayer *layer) {
     return NO;
 }
 
-// 把一个角标视图收拾成一层：留下握着我们那张图的子视图/子层，其余（系统底板、系统数字标签）藏掉。
-// 判据很硬：**树里一张我们的图都没有就什么都不做** —— 宁可多留一层，也绝不把角标藏成空白。
+// 把角标收拾成一层：只清「系统底板」的底色，绝不动我们那张图所在的节点。
+// 本机结构（probe 实测）：SBIconBadgeView → backgroundView(SBDarkeningImageView，系统红底)
+// → UIImageView(我们的整图)。所以 backgroundView 是**祖先**，不能藏，只能清色。
+// 判据很硬：**树里一张我们的图都没有就什么都不做** —— 宁可多留一层，也绝不把角标清成空白。
 static void TCPBadgeHideSystemBackground(UIView *view) {
     if (view == nil || !sBadgeComposedServed || sBadgeHiding) return;
     if (![view isKindOfClass:[UIView class]]) return;
@@ -111,7 +113,7 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
     NSMutableArray<UIView *> *all = [NSMutableArray array];
     NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithArray:view.subviews];
     NSUInteger guard = 0;
-    while (queue.count > 0 && guard++ < 16) {
+    while (queue.count > 0 && guard++ < 24) {
         UIView *sub = queue.firstObject;
         [queue removeObjectAtIndex:0];
         [all addObject:sub];
@@ -119,10 +121,11 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
     }
 
     BOOL sawOurs = TCPBadgeLayerIsOurs(view.layer);
+    UIView *ourHost = nil;   // 握着我们那张图的 image view
     for (UIView *sub in all) {
         if ([sub isKindOfClass:[UIImageView class]] &&
-            TCPBadgeImageIsOurs(((UIImageView *)sub).image)) { sawOurs = YES; break; }
-        if (TCPBadgeLayerIsOurs(sub.layer)) { sawOurs = YES; break; }
+            TCPBadgeImageIsOurs(((UIImageView *)sub).image)) { sawOurs = YES; ourHost = sub; break; }
+        if (TCPBadgeLayerIsOurs(sub.layer)) { sawOurs = YES; ourHost = sub; break; }
     }
     if (!sawOurs) {
         sBadgeSysWait++;   // 图还没换上来（或这一格没主题素材），先不动
@@ -130,32 +133,50 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
         return;
     }
 
-    NSUInteger hidden = 0;
-    for (UIView *sub in all) {
-        BOOL ours = ([sub isKindOfClass:[UIImageView class]] &&
-                     TCPBadgeImageIsOurs(((UIImageView *)sub).image)) ||
-                    TCPBadgeLayerIsOurs(sub.layer);
-        if (ours) continue;
-        if (!sub.hidden) { sub.hidden = YES; hidden++; }
+    // 底板候选：KVC 的 backgroundView，以及类名带 Darkening 的直接子视图。
+    NSMutableArray<UIView *> *targets = [NSMutableArray array];
+    id bgView = nil;
+    @try { bgView = [view valueForKey:@"backgroundView"]; } @catch (NSException *exception) { (void)exception; }
+    if ([bgView isKindOfClass:[UIView class]]) [targets addObject:(UIView *)bgView];
+    for (UIView *sub in view.subviews) {
+        if (![sub isKindOfClass:[UIView class]]) continue;
+        if ([NSStringFromClass([sub class]) containsString:@"Darkening"] && ![targets containsObject:sub]) {
+            [targets addObject:sub];
+        }
     }
-    for (CALayer *layer in view.layer.sublayers) {
-        if (TCPBadgeLayerIsOurs(layer)) continue;
-        if (!layer.hidden) { layer.hidden = YES; hidden++; }
-    }
-    // 视图自己涂的那层底色（有的版本底板就是 backgroundColor）
-    if (view.backgroundColor != nil && CGColorGetAlpha(view.backgroundColor.CGColor) > 0.01) {
-        view.backgroundColor = [UIColor clearColor];
-        hidden++;
-    }
-    if (hidden > 0) sBadgeSysHidden += (NSInteger)hidden;
 
-    // 取证：这一格到底叠了哪些类，装完机不用看屏幕就知道藏对了没有。
+    NSUInteger cleared = 0;
     NSMutableArray<NSString *> *names = [NSMutableArray array];
-    for (UIView *sub in all) {
-        if (names.count >= 6) break;
-        [names addObject:[NSString stringWithFormat:@"%@%@",
-                          NSStringFromClass([sub class]), sub.hidden ? @"*" : @""]];
+    for (UIView *target in targets) {
+        // 这层就是我们的图（或装着它）—— 一个字节都不许动
+        if (target == ourHost || TCPBadgeLayerIsOurs(target.layer)) continue;
+        BOOL touched = NO;
+        UIColor *color = target.backgroundColor;
+        if (color != nil && CGColorGetAlpha(color.CGColor) > 0.01) {
+            target.backgroundColor = [UIColor clearColor];
+            touched = YES;
+        }
+        if ([target isKindOfClass:[UIImageView class]]) {
+            UIImage *image = ((UIImageView *)target).image;
+            if (image != nil && !TCPBadgeImageIsOurs(image)) {
+                ((UIImageView *)target).image = nil;
+                touched = YES;
+            }
+        }
+        CALayer *layer = target.layer;
+        if (layer.backgroundColor != NULL && CGColorGetAlpha(layer.backgroundColor) > 0.01) {
+            layer.backgroundColor = NULL;
+            touched = YES;
+        }
+        if (touched) cleared++;
+        if (names.count < 6) {
+            [names addObject:[NSString stringWithFormat:@"%@%@",
+                              NSStringFromClass([target class]), touched ? @"*" : @""]];
+        }
     }
+    if (cleared > 0) sBadgeSysHidden += (NSInteger)cleared;
+
+    // 取证：底板节点是谁、清没清掉（带 * = 清过），装完机不看屏幕也知道做对没有。
     sBadgeSysTree = names.count > 0 ? [names componentsJoinedByString:@","] : @"-";
 
     sBadgeHiding = NO;
@@ -189,7 +210,7 @@ BOOL TCPBadgeBackgroundServed(void) {
 NSString *TCPBadgeProbeReport(void) {
     return [NSString stringWithFormat:
             @"%@;bg{look=%ld,hit=%ld};tup{look=%ld,hit=%ld};txt{look=%ld,hit=%ld};gate=%@;"
-            @"sys{look=%ld,hid=%ld,wait=%ld,tree=%@};v{lay=%ld,cfg=%ld,mv=%ld}",
+            @"sys{look=%ld,hid=%ld,wait=%ld,tree=%@};v{lay=%ld,cfg=%ld,mv=%ld,lo=%ld}",
             sBadgeProbe ?: @"badge=-",
             (long)sBadgeBackLook, (long)sBadgeBackHit,
             (long)sBadgeTupleLook, (long)sBadgeTupleHit,
@@ -197,7 +218,8 @@ NSString *TCPBadgeProbeReport(void) {
             TCPBadgeBackgroundServed() ? @"text-only" : @"composed",
             (long)sBadgeSysLook, (long)sBadgeSysHidden, (long)sBadgeSysWait,
             sBadgeSysTree ?: @"-",
-            (long)sBadgeLayoutCalls, (long)sBadgeConfigCalls, (long)sBadgeMoveCalls];
+            (long)sBadgeLayoutCalls, (long)sBadgeConfigCalls, (long)sBadgeMoveCalls,
+            (long)sBadgeLayCalls];
 }
 
 // 圆头拉伸时两头要留多宽：按素材自己的尺寸算，素材两头是什么形状（圆弧、尖角、异形）都原样保留。
@@ -379,6 +401,7 @@ UIImage *TCPThemedBadgeTextOnlyImage(NSString *text, UIFont *font, CGFloat scale
 static IMP sBadgeLayoutOrig = NULL;
 static IMP sBadgeConfigOrig = NULL;
 static IMP sBadgeMoveOrig = NULL;
+static IMP sBadgeLayOrig = NULL;
 
 static void TCPBadgeLayoutHook(id self, SEL _cmd) {
     if (sBadgeLayoutOrig) ((void (*)(id, SEL))sBadgeLayoutOrig)(self, _cmd);
@@ -391,6 +414,13 @@ static void TCPBadgeConfigHook(id self, SEL _cmd, NSString *text, BOOL highlight
         ((void (*)(id, SEL, NSString *, BOOL, id))sBadgeConfigOrig)(self, _cmd, text, highlighted, animator);
     }
     sBadgeConfigCalls++;
+    TCPBadgeHideSystemBackground(self);
+}
+
+// -_layOutTextImageView: —— 系统摆数字图的那一下，也是它可能重新涂底板底色的地方。
+static void TCPBadgeLayHook(id self, SEL _cmd, id arg) {
+    if (sBadgeLayOrig) ((void (*)(id, SEL, id))sBadgeLayOrig)(self, _cmd, arg);
+    sBadgeLayCalls++;
     TCPBadgeHideSystemBackground(self);
 }
 
@@ -410,6 +440,10 @@ static void TCPInstallBadgeViewSites(void) {
     SEL config = NSSelectorFromString(@"_configureAnimatedForText:highlighted:animator:");
     if (sBadgeConfigOrig == NULL && TCPClassDeclaresMethod(cls, config)) {
         MSHookMessageEx(cls, config, (IMP)TCPBadgeConfigHook, (IMP *)&sBadgeConfigOrig);
+    }
+    SEL lay = NSSelectorFromString(@"_layOutTextImageView:");
+    if (sBadgeLayOrig == NULL && TCPClassDeclaresMethod(cls, lay)) {
+        MSHookMessageEx(cls, lay, (IMP)TCPBadgeLayHook, (IMP *)&sBadgeLayOrig);
     }
     SEL move = NSSelectorFromString(@"didMoveToWindow");
     if (sBadgeMoveOrig == NULL && TCPClassDeclaresMethod(cls, move)) {
