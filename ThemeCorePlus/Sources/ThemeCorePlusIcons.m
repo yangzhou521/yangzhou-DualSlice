@@ -246,6 +246,77 @@ static void TCPNoteComposedImage(UIImage *image, NSString *bundleID) {
 //         SBHClockApplicationIconImageView 自己实时画在最上层，所以还是活的。
 //   日历：主题底图垫底，系统那张图按亮度选混合模式压上去 —— 白底取「正片叠底」
 //         （白 = 不改变底图，只留下数字的墨），深底取「滤色」（深色不改变底图，只留浅色字）。
+// ── 时钟整套素材（用户 2026-10-31 05:15 给的路径）────────────────────────────
+// <主题>.theme/Bundles/com.apple.springboard/ 下有：ClockIconBackgroundSquare（表盘）、
+// ClockIconHourHand（时针）、ClockIconMinuteHand（分针）、ClockIconRedDot（针帽）。
+// 整个时钟图标都交给这套素材：系统表盘、系统指针一层都不画。
+static UIImage *TCPClockAssetImage(TCPThemeStore *store, NSString *name) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *root in store.themePaths) {
+        NSString *p = [[root stringByAppendingPathComponent:@"Bundles/com.apple.springboard"]
+                       stringByAppendingPathComponent:name];
+        if ([fm fileExistsAtPath:p]) {
+            UIImage *img = [UIImage imageWithContentsOfFile:p];
+            if (img) return img;
+        }
+    }
+    return nil;
+}
+
+// 素材里真正有内容的范围（左上为原点）；量不到返回 CGRectZero。
+// 指针图的画布比指针本身大得多（本机 248x547 里指针只是一根细针），
+// 不裁出真实范围就会按整张画布缩放，针会细到看不见。
+static CGRect TCPAlphaBounds(CGImageRef cg) {
+    size_t w = CGImageGetWidth(cg), h = CGImageGetHeight(cg);
+    if (w == 0 || h == 0) return CGRectZero;
+    uint8_t *buf = calloc(h * w, 1);
+    if (!buf) return CGRectZero;
+    CGContextRef c = CGBitmapContextCreate(buf, w, h, 8, w, NULL, (CGBitmapInfo)kCGImageAlphaOnly);
+    if (!c) { free(buf); return CGRectZero; }
+    CGContextDrawImage(c, CGRectMake(0, 0, w, h), cg);
+    CGContextRelease(c);
+
+    size_t x0 = w, x1 = 0, y0 = h, y1 = 0;
+    for (size_t y = 0; y < h; y++) {
+        const uint8_t *row = buf + y * w;
+        for (size_t x = 0; x < w; x++) {
+            if (row[x] > 8) {
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
+            }
+        }
+    }
+    free(buf);
+    if (x0 > x1 || y0 > y1) return CGRectZero;
+    // bitmap context 的 y=0 是图像底部，翻成「左上为原点」。
+    return CGRectMake((CGFloat)x0, (CGFloat)(h - 1 - y1),
+                      (CGFloat)(x1 - x0 + 1), (CGFloat)(y1 - y0 + 1));
+}
+
+// 画一根指针：素材真实范围的「底边中点」对准表盘中心，按长度缩放后绕中心转 angle。
+static void TCPDrawClockHand(CGContextRef ctx, UIImage *hand, CGPoint center,
+                             CGFloat angle, CGFloat length,
+                             CGFloat *outBoxW, CGFloat *outBoxH) {
+    CGImageRef cg = hand.CGImage;
+    if (!cg) return;
+    CGRect box = TCPAlphaBounds(cg);
+    if (CGRectIsEmpty(box) || box.size.height <= 0) return;
+    CGFloat k = length / box.size.height;
+    CGFloat w = CGImageGetWidth(cg) * k;
+    CGFloat h = CGImageGetHeight(cg) * k;
+    CGFloat ox = -(box.origin.x + box.size.width * 0.5) * k;
+    CGFloat oy = -(box.origin.y + box.size.height) * k;
+    CGContextSaveGState(ctx);
+    CGContextTranslateCTM(ctx, center.x, center.y);
+    CGContextRotateCTM(ctx, angle);
+    [hand drawInRect:CGRectMake(ox, oy, w, h)];
+    CGContextRestoreGState(ctx);
+    if (outBoxW) *outBoxW = box.size.width;
+    if (outBoxH) *outBoxH = box.size.height;
+}
+
 static NSInteger sDynClock = 0;
 static NSInteger sDynCalendar = 0;
 static NSInteger sDynFail = 0;
@@ -295,10 +366,26 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
 
     NSString *how = @"-";
     if (clock) {
-        // 脸垫底：主题表盘是玻璃底（本机素材不透明比只有 0.29），底下没脸就是「图标空白」。
-        if (systemImage) [systemImage drawInRect:rect];
+        // 整个时钟图标交给主题素材（用户 2026-10-31 05:15）：表盘 + 时针 + 分针 + 红点，
+        // 系统表盘与系统指针一层都不画。指针角度取当前时间（图标重画时才更新）。
         [themed drawInRect:rect];
-        how = @"face";
+        NSDateComponents *c = [[NSCalendar currentCalendar]
+                               components:(NSCalendarUnitHour | NSCalendarUnitMinute)
+                                 fromDate:[NSDate date]];
+        CGPoint center = CGPointMake(CGRectGetMidX(rect), CGRectGetMidY(rect));
+        CGFloat minAngle = (CGFloat)c.minute * 6.0 * M_PI / 180.0;
+        CGFloat hourAngle = ((CGFloat)(c.hour % 12) + (CGFloat)c.minute / 60.0) * 30.0 * M_PI / 180.0;
+        CGFloat hw = 0, hh = 0, mw = 0, mh = 0;
+        UIImage *minuteHand = TCPClockAssetImage(store, @"ClockIconMinuteHand@3x.png");
+        UIImage *hourHand = TCPClockAssetImage(store, @"ClockIconHourHand@3x.png");
+        UIImage *redDot = TCPClockAssetImage(store, @"ClockIconRedDot@3x.png");
+        if (minuteHand) TCPDrawClockHand(ctx, minuteHand, center, minAngle, info.size.height * 0.72, &mw, &mh);
+        if (hourHand) TCPDrawClockHand(ctx, hourHand, center, hourAngle, info.size.height * 0.50, &hw, &hh);
+        if (redDot) {
+            CGFloat d = info.size.height * 0.11;
+            [redDot drawInRect:CGRectMake(center.x - d * 0.5, center.y - d * 0.5, d, d)];
+        }
+        how = [NSString stringWithFormat:@"face+h%.0fx%.0f+m%.0fx%.0f", hw, hh, mw, mh];
     } else {
         [themed drawInRect:rect];
         if (systemImage) {
