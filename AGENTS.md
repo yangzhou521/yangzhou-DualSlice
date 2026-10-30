@@ -19,7 +19,7 @@
 | `Support/ThemeCorePlusPreferenceLoader.plist` | 设置里那一行的入口（bundle + 图标 + 控制器类） |
 | `Support/ThemeCorePlusIcon@2x/@3x.png` | 面板图标（MarkTheme16 的 App 图标，180×180） |
 | `scripts/build-themecoreplus.sh` | ThemeCorePlus 的构建脚本（**只在 CI 上跑**） |
-| `scripts/respring-guard.sh` | **唯一注销入口**：打印 5 秒倒计时再 `icli respring`（通知由会话先发） |
+| `scripts/respring-guard.sh` | **唯一注销入口**：打印 5 秒倒计时再 `icli sb respring`（通知由会话先发） |
 | `scripts/errand-in-app.sh` | 外出取证：进目标 App → 点元素 → 截图/界面树 → **trap 里强制回 Apelin** |
 | `scripts/sync-skills.sh` | 本地技能目录 ↔ 仓库 `skills/` 双向同步（默认 push） |
 | `skills/` | 技能包副本（`apelin_skill_read` 读的是 `~/Documents/wiki.qaq.apelin/skills/`，这里只是版本化并上 GitHub） |
@@ -44,7 +44,7 @@ Release 资产地址：
 ```sh
 # 下载（放到真根 /rootfs 下的 Documents），然后：
 irisin-cli install --yes --json /rootfs/var/mobile/Documents/<deb>     # 须 root:true
-icli respring            # 或让 Apelin 的 respring 工具来
+icli sb respring         # 注销（本机只有这个写法；icli respring 不存在）
 ```
 依赖：`mobilesubstrate`（本机由 ellekit 提供）、`preferenceloader`（已装）。
 
@@ -65,12 +65,17 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 ## 硬规矩
 
 - **装包 / 注销 / 重启目标进程之前，必须：① `apelin_notification_send` 通知 → ② 明说「5 秒后执行」并
-  `sleep 5` → ③ 才执行（`irisin-cli install`、`icli respring`、`icli app kill`）。** 用户 2026-10-30
-  反复要求过两次，仍然漏过，原因是这条只写在记忆里、没写进这个文件 —— 所以现在写在这里，且：
-  - 通知正文一律包含：动了什么、为什么、下一步要做什么；不超过两句话。
-  - 倒计时那一步用 `sh scripts/respring-guard.sh`（见下），不许绕过它直接 `icli respring`。
-  - `apelin_package_confirm_loaded(respring: true)` 也算注销：先用工具发通知，再调它。
-  - 只有「屏幕会黑一下」或「打断用户当前操作」才算；下载、云编译、读诊断不通知。
+  真等 5 秒（`sh scripts/respring-guard.sh 5`）→ ③ 才执行。** 用户 2026-10-30 三次要求过、仍然漏过，
+  原因就是这条只写在记忆里 —— 现在同时写进本文件与技能 `respring-notify-countdown`。
+  - 涉及的动作：`irisin-cli install`（装包）、**`icli sb respring`**（注销；本机**没有** `icli respring`，
+    实测报 `Unexpected argument 'respring'`）、`apelin_device_respring`、
+    `apelin_package_confirm_loaded(respring: true)`、`icli app kill <bid> --force`。
+  - 通知正文：动了什么 + 为什么 + 下一步，一两句。Apelin 在前台时通知看不到，同一句话要写进回复。
+  - 通知配额：每回合 ≤3 条、间隔 ≥30 秒；「装完随后注销」可在第一条通知里一并说明。
+  - 只有「屏幕会黑一下 / 打断用户当前操作」才算；下载、云编译、读诊断、改源码不发通知。
+- **去别的 App 取证后必须自己回 Apelin**（用户 2026-10-30：「不要再让我手动回来」）：单次外出 ≤60 秒，
+  回程写在 `trap EXIT/INT/TERM`，末尾 `icli app frontmost` 校验并打印秒数；一次调用取齐证据用
+  `sh scripts/errand-in-app.sh`。绝不要求用户手动切回，也不把验证推回给用户。
 - **不许 `-undefined dynamic_lookup` / `-undefined suppress`。** 缺符号就逐个写
   `-Wl,-U,_符号名`（面板的 `PSListController`/`PSSpecifier` 就是这么处理的）。
 - **不许给私有类写消息发送。** 代码里出现 `[SBIconController sharedInstance]` 就会多出一个
