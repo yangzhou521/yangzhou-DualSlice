@@ -1,6 +1,6 @@
 0234b652	?	working	?	继续	none	1793381958
 e0113233	yangzhouDualSlice	working	停了让给 5781b4c7：CountdownHUD 1.3.0 它已在跑（deb已下+校验中），我不装、设备已释放	next=回自己的活：ThemeCorePlus screen{ours=0} 方案A	none	1793383507
-f8fbdbd5	yangzhouDualSlice	idle	CountdownHUD 1.4.2 已装并验证（无新crash），交接给 5781b4c7，本线结束该修复	next=fleet watchdog 误报另立工作	none	1793385513
+f8fbdbd5	yangzhouDualSlice	working	唤醒失效根治：各会话 session.json 的 model 从 x-deepseek-v4.1-flash(额度耗尽 code14018) 改成 deepseek-flash	5 个全部复活并在干活（ba1a3a02 限流窗口后重试成功）；经验已写入记忆 b00363d8 并同步上云	none	1793391732
 b3adfeb5	yangzhouDualSlice	done	context爆死已关闭	-	none	1793385514
 544f3607	yangzhouDualSlice	done	context爆死已关闭	-	none	1793385515
 b04746bb	yangzhouDualSlice	done	context爆死已关闭	-	none	1793385516
