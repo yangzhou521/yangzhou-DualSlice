@@ -460,17 +460,22 @@ sh "$F" takeover <你> <睡死那位的短id> "备注"    # 记账：我接着�
 是纯 shell，能发现谁睡了但**不能叫醒**（没有 agent 权限）。独立协调群三次创建全部失败（context 爆死 /
 工具循环零输出）。所以唤醒链是 `用户 → 协调员 → 其他 agent`，协调员一睡全队停。
 
-**解法：agent 回合结束前给自己发一条消息（自跳），排队等当前回合结束后自动触发下一轮。**
+**⚠️ 2026-10-31 03:0x 实测修正：自跳心跳技术上做不到，别再写这条。** Apelin **不允许对话给自己发消息**——
+`apelin_conversation_send(session_id: 本对话)` 被拒：`session_id is this conversation; send to another one`。
+心跳发生器第 4 步（给自己 tick）就是这么死的（03:00 起 idle）。**只有"别的"对话能叫醒一个 idle 的 agent。**
 
-### 怎么做
+**改成两件真能做的事：环形互跳（本节）+ 唤醒队列（§二十之一）。**
 
-每次回合即将结束时（自己的活干完一步、或暂时阻塞），做两件事：
+### 环形互跳怎么做
 
-1. `sh "$HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh" beat` — 刷新黑板心跳时间
-2. 拿到自己的 session_id：`apelin_conversation_list` 找 `isThisConversation: true` 那条的 `sessionID`
-3. `apelin_conversation_send(session_id: "<自己的session_id>", text: "【心跳】继续。查黑板 list 看有没有新活或谁需要帮忙；自己的活没做完就接着做。")`
+≥2 个对话组成环，互相叫醒（token ring）：
 
-步骤 3 的消息会排队，当前回合一结束就自动触发下一轮——**不需要任何人来叫醒**。
+1. 回合接近结束时，`sh "$HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh" beat`（刷自己那行时间）
+2. 给**环上的下一个对话**发一句 `【tick】`（一句话就够），下家收到后在它的回合末再往下传
+3. 传棒那一轮顺手做两件事：① drain `wake-needed.tsv`（§二十之一，真有睡死的就 `apelin_conversation_send` 发出去）；② `progress "<一句话>"`
+
+环不断 → 环上永远有醒着的 agent。两点对跳最省（协调员 ↔ 发生器）。一环断了（有人忘了传棒、被停、
+context 爆都没有自愈）：靠用户碰一下任一对话、或看护的唤醒队列重连。
 
 ### 三振出局（防空转）
 
@@ -503,32 +508,40 @@ sh "$F" takeover <你> <睡死那位的短id> "备注"    # 记账：我接着�
 
 | 层 | 机制 | 触发者 | 覆盖场景 |
 | --- | --- | --- | --- |
-| 第一层 | 自跳心跳（§十九） | agent 自己 | 自己维持自己不睡 |
-| 第二层 | 互叫醒（本节） | 任何醒着的 agent | 自跳失效时，队友兜底 |
-| 第三层 | 专职心跳发生器 | 独立对话 | 全队都忘了自跳时，专职兜底 |
+| 第一层 | 环形互跳（§十九） | 环上的对话互相传棒 | 环不断，全队一直有醒着的 |
+| 第二层 | 唤醒队列 `wake-needed.tsv`（本节） | root 看护写，**任何醒着的 agent drain** | 环断了也自愈：谁醒来谁兑现 |
+| 第三层 | 专职心跳发生器（§二十一） | 独立对话，**需人喂、不能自续** | 全队都停时的门铃；最终仍靠用户 |
+| 兜底 | launchd 看护 + 用户 | 纯 shell + 用户 | 只能提醒，不能发消息 |
 
-### 互叫醒怎么做
+### 互叫醒怎么做（回合开始也做，不只是结束）
 
-每次回合结束前（自跳心跳之后），额外做一步：
+**先核状态再发**——`apelin_conversation_read(sessionID)` 的 `state` 分四种，能不能叫醒完全不同：
 
-1. `apelin_conversation_list`（已在自跳步骤 2 里调过，复用结果）
-2. 遍历结果：对每个 `state=open` 且 `isThisConversation=false` 且 `lastActive` 超过 **15 分钟**的对话，
-   `apelin_conversation_send(sessionID, "【互叫】你 N 分钟没动了。继续干活或 post idle。")`
-3. 如果自己也装了自跳，接着走 §十九 步骤 3 给自己发 tick
+| state | 含义 | 发消息有用吗 | 怎么办 |
+| --- | --- | --- | --- |
+| `idle` | 回合结束、在等消息 | ✅ 立刻开新回合 | 直接 `apelin_conversation_send` |
+| `waitingForApproval` | 卡在批准卡上 | ❌ 卡在人不在 agent | `apelin_notification_send` 请用户点卡片 |
+| `running` | 正在跑一个回合 | ❌ 消息只会排在它后面 | 久无输出 = 卡在工具循环，**只能用户停掉/重开**（agent 无权 stop 别人的对话） |
+| `ended` | 已结束 | ❌ | 请用户在侧栏重开 |
 
-### 与自跳的关系
+1. **回合开工第一件事**：`sh "$F" drain`（或直接 `cat "$F/wake-needed.tsv"`）——把 root 看护写下的睡死清单逐条**真发出去**（一次最多两条，5 分钟内不重复）
+2. 回合结束前：`apelin_conversation_list`，对 `state=open` 且 stale ≥15 分钟的队友发一句「【fleet-wake】…」
+3. 再把环上的棒传给下一家（§十九）
 
-- **自跳是第一道**：agent 自己维持自己不睡，不依赖别人
-- **互叫是第二道**：自跳失效（agent 忘了、卡在工具循环、context 爆了）时，醒着的队友兜底叫醒
-- **心跳发生器是第三道**：全队都失效时的最后保险（独立对话，只做叫醒这一件事）
-- **launchd watchdog 是检测层**：纯 shell，发现谁睡了就写 HUD 提醒用户，但不能自己叫醒
+### 与环 / 看护的关系
+
+- **环是第一道**：环上的对话互相传棒，不断就不睡（**自跳做不到**：Apelin 拒绝对话给自己发消息）
+- **唤醒队列是第二道，也是唯一能自愈的一道**：root 看护把脏活写进 `wake-needed.tsv`，谁醒来谁兑现
+- **心跳发生器是第三道**：全队都停时的门铃，但它**自己也得有人喂**（同一条实测），最终仍靠用户点一下
+- **launchd watchdog 是检测层**：纯 shell，发现谁睡了就写队列、写 HUD，但不能自己发消息
+- **`running` 卡死无解**：这种只能用户动手，agent 能做的只有上报（别拿消息去撞它，白搭）
 
 ### 互叫的节奏
 
 - 15 分钟才叫（太频繁 = 消息轰炸、context 浪费）
 - 一条消息就够，不连发
 - 对方回了就不再叫（`lastActive` 会刷新）
-- 自己也 idle 时不叫别人（先 post idle，等心跳发生器或用户叫醒自己）
+- 自己也 idle 时不叫别人（先 post idle，把棒传给环上下一家；没人喂就等用户）
 
 ### 红线
 
@@ -540,3 +553,32 @@ sh "$F" takeover <你> <睡死那位的短id> "备注"    # 记账：我接着�
 ### 落地位置
 
 本技能 §二十；`AGENTS.md`「硬规矩」一节；三样同步上云。
+
+## §二十一 专职心跳发生器：提示词与重建（2026-10-31 起）
+
+**它是什么**：一个独立对话（标题「心跳发生器」），唯一职责是把睡死的队友叫起来。不决策、不改任何文件、
+不读技能与记忆。会话 id（本机当前那只）`2ab405d6-4c33-4ec6-8094-68b6c2fe94dc`——换了机器/重建后以
+`apelin_conversation_list` 里标题「心跳发生器」那条为准。
+
+### 三轮实测结论（重要，别再踩）
+
+- 它每轮只跑 4 步：`list` → 叫醒 `idle>10m` 的 → 找自己 → 给自己发 `tick`。
+- **第 4 步不可能成功**：Apelin 允许 `apelin_conversation_send` 的收件人**不能是本对话**，被拒
+  `session_id is this conversation; send to another one`。所以**它不能自续**——03:00 做完 1~3 步就 idle 至今。
+- 结论：它是**环上的一个节点**（§十九），不是自走机器。要有人传棒给它，它干完再传回去；没人喂 = 等于没有。
+
+### 重建提示词（照抄，新建一个对话；越短越好）
+
+```
+你是心跳发生器，只做三件事，30~60 秒内收尾，别做别的：
+1. sh "$HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh" care
+2. 对清单里真正 idle 的队友（先 apelin_conversation_read 核 state，running 的跳过、waitingForApproval 的
+   只 apelin_notification_send 提醒用户）用 apelin_conversation_send 发一句唤醒，一次最多两条
+3. 把接力棒发给我（协调对话 session_id: <填协调对话全 id>），一句话
+别读技能、别读记忆、别读整段历史、别改文件、别动设备、别开新对话。
+```
+
+### 判据 / 退出
+
+用户定：**「有用就留着，没用就删掉」**——它只在有人传棒时有用。删除 = 在侧栏把它结束即可，
+本技能留着提示词，随时照上面的块重建。

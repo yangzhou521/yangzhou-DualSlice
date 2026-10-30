@@ -25,6 +25,11 @@
 | `scripts/build-countdownhud.sh` | HUD 的构建脚本（**只在 CI 上跑**，不链接 substrate） |
 | `scripts/hud-notify.sh` | **一句话上岛**：`[秒数] <文案>` → 灵动岛纯文案提醒（8 秒默认），不注销、不装包 |
 | `.github/workflows/countdownhud.yml` | HUD 的云编译 + 发 Release（tag `countdownhud-v1.2.0`） |
+| `SileoFix/Sources/SileoFix.m` | Sileo 搜索框死区修复本体（`hitTest:withEvent:` 旁路，v1.0.4）；原壁纸插件逐字节不改 |
+| `Support/SileoFix.plist` | SileoFix 的注入过滤器（`org.coolstar.SileoStore`） |
+| `docs/cases/sileowallpaper-searchbar-fix.md` | **专项案例**：SileoWallpaper 让 Sileo 搜索框点不进去 —— 病灶/分轮取证法/修法/复发流程 |
+| `docs/cases/themecoreplus-screen-ours-zero.md` | 专项案例：ThemeCorePlus 屏幕归属计数为 0 |
+| `skills/sileo-searchbar-deadzone-fix/SKILL.md` | 上面这个案例的可复用技能（分轮取证 + 一站一槽 + hitTest 旁路） |
 | `scripts/errand-in-app.sh` | 外出取证：进目标 App → 点元素 → 截图/界面树 → **trap 里强制回 Apelin** |
 | `scripts/sync-skills.sh` | 本地技能目录 ↔ 仓库 `skills/` 双向同步（默认 push） |
 | `scripts/sync-memory.sh` | 本地记忆 ↔ 仓库 `memory/memories.json` 双向同步（默认 push；`pull` 会覆盖本机，先看 diff） |
@@ -588,23 +593,30 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   所以它不依赖 dylib 的符号（自己扫盘、自己读写偏好）。代价：设置进程里同一批类名被注册两次，
   日志里会出现 "Class TCPThemeStore is implemented in both …" 的**预期告警**，功能无碍；
   两个镜像各用各的实例，别试图让面板和 dylib 共享单例。
-- **唤醒全队靠三层防线，不靠人推**（用户 2026-10-31 02:5x 原话：「唤醒机器人队员有什么更有效果的方案和方法没？
-  目前不怎么有效果啊！都是我人为唤醒的！」→「1 2 3 全部实现！」**所有工程、所有对话、永久适用**）：
-  - **根因**：agent 回合结束后变 `idle`，只有外部 `apelin_conversation_send` 能叫醒；launchd watchdog 是纯
-    shell，能发现谁睡了但**不能叫醒**（没有 agent 权限）。独立协调群三次创建全部 context 爆死 → 放弃。
-  - **第一层·自跳心跳**：每个 agent 回合结束前做三步——① `sh "$HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh" beat`
-    刷心跳；② `apelin_conversation_list` 找 `isThisConversation:true` 那条的 `sessionID`；
-    ③ `apelin_conversation_send(自己的sessionID, "【心跳】继续…")`。消息**排队**，本回合结束自动触发下一轮。
-    三振出局：连续 3 次黑板无实质进展 → 停跳 `post … idle`。`done` / `waitingForApproval` 不自跳。
-  - **第二层·互叫醒**：每次回合结束前顺带 `apelin_conversation_list`，对 `state=open`、`lastActive` 超 **15 分钟**、
-    非本对话的队友发一句「【互叫】你 N 分钟没动了。继续干活或 post idle。」——**只叫醒，不指挥**（指挥走黑板）。
-  - **第三层·专职心跳发生器**：一个独立对话（标题「心跳发生器」），只做 4 步——`list` → 叫醒 `idle>10m` 的 →
-    找自己 → 给自己 `tick`；**不读技能、不读记忆、不读黑板、不改任何文件**。全队都忘了自跳时它兜底。
-    用户定：**有用就留着，没用就删掉**。
-  - **红线**：三层**都不替代汇报**（有结果先正文说清 + 上岛）、**不替代协调**（动设备仍走「协调→通知→5 秒」）、
+- **唤醒全队：靠「环形互跳 + 唤醒队列」，不靠人推**（用户 2026-10-31 02:5x 原话：「唤醒机器人队员有什么更有效果的方案和方法没？
+  目前不怎么有效果啊！都是我人为唤醒的！」→「1 2 3 全部实现！」；**03:0x 实测修正**。**所有工程、所有对话、永久适用**）：
+  - **实测硬事实（先记这条）**：Apelin **不允许对话给自己发消息**——`apelin_conversation_send(session_id: 本对话)`
+    被拒 `session_id is this conversation; send to another one`。所以**「自跳心跳」技术上不可行**，
+    写它的条文都是空话（心跳发生器 03:00 就是这么死的）。agent 回合结束后变 `idle`，**只有别的对话**发消息能叫醒它；
+    launchd watchdog 是纯 shell，能发现谁睡了但**不能叫醒**。
+  - **第一层·环形互跳（token ring，替代自跳）**：≥2 个对话成环，A 回合末给 B 发一句「【tick】…」，B 回合末再传下去；
+    环不断则环上永远有醒着的。传棒那一轮顺手：① drain 唤醒队列；② `beat`/`progress`。人少时两点对跳（协调员 ↔ 发生器）。
+    **环断了没有自愈**（忘了传棒、被停、context 爆都会断）。
+  - **第二层·唤醒队列 `fleet/wake-needed.tsv`（唯一能自愈的一层）**：root 看护每 300 秒把睡死清单写进去
+    （agent/工程/任务/下一步/分钟数），**root 发不了消息**；规矩是 **任何 agent 一醒来（收到消息、开工第一件事）
+    先 drain 它**——逐条 `apelin_conversation_send` 真发出去（一次最多两条、5 分钟内不重复）。这样用户碰任一对话
+    就能把全队重连起来。
+  - **第三层·专职心跳发生器**（标题「心跳发生器」，session `2ab405d6-…`）：3 步——`care` → 叫醒真正 idle 的 →
+    把棒传给协调员；**不读技能/记忆/整段历史、不改文件、不动设备**。它**不能自续**（同一条实测），必须有人喂。
+    用户定：**有用就留着，没用就删掉**（提示词见技能 §二十一，删了随时照抄重建）。
+  - **⚠️ 分清 `idle` 与 `running`（最容易误判）**：`idle` = 能叫醒，发消息有效；`waitingForApproval` = 卡批准卡，
+    要 `apelin_notification_send` 请用户点；**`running` 且久无输出 = 卡在工具循环**，消息只会排在被卡住的回合后面，
+    **发唤醒完全没用**，只能由用户停掉/重开那个对话（agent 无权 stop 别人的对话）。看护只看黑板时间戳分不出这两种，
+    所以 `care` 报的「疑似睡死」**动手前必须 `apelin_conversation_read` 核 `state`**。
+  - **红线**：三者**都不替代汇报**（有结果先正文说清 + 上岛）、**不替代协调**（动设备仍走「协调→通知→5 秒」）、
     **不替代回执**（别人消息第一时间回）；消息一句话就够，省 context。
-  - 落地：技能 `cross-chat-coordination` §十九（自跳）＋ §二十（互叫醒）＋ §二十一（发生器提示词与重建）；
-    本 AGENTS.md 这一条；全局记忆。**三样一起同步本机与云端**。
+  - 落地：技能 `cross-chat-coordination` §十九（环）＋ §二十（互叫醒与状态判定）＋ §二十一（发生器提示词与重建）；
+    本 AGENTS.md 这一条；记忆。**三样一起同步本机与云端**。
 
 ## 当前状态
 
