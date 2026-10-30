@@ -49,7 +49,26 @@
 所以「额度耗尽」这种**用户侧才能解决**的情况，会被看护当成「该唤醒的睡死机器人」反复唤醒。
 看护 v2 因此还要多一条：`running` 但事件流尾部是额度/限流错误 → 归「需用户处理」，不写 wake-needed。
 
-## 处置
+### 终局（2026-10-31 04:1x 复核，5781b4c7 之外再确认）
+
+1. **脚本本身已经不存在**：全 Documents 树 `find -name '*watchdog*'` 只命中本文，
+   `launchctl list` 里也没有任何 fleet 作业。也就是说「给看护 v2 打补丁」这件事**没有落点**，
+   再讨论 `wake-needed.tsv` 的写入条件只是纸面推演 —— 用户已下令把这套删掉，
+   替代品是 `scripts/fleet-live.sh`（只读 `events.jsonl` 副产物，谁都不用配合）。
+2. **`0234b652` 又活了**：`sessions/0234b652-…/events.jsonl` 末条事件是
+   `finished{reason:"completed"}`（05:46 写入），不是 `failed`。它换过 model
+   （`session.json.bak-model` 在，当前线是 `deepseek-flash`）之后正常跑完了一轮。
+   所以「额度耗尽」同 `ended` 一样，都是**某一时刻的快照**，不能当永久事实写进判据。
+3. **正确的判据只能来自 events.jsonl 的事件种类**（实测全量存在）：
+   `approvalRequested`（其后没有 `approvalResolved` = 等批准卡）、
+   `finished{reason}`（`failed` = 模型跑不动，`completed` = 正常收工）、
+   `error`、以及 `received/thinkingDelta/textDelta/toolCall*` 的 mtime 新鲜度（真在跑 / 挂住）。
+   `ended` / `waitingForApproval` 这类**应用层**状态 shell 拿不到（`session.json` 无 state 字段，
+   `Chats/<uuid>.json` 虽有 `state`/`isWorking` 但文件名不是 session id，join 不上），
+   只能在 agent 侧用 `apelin_conversation_list` 读 —— 这也正是「别再用 shell 猜死活」的又一条理由。
+
+
+## 处置（历史做法，脚本已删）
 
 1. 清僵尸行：`sh fleet.sh roster-drop 0234b652`
    → 该 agent 从名册移除，board 那行标成 `handoff`（不再被当成活线派活）。
