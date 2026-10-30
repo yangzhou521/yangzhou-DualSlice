@@ -132,6 +132,24 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   推回仓库 `skills/`，再 commit + push 到 `main` —— 本机那份是 Apelin 真正读的，仓库那份是版本化与
   云端备份，两边必须一致。
 
+## 设备状态自己查（全权限）
+
+用户 2026-10-30 16:30 原话：「icli状态以后你自己查 给你全权限」。**所有工程、所有对话适用。**
+
+- 凡是要设备 / 插件 / 云端**此刻状态**才能决定下一步的事，一律自己查完再汇报：`icli prefs read` 读诊断、
+  `icli app frontmost/list`、`irisin-cli list/show`、读 `/var/lib/dpkg/status`、`icli probe`+NSData
+  下载并校验（大小 / sha256 / `cmp`）、列目录 / 读 plist / `grep -a` 抽二进制、`icli ui tree` /
+  `apelin_screen_read_tree`、GitHub API 读 run 与 Release 状态。**不把查询推回用户、不让他截图或读屏替我、
+  不来回确认**；查不到就换一条路（换命令 / 换域 / 换探针），不是回头问。
+- **全权限不免仪式**：装包（`irisin-cli install`）、注销（`icli sb respring`）、重启目标进程
+  （`icli app kill --force`）仍必须先 `apelin_notification_send` → 正文写「5 秒后执行」 →
+  `sh scripts/respring-guard.sh 5 <标签>` 真等 5 秒 → 才执行；离开 Apelin 取证仍受 60 秒硬上限与
+  「必须自己回来」约束；截图每次仍需用户当次明确同意。
+- **Ask Before Using the Screen** 开着时，Apelin 自己的卡片仍会为读屏 / 交互 / 每条 icli 命令询问：
+  那是用户的开关，只能他自己在设置里关，**我不代关**，卡来了正常走、不因此反复解释。
+- 仍然不碰：系统关键设置、别的包的删除 / 降级、Apelin / Irisin / 引导自身的包。
+- 技能包：`icli-status-self-check`（本机技能目录 `~/Documents/wiki.qaq.apelin/skills/` 与仓库 `skills/` 各一份）。
+
 ## 硬规矩
 
 - **装包 / 注销 / 重启目标进程之前，必须：① `apelin_notification_send` 通知 → ② 明说「5 秒后执行」并

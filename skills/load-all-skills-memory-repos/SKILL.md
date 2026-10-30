@@ -25,6 +25,7 @@ apelin_skill_read a11-roothide-ondevice
 apelin_skill_read axs-ios-tweaks
 apelin_skill_read respring-notify-countdown
 apelin_skill_read load-all-skills-memory-repos
+apelin_skill_read icli-status-self-check
 ```
 
 - 本机技能目录（Apelin 真正读的那份）：`~/Documents/wiki.qaq.apelin/skills/`。清单里出现上面之外的，一并读。
@@ -66,6 +67,7 @@ sh scripts/sync-skills.sh        # 本机技能目录 → 仓库 skills/（脚�
 
 ## 5. 与其它硬性约定一起用（不许只顾这一条）
 
-- 装包 / 注销（respring）/ 杀进程前：`respring-notify-countdown` 的通知 + 正文里 5 秒倒计时（本机唯一注销入口 `sh scripts/respring-guard.sh`）。
+- **设备状态自己查（用户 2026-10-30 16:30 全权限）**：要设备/插件/云端此刻状态才能决定下一步的事，一律自己用 `icli` / `irisin-cli` / `icli probe` + `NSData` / GitHub API 查完再汇报，不把查询推回用户、不让他截图或读屏替我（详见技能 `icli-status-self-check`）。
+- 装包 / 注销（respring）/ 杀进程前：`respring-notify-countdown` 的通知 + 正文里 5 秒倒计时（本机唯一注销入口 `sh scripts/respring-guard.sh`）。全权限不免这条仪式。
 - 离开 Apelin 取证：桌面 / 插件设置内 / 别的 App 三类去处统一 60 秒硬上限，且必须自己回来；外出前预告、回来交代并写清秒数。
 - 本机编不了任何东西（A11 缺 FEAT_LRCPC）：一律 GitHub Actions 云编译 arm64 + arm64e 双切片，再用 `irisin-cli install` 装到本机、重启进程读诊断验证。

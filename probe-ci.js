@@ -1,20 +1,26 @@
-// 查最近几次 CI 运行的状态（公开仓库，匿名可读）
-var url = "https://api.github.com/repos/yangzhou521/yangzhou-DualSlice/actions/runs?per_page=3";
-var NSData = ObjC.use('NSData');
-var NSURL = ObjC.use('NSURL');
-var data = NSData.dataWithContentsOfURL_(NSURL.URLWithString_(url));
-if (!data) { print("fetch-nil"); }
+// 临时探针：查 yangzhou-DualSlice 最近的 workflow run（本机没 curl，用 NSData 拉 API）。
+var out = [];
+function line(s) { out.push(s); }
+
+var repo = "yangzhou521/yangzhou-DualSlice";
+var u = "https://api.github.com/repos/" + repo + "/actions/runs?per_page=6";
+var d = NSData.dataWithContentsOfURL(NSURL.URLWithString(u));
+if (!d) { console.log("NO_DATA: 拉不到 " + u); }
 else {
-  var s = ObjC.use('NSString').alloc().initWithData_encoding_(data, 4);
-  var text = s.toString();
-  // 只挑要看的三样：状态、结论、提交号
-  var re = /"head_sha":"([0-9a-f]{8})[0-9a-f]*"|"status":"([a-z_]+)"|"conclusion":"([a-z_]+)"/g;
-  var m, out = [], run = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m[1]) { run++; out.push("run" + run + " sha=" + m[1]); }
-    else if (m[2]) out.push("  status=" + m[2]);
-    else if (m[3]) out.push("  conclusion=" + m[3]);
+  var s = NSString.alloc().initWithDataEncoding(d, 4);
+  var txt = "" + s;
+  var j = null;
+  try { j = NSJSONSerialization.JSONObjectWithDataOptionsError(d, 0, null); } catch (e) { j = null; }
+  if (!j) {
+    line("JSON 解析失败，原始前 400 字：" + txt.substring(0, 400));
+  } else {
+    var runs = j["workflow_runs"];
+    line("runs=" + runs.length);
+    for (var i = 0; i < runs.length; i++) {
+      var r = runs[i];
+      line([r["run_number"], ("" + r["head_sha"]).substring(0, 8), r["name"], r["status"],
+            r["conclusion"], r["created_at"], r["id"]].join(" | "));
+    }
   }
-  print(out.join("\n"));
-  if (out.length === 0) print("raw-head: " + text.substring(0, 300));
 }
+console.log(out.join("\n"));
