@@ -214,6 +214,19 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   **本机 `icli screen describe` 与 `icli screen ocr` 都报 `screen capture failed`**（同一环境
   `icli screen shot` 正常），所以「把屏幕读成文字」这条路在本机不可用，屏上观感只能靠用户看；
   agent 自己也看不了图（读图工具回「模型不支持图像」）。截屏只用于这次比对，用完即删。
+- **CountdownHUD 1.1.1 已装机并生效（2026-10-30 15:50 装、16:40 别人那次注销带进去）**：
+  deb 14084 B ← `/rootfs/var/mobile/Documents/countdownhud-1.1.1.deb`（CI 提交 `e500d545`，
+  tag `countdownhud-v1.1.1`）。装前把已装 dylib 与包内解出来的做 `cmp`（**必须做**，本机有
+  CDN 返回旧构建的坑），一致才继续。生效后诊断 =
+  `v1.1.1;shows=1;last=3s;label=自检;font=12.2;island=SBSystemApertureContainerView|92,18,191,36;src=aperture;cand=11`
+  —— `shows` 归零可当「SpringBoard 真载入了新代码」的判据（1.1.0 时同域是 `shows=3`）。
+- **岛宽会变，别写死**：同一天先量到 `125,18,125,37`，注销后又量到 `92,18,191,36`（候选 11 项）。
+  插件按量到的矩形画就对了；用户改 VisibleIsland 宽度或岛处于展开态都会变。
+- **颜色不靠截图也能量**：`icli probe` 里 `[UIColor systemGreenColor]` 是动态色，
+  直接 `.CIColor()` 会抛 `-CIColor not defined for … need to first convert colorspace`；
+  先 `resolvedColorWithTraitCollection:[UITraitCollection currentTraitCollection]`，再读它的
+  `.description()` 就有分量：本机 systemGreen = `kCGColorSpaceModelRGB 0.141176 0.541176 0.239216 1`
+  （RGB 36,138,61），橙 (201,52,0)、红 (215,0,21)。现成探针 `probe-color.js`。
 - ThemeCorePlus **0.6.1 已装机（2026-10-30 12:05 起）**，SpringBoard 稳定、脱离安全模式：
   `icli prefs read com.apple.springboard ThemeCorePlusDiagnostics` =
   `v0.6.1;active=1;…;disp{look=125,hit=111};icon{look=12,skip=0,miss=8,hit=4}`（图标站在真干活）。
