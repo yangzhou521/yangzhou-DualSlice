@@ -13,7 +13,7 @@ set -eu
 # ── 包身份 ───────────────────────────────────────────────────────────
 PRODUCT=SileoFix
 PACKAGE_ID=com.yangzhou.sileofix
-VERSION=1.0.1
+VERSION=1.0.2
 NAME_ZH="Sileo 输入框修复"
 DESCRIPTION="修 SileoWallpaper 壁纸插件导致 Sileo 搜索/输入框点不进去、键盘打不开、打不了字的问题：只把盖在输入框上吃触摸的装饰层设成不接收触摸，壁纸效果照旧。"
 MAINTAINER=yangzhou
