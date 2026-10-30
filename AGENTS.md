@@ -102,6 +102,36 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 **规矩：以后装包 / 注销 / 杀进程前，一律 `sh scripts/respring-guard.sh 5 <标签>`**（标签写清动作，
 如「注销」「装包」），让屏幕和聊天正文同时有 5 秒。
 
+## 每轮开动之前：本机全部技能 + 全部记忆 + GitHub 云端全部技能与项目（硬性规定）
+
+用户 2026-10-30 16:12 与 16:14 两次明确要求，**适用于本次、下次、以后每一个对话、每一个工程**：
+
+- **本机全部技能包都要调用**：开工先 `apelin_skill_list`，再逐个 `apelin_skill_read` 把本机那几份
+  **全部**读完 ——
+  `a11-roothide-ondevice`（本机 A11/roothide 的设备侧做法、云编译闭环、一站一槽钩子修法）、
+  `axs-ios-tweaks`（Axs 个人约定的工程规范：命名空间、面板、滑条、Rootful/Rootless/Roothide 打包适配）、
+  `respring-notify-countdown`（装包/注销/杀进程前的通知与 5 秒倒计时、外出取证必回 Apelin）。
+  不许只挑一份读，也不许拿「我记得内容」代替真读；Apelin 内置技能照旧按任务需要读。
+- **全部记忆一起读**：`apelin_memory_list`（加 `all_projects: true` 就是全部工程、全部对话的记忆），
+  给别的工程干活时用 `apelin_memory_list project: <folder|projectID>`；动手前先看记忆里已有的结论与坑，
+  有新结论就 `apelin_memory_save` 写回（用户级偏好用 `scope: global`，工程事实用默认 project）。
+  记忆与用户当前原话冲突时，以用户当前原话为准。
+- **GitHub 云端的全部技能与项目一起用**（账号 `yangzhou521`，**只认越狱插件相关的两个仓库**）：
+  - 云端技能 = 本仓库 `skills/`（本机技能目录的版本化副本，两边用 `scripts/sync-skills.sh` 保持一致）
+    ＋ `AxsTweakKit` 里的模板、生成/自检脚本、CI 工作流模板。本机与云端不一致时，先同步再动手。
+  - `yangzhou521/AxsTweakKit`（`master`）= Axs 的越狱工程工具箱：工程模板 `Templates/AxsDualSlice`、
+    生成/自检脚本、CI 工作流模板、命名空间与面板写法约定。**新插件、新工程优先复用它的形状。**
+  - `yangzhou521/yangzhou-DualSlice`（`main`，**就是本工程**）= 实际产品与脚本：ThemeCorePlus
+    （主题引擎 + 设置面板）、CountdownHUD（倒计时胶囊）、`scripts/*.sh`、`skills/` 副本、各条 CI 工作流。
+  - **只认这两个越狱插件相关的仓库**：`AxsTweakKit` 与 `yangzhou-DualSlice`。账号下别的仓库
+    （如 BPB-Worker-Panel、edgetunnel 这类 fork）**不写、不动、不碰**，也不引用。
+  动手写新的东西之前先看仓库里已有的同类实现，不另起一套。
+  本机没有 curl/wget/python3，读云端用 `apelin_web_fetch`，或 `icli probe` + `NSData`
+  （`raw.githubusercontent.com` / `api.github.com`）。
+- **云端同步**：本机技能目录 `~/Documents/wiki.qaq.apelin/skills/` 改动后，用 `sh scripts/sync-skills.sh`
+  推回仓库 `skills/`，再 commit + push 到 `main` —— 本机那份是 Apelin 真正读的，仓库那份是版本化与
+  云端备份，两边必须一致。
+
 ## 硬规矩
 
 - **装包 / 注销 / 重启目标进程之前，必须：① `apelin_notification_send` 通知 → ② 明说「5 秒后执行」并
