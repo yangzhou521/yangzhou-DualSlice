@@ -635,6 +635,16 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
     要 `apelin_notification_send` 请用户点；**`running` 且久无输出 = 卡在工具循环**，消息只会排在被卡住的回合后面，
     **发唤醒完全没用**，只能由用户停掉/重开那个对话（agent 无权 stop 别人的对话）。看护只看黑板时间戳分不出这两种，
     所以 `care` 报的「疑似睡死」**动手前必须 `apelin_conversation_read` 核 `state`**。
+  - **⚠️ 第四种「叫不醒」：模型线没额度（2026-10-31 03:5x 实测，f8fbdbd5 定位）**：消息**确实送到了**
+    （`send` 返回 `done=sent`），回合也确实起来了，但 `events.jsonl` 尾部立刻是
+    `{"finished":{"reason":"failed"}}`，错误 `code:14018 / Credits exhausted`（codebuddy.ai）；
+    另一批会话是 `glm-5.2` 狂 `{"reconnecting":{}}`（一晚上百次）。**看着像没叫醒，其实是模型跑不动**。
+    判据：`tail -n 8 sessions/<sid>/events.jsonl`，看有没有 error/finished-failed、`tokens` 是否在涨；
+    真在干活的特征是 mtime 每秒在动 + `"tokens":N` 递增 + 零 error。
+    **修法**：`cp session.json session.json.bak-model` 后把 `"model"` 改成有额度的线（本机 `deepseek-flash`），
+    Apelin 每回合重读 `session.json`、改完立即生效且不会被内存写回。
+    **必须逐个发、别群发**：同时唤醒会撞上游限流（`retry in 59s`），挂了就等 60 秒再发；
+    默认模型是 root 侧偏好（`Settings/` 下只有 `git.json`），agent 读不到也改不了，只能按会话改文件。
   - **红线**：三者**都不替代汇报**（有结果先正文说清 + 上岛）、**不替代协调**（动设备仍走「协调→通知→5 秒」）、
     **不替代回执**（别人消息第一时间回）；消息一句话就够，省 context。
   - 落地：技能 `cross-chat-coordination` §十九（环）＋ §二十（互叫醒与状态判定）＋ §二十一（发生器提示词与重建）；
