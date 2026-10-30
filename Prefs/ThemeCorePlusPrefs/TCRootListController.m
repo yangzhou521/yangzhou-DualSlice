@@ -172,6 +172,15 @@ static NSString *TCPDiagnosticsText(void) {
 // 这个主题排在叠加链第几层（1 起）；0 = 没勾。
 - (NSInteger)tcpLayerForPath:(NSString *)path {
     NSUInteger index = [_selected indexOfObject:path];
+    if (index == NSNotFound) {
+        // 存的可能是「上一个隐根时代」的旧路径（roothide 重越狱会换 .jbroot-xxxx 名字），
+        // 这样精确比对就对不上了；退一步按目录名对一次。同名主题可能同时存在于两个根里，
+        // 所以只在没有精确命中时才退这一步，免得两行一起被勾上。
+        NSString *name = path.lastPathComponent;
+        for (NSUInteger i = 0; i < _selected.count; i++) {
+            if ([_selected[i].lastPathComponent isEqualToString:name]) { index = i; break; }
+        }
+    }
     return index == NSNotFound ? 0 : (NSInteger)index + 1;
 }
 

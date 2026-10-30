@@ -24,6 +24,14 @@ NSString *TCPSourceThemeRootsReport(void);
 // store 自己合成图标时会走 +[UIImage imageWithContentsOfFile:]，不拦住就会自我递归。
 BOOL TCPPathIsInsideThemeRoots(NSString *path);
 
+// 把「存下来的主题路径」重新对到本进程真实存在的目录上，认不出来返回 nil。
+//   · 存下来的可能是**上一个隐根时代**的绝对路径（roothide 重越狱会换 .jbroot-xxxx 名字，
+//     本机实测过），也可能是 shell 手写的「/Library/ThemeCore/…」这种引导相对写法 ——
+//     后者在系统进程里 plain 策略是看不见的（诊断里 plain:0）。
+//   · 所以先按原样试，不行就截出 /Library/… 之后的部分重新贴到当前解析出的根上，
+//     再不行就按目录名在根里找同名目录（用户自己挪过位置也能救回来）。
+NSString *TCPReResolveThemePath(NSString *stored);
+
 // 插件自己的库根（系统路径）。
 NSString *TCPLibraryRoot(void);
 // 编译产物目录（阶段二由管理器 App 写入；阶段一不使用）。

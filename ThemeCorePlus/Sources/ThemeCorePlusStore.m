@@ -372,10 +372,9 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
 }
 
 // 生效叠加链：ThemePaths（有序数组，靠后的优先）优先；没有才退回旧的单主题键。
-// 只保留**确实存在**的目录，顺序保持配置里的顺序 —— 面板与诊断都按这个顺序说事。
+// 每层都经 TCPReResolveThemePath 重新对到本进程真实存在的目录上（认旧隐根的路径、认引导相对写法），
+// 顺序保持配置里的顺序 —— 面板与诊断都按这个顺序说事。
 - (NSArray<NSString *> *)resolveThemePathsWithValues:(NSDictionary *)values {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    BOOL isDir = NO;
     NSMutableArray<NSString *> *paths = [NSMutableArray array];
 
     id raw = values[TCPKeyThemePaths];
@@ -385,8 +384,9 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
             if (![entry isKindOfClass:[NSString class]] || [entry length] == 0) continue;
             NSString *path = (NSString *)entry;
             if ([paths containsObject:path]) continue;   // 同一层只叠一次
-            if ([fm fileExistsAtPath:path isDirectory:&isDir] && isDir) {
-                [paths addObject:path];
+            NSString *resolved = TCPReResolveThemePath(path);
+            if (resolved.length > 0 && ![paths containsObject:resolved]) {
+                [paths addObject:resolved];
             }
         }
     }
@@ -403,9 +403,10 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     BOOL isDir = NO;
 
     NSString *path = TCPStringValue(values, TCPKeyThemePath);
-    if (path.length > 0 && [fm fileExistsAtPath:path isDirectory:&isDir] && isDir) {
-        if (outName) *outName = [path lastPathComponent];
-        return path;
+    NSString *resolved = path.length > 0 ? TCPReResolveThemePath(path) : nil;   // 见 Paths.h：认旧路径/引导相对写法
+    if (resolved.length > 0) {
+        if (outName) *outName = [resolved lastPathComponent];
+        return resolved;
     }
 
     NSString *name = TCPStringValue(values, TCPKeyThemeName);
@@ -841,20 +842,22 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         if (samples.length > 240) samples = [samples substringToIndex:240];
         NSString *hits = self.hitSamples.count > 0 ? [self.hitSamples componentsJoinedByString:@","] : @"-";
         if (hits.length > 240) hits = [hits substringToIndex:240];
-        // 叠加链：n 是层数，[...] 是从最下层到最上层的目录名（最右边那个说了算）。
+        // 叠加链：layers=N 是层数，[...] 是从最下层到最上层的目录名（最右边那个说了算）。
+        // 名字用 layers 而不是 themes：诊断串末尾那个 themes= 是「扫到几个主题」的普查，
+        // 与「当前挂了哪几层」是两件事，别混。
         NSMutableArray<NSString *> *chain = [NSMutableArray array];
         for (NSString *path in self.themePaths) {
             [chain addObject:path.lastPathComponent];
         }
-        NSString *themes = chain.count > 0 ? [chain componentsJoinedByString:@"|"] : @"-";
-        if (themes.length > 160) themes = [themes substringToIndex:160];
+        NSString *layers = chain.count > 0 ? [chain componentsJoinedByString:@"|"] : @"-";
+        if (layers.length > 160) layers = [layers substringToIndex:160];
         return [NSString stringWithFormat:
-                @"v%@;active=%d;theme=%@;themes=%lu[%@];gen=%lu;icon{look=%lu,hit=%lu};badge{look=%lu,hit=%lu};file{look=%lu,hit=%lu};named=%lu;mask=%d;base=%d;overlay=%d;folder=%d;hit=[%@];miss=[%@]",
+                @"v%@;active=%d;theme=%@;layers=%lu[%@];gen=%lu;icon{look=%lu,hit=%lu};badge{look=%lu,hit=%lu};file{look=%lu,hit=%lu};named=%lu;mask=%d;base=%d;overlay=%d;folder=%d;hit=[%@];miss=[%@]",
                 TCP_VERSION,
                 self.active ? 1 : 0,
                 self.themeName ?: @"-",
                 (unsigned long)self.themePaths.count,
-                themes,
+                layers,
                 (unsigned long)self.generation,
                 (unsigned long)self.iconLookups, (unsigned long)self.iconHits,
                 (unsigned long)self.badgeLookups, (unsigned long)self.badgeHits,

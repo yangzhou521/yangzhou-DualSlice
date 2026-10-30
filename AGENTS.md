@@ -182,10 +182,16 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 - **面板**：`TCPThemeChooserController` 改成勾选式，勾选顺序即叠加顺序，副标题写「叠加第 N 层 ·
   根目录名」，再点一次取消，「系统原生外观」那行点一下 = 清空整条链；勾完**不自动 pop**，
   右上角有「完成」，Preferences 的返回键也能回去。改完立刻 `TCPPostPreferencesChanged()`。
-- **诊断**：`ThemeCorePlusDiagnostics` 里多了 `themes=N[层1|层2|…]`（从左到右 = 从下到上），
-  `theme=` 是「层1 + 层2」的合并名，`mask/base/overlay/folder` 是最终选中的四样素材。
-- shell 手写只能用单主题那条（`icli prefs write com.yangzhou.themecoreplus ThemePath "…"` 后自己
-  respring）；要叠多层就在面板里勾，或写 plist 数组后注销。
+- **诊断**：`ThemeCorePlusDiagnostics` 里多了 `layers=N[层1|层2|…]`（从左到右 = 从下到上；
+  末尾那个 `themes=` 是「扫到几个主题」的普查，两回事），`theme=` 是「层1 + 层2」的合并名，
+  `mask/base/overlay/folder` 是最终选中的四样素材。
+- **路径容错**：存的路径每层都过 `TCPReResolveThemePath()`（Paths.h）：原样能用就用；不行就把
+  `/Library/…` 之后的部分重新贴到**本进程**解析出的同名根上（治隐根换名）；再不行按目录名在根里找
+  同名主题。**shell 手写 `ThemePath` / `ThemePaths` 时可以直接写 `/Library/ThemeCore/液态玻璃.theme`**
+  ——以前不行，因为系统进程里 plain 策略看不见（诊断 `try=[…,plain:0]`）。
+- shell 手写叠加链（写数组要用 `--type json`，`--notify` 能让 SpringBoard 立刻重读，不用注销）：
+  `icli prefs write com.yangzhou.themecoreplus ThemePaths '["/Library/ThemeCore/角标：透明玻璃","/Library/ThemeCore/液态玻璃.theme"]' --type json --notify com.yangzhou.themecoreplus.preferences-changed`；
+  清空用 `icli prefs delete com.yangzhou.themecoreplus ThemePaths`。
 
 ### 面板空白：成因与修法（已修，2026-10-30）
 

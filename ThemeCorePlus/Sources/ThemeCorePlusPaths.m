@@ -180,6 +180,46 @@ BOOL TCPPathIsInsideThemeRoots(NSString *path) {
     return NO;
 }
 
+// 目录名相同的候选：在主题根里直接找同名目录（先试原名，再试加 .theme）。
+static NSString *TCPThemePathByName(NSString *name) {
+    if (name.length == 0) return nil;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *root in TCPSourceThemeRoots()) {
+        for (NSString *candidate in @[ name, [name stringByAppendingPathExtension:@"theme"] ]) {
+            NSString *full = [root stringByAppendingPathComponent:candidate];
+            BOOL isDir = NO;
+            if ([fm fileExistsAtPath:full isDirectory:&isDir] && isDir) return full;
+        }
+    }
+    return nil;
+}
+
+NSString *TCPReResolveThemePath(NSString *stored) {
+    if (stored.length == 0) return nil;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL isDir = NO;
+    if ([fm fileExistsAtPath:stored isDirectory:&isDir] && isDir) return stored;
+
+    // 1) 按「/Library/…」之后的相对部分重新贴到当前的同名根上：
+    //    既治隐根换名，也治 shell 手写的引导相对路径。
+    NSRange range = [stored rangeOfString:@"/Library/"];
+    if (range.location != NSNotFound) {
+        NSString *tail = [stored substringFromIndex:range.location];   // /Library/Themes/Vela
+        for (NSString *relative in TCPBootstrapThemeRelatives()) {     // /Library/ThemeCore, /Library/Themes
+            if (![tail hasPrefix:relative]) continue;
+            NSString *rest = [tail substringFromIndex:relative.length]; // /Vela
+            for (NSString *root in TCPSourceThemeRoots()) {
+                if (![root hasSuffix:relative]) continue;               // 只往同名的根上贴
+                NSString *candidate = [root stringByAppendingString:rest];
+                if ([fm fileExistsAtPath:candidate isDirectory:&isDir] && isDir) return candidate;
+            }
+        }
+    }
+
+    // 2) 还是不行就按目录名找同名主题（用户把主题挪到另一个根里了）。
+    return TCPThemePathByName(stored.lastPathComponent);
+}
+
 NSString *TCPLibraryRoot(void) {
     return @"/var/mobile/Library/ThemeCorePlus";
 }
