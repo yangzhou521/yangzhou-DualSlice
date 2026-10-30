@@ -1,6 +1,6 @@
 ---
 name: respring-notify-countdown
-description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 respring-coordinate-other-chats），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用。
+description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 cross-chat-coordination），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用。
 ---
 
 # 通知 + 倒计时 5 秒，取证后回 Apelin
@@ -54,7 +54,7 @@ description: 注销、装 deb、重启目标进程前，必须先和本机其它
   再用 `apelin_conversation_read`（`wait_seconds: 60`）等它这一回合结束。**绝不 `apelin_conversation_stop`。**
 - 等超过约 120 秒仍没收尾：**不硬注销**，在回复正文说清「对话 A 还在做 X」让用户决定。
 - 协调完才进入下面的「通知 → 正文写 5 秒 → 真等 5 秒」三步。
-- 细则见技能 `respring-coordinate-other-chats`。
+- 细则见技能 `cross-chat-coordination`（不只注销前协调：有进展要广播，自己的活永远第一）。
 
 ## 零、六、先别注销：注入型插件把 App 划掉重开就生效（用户 2026-10-30 21:24 定的硬规矩）
 

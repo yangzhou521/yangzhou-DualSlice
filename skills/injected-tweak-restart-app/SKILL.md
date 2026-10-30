@@ -38,7 +38,7 @@ SpringBoard 才能读到新代码：只要那个进程重开一次就够了。�
    `icli prefs read <bundle-id> <Tweak>Diagnostics` → `v1.2.0;…`。
    这才是「注入成功」的证据，不是屏幕黑没黑。
 4. 只有目标进程本身就是 SpringBoard，或改的是 SpringBoard 侧的钩子/过滤器，才走注销：
-   先 `respring-coordinate-other-chats`（查全部工程与对话、别打断它们）→ `apelin_notification_send`
+   先 `cross-chat-coordination`（查全部工程与对话、别打断它们）→ `apelin_notification_send`
    → 回复正文写「5 秒后执行」→ `sh scripts/respring-guard.sh 5 <标签>` 真等 → 才 `icli sb respring`。
    细则见技能 `respring-notify-countdown`。
 5. `icli app kill` 仍是「重启目标进程」，用户在别的对话里可能正在测同一个 App：杀之前扫一眼

@@ -10,7 +10,7 @@ description: 修复/功能/检查有结果时：先在对话内说清结果，�
 > 以后所有让你完全和修复的结果：如果修复和完成✅后都要在对话内和我说一下！如果我离开此对话去别的对话和去系统桌面上和我本地安装的软件内都要用灵动岛胶囊通知我一下！给我提一下工作进程和工作进度！把这个写进记忆和技能包内！并同步到云端！以后所有的对话和工程在工作时有初步己达成完成的有结果的任务结束时，都要给我一个通知和提醒！
 
 这是一条**永久规则**，与本技能配套的还有 `respring-notify-countdown`（注销/装包/杀进程前的通知 + 5 秒）
-和 `respring-coordinate-other-chats`（注销前先跟别的对话同步）。三件事互不替代。
+和 `cross-chat-coordination`（自己的活第一；注销前先跟别的对话同步；每有结果就广播给在跑的对话）。三件事互不替代。
 
 ## 一、顺序：先说，再上岛
 
@@ -36,7 +36,7 @@ description: 修复/功能/检查有结果时：先在对话内说清结果，�
 - 文案要短、要具体：`完成：注销前同步已写进技能`、`进度：CI 编译中 2/3`、`完成：胶囊纯文案版已装`。
   单行显示、宽度跟着岛走，太长会被缩到看不清。
 - **不注销、不装包、不杀进程**：`hud-notify.sh` 只提醒。真要重启 SpringBoard 或装包，
-  仍旧走 `respring-coordinate-other-chats` → `respring-notify-countdown` 的两道闸门 + `scripts/respring-guard.sh`。
+  仍旧走 `cross-chat-coordination` → `respring-notify-countdown` 的两道闸门 + `scripts/respring-guard.sh`。
 - 用户就在 Apelin 里（前台）时胶囊看不见——那很正常，正文那句结论才是主体，胶囊是给「人不在」准备的。
 
 ## 三、验证与排错
