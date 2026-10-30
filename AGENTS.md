@@ -83,3 +83,15 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 - 两个产品都只走过云编译，**本机尚未装机验证过**；本文档随每次验证更新。
 - 未做（阶段二）：管理器 App（导入/解包 .deb、预编译不可变成品、revision 切换与回滚）、
   作者素材 `图标蒙板AnemoneEffects.zip`、只有 `IconBundles/icon.png` 的角标主题。
+
+## 外出取证：去别的 App，必须回到 Apelin
+
+用户在聊天里看不到屏幕：进设置（或任何别的 App）取证时，屏幕离开 Apelin 就是黑箱，
+所以单次外出**有时限、且收尾必定回到 Apelin**。默认上限 60 秒（典型 30–40 秒），
+汇报里要写清这次外出了多少秒；不要停在设置里汇报，也不要把验证推回给用户。
+
+机制：`sh scripts/errand-in-app.sh <bundle-id> [秒]` —— 回程写在 `trap EXIT/INT/TERM` 里
+（报错、超时、Ctrl-C 都会回），末尾一行 `回到 Apelin: <前景 bundle-id>` 用
+`icli app frontmost` 校验。本机实测（2026-10-30）：外出 8 秒，回来前台 = `wiki.qaq.apelin`。
+`icli screen shot` 可用，但 `icli screen describe` 在本机恒返回 `screen capture failed`，
+界面结构要用 Apelin 的 `apelin_screen_read_tree`，或把截图 `cp` 进工程用 `file_show` 给用户看。

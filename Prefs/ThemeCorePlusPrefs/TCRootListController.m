@@ -44,6 +44,7 @@ enum {
 
 @interface PSListController : UIViewController
 - (NSArray *)specifiers;
+- (void)setSpecifiers:(NSArray *)specifiers;
 - (void)reloadSpecifiers;
 - (void)setPreferenceValue:(id)value specifier:(id)specifier;
 - (id)readPreferenceValue:(id)specifier;
@@ -94,15 +95,16 @@ static NSString *TCPDiagnosticsText(void) {
 @end
 
 @implementation TCRootListController {
-    // ★★ 这个名字是有承重的，别加自己的前缀（本机实测过）：
-    // PSListController 的表格数据源（numberOfSectionsInTableView: / tableView:numberOfRowsInSection:）
-    // 读的不是 -[self specifiers]，而是它自己那个名叫 _specifiers 的存储；子类里用同样的名字声明，
-    // 运行期就跟父类那一格合成同一个 ivar，写进去表格才看得见。
-    // 叫 _tcpSpecifiers 时（0.6.0 装机复现）：kvc _specifiers = null、表格 0 段、
-    // tableView:numberOfRowsInSection: 直接 NSRangeException 越界，面板一片空白但 specifiers() 返回 13。
-    // 对照 VerticalDockPrefs / SystemBoxPrefs / HammerItPrefs 三个能用面板：二进制里只有 _specifiers，
-    // 且都没有 setSpecifiers —— 它们靠的就是这个名字。
+    // 名字照父类叫 _specifiers（别加自己的前缀），但**光有这个名字不够**：本机逐组实测（icli probe）：
+    //   view() 之后 --specifiers 早就被调过、这里也拿到了 13 个单元，表格却依旧 0 段 0 行；
+    //   只把这 13 个写进 _specifiers（KVC 直接写）也一样 0 段；
+    //   交给父类自己的入口 [self setSpecifiers:...] 才立刻变成 5 段 8 行，而且重复调用稳定。
+    // 结论：段落缓存不是"读数组时现算"的，它只在父类那个入口里重建 —— 所以本类改完数组后
+    // 必须再走一次 setSpecifiers:（见 -reloadSpecifiers）。叫 _tcpSpecifiers 时（0.6.0 装机复现）
+    // 连数组都看不见：kvc _specifiers = null、表格 0 段、tableView:numberOfRowsInSection: 直接
+    // NSRangeException 越界，面板一片空白但 specifiers() 返回 13。
     NSArray *_specifiers;
+    BOOL _tcpApplyingSpecifiers;   // setSpecifiers: 万一回头调 reloadSpecifiers，别无限递归
 }
 
 #pragma mark 生成单元
@@ -206,8 +208,21 @@ static NSString *TCPDiagnosticsText(void) {
 }
 
 - (void)reloadSpecifiers {
-    _specifiers = nil;
+    // 每次重建数组（状态行/诊断/主题列表都要是新的），顺序不能反：
+    _specifiers = [self tcpBuildSpecifiers];
+
+    if (_tcpApplyingSpecifiers) {
+        // 已经在 setSpecifiers: 里绕回来了：只把数组和表格刷新一遍就停手。
+        [super reloadSpecifiers];
+        return;
+    }
+
     [super reloadSpecifiers];
+    // 父类的 reloadSpecifiers 会按"当时的数组"重排段落缓存，而它不认我们新算的这份；
+    // 走它自己的入口把缓存按新数组建起来，表格才有段有行（本机 icli probe 逐组验证过）。
+    _tcpApplyingSpecifiers = YES;
+    [self setSpecifiers:_specifiers];
+    _tcpApplyingSpecifiers = NO;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
