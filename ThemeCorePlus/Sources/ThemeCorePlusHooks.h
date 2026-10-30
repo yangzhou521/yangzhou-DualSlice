@@ -133,6 +133,9 @@ BOOL TCPIconNeedsSystemComposite(id icon);
 UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *systemImage);
 // 动态图标合成打点：各叠了几张、混合模式、最后一次的像素量，写进诊断。
 NSString *TCPDynamicProbeReport(void);
+// 站点打点：记下「图标类 : 解析出的 bundle id」，用来判断时钟/日历是没被问还是没认出 id。
+void TCPNoteIconSiteClass(NSString *className);
+NSString *TCPIconIdentifierOf(id icon);
 // 图标站打点：被问过几次、参数不可信跳过几次、没素材几次、换成几张。写进诊断。
 NSString *TCPIconProbeReport(void);
 // 显示层站：original 是视图正要画的那张图（UIImage 或 CGImage），view 是 SBIconImageView。

@@ -80,6 +80,11 @@ UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info) {
     return image;
 }
 
+// 给打点用：站点里记「哪个类、解析出什么 bundle id」，一眼看出是没被问还是没认出 id。
+NSString *TCPIconIdentifierOf(id icon) {
+    return TCPIconBundleIdentifier(icon);
+}
+
 void TCPInstallIconSites(void) {
     NSArray<NSString *> *prefixes = @[ @"SBIcon", @"SBLeaf", @"SBApplication", @"SBH",
                                        @"SBFolder", @"SBSearch", @"SBWidget", @"SBNewsstand" ];
@@ -320,11 +325,45 @@ static void TCPDrawClockHand(CGContextRef ctx, UIImage *hand, CGPoint center,
 static NSInteger sDynClock = 0;
 static NSInteger sDynCalendar = 0;
 static NSInteger sDynFail = 0;
+static NSInteger sDynSeen = 0;       // 站点摸到动态图标几次（0 = 根本没走到这条路）
+static NSInteger sDynNotImage = 0;   // 系统那张图不是 UIImage（没法叠）
 static NSString *sDynLast = nil;
 
+// 站点到底被哪些图标类问过（前几名）：时钟/日历走不到这里时，靠它定位是「没被问」
+// 还是「被问了但没认出 bundle id」。0.9.14 诊断里 dyn 全是 0，就是靠这一栏分辨的。
+static NSMutableDictionary<NSString *, NSNumber *> *sSiteClasses = nil;
+
+void TCPNoteIconSiteClass(NSString *className) {
+    if (className.length == 0) return;
+    @synchronized (sSiteClasses ?: [NSNull null]) {
+        if (sSiteClasses == nil) sSiteClasses = [NSMutableDictionary dictionary];
+        NSNumber *count = sSiteClasses[className];
+        sSiteClasses[className] = @(count.integerValue + 1);
+    }
+}
+
+void TCPNoteDynamicSeen(void) { __sync_fetch_and_add(&sDynSeen, 1); }
+void TCPNoteDynamicNotImage(void) { __sync_fetch_and_add(&sDynNotImage, 1); }
+
+static NSString *TCPSiteClassSummary(void) {
+    NSArray<NSString *> *keys = nil;
+    @synchronized (sSiteClasses ?: [NSNull null]) {
+        keys = [sSiteClasses keysSortedByValueUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) {
+            return [b compare:a];
+        }];
+    }
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (NSString *key in keys) {
+        if (parts.count >= 6) break;
+        [parts addObject:[NSString stringWithFormat:@"%@=%ld", key, (long)sSiteClasses[key].integerValue]];
+    }
+    return parts.count > 0 ? [parts componentsJoinedByString:@","] : @"-";
+}
+
 NSString *TCPDynamicProbeReport(void) {
-    return [NSString stringWithFormat:@"dyn{clock=%ld,cal=%ld,fail=%ld,last=%@}",
-            (long)sDynClock, (long)sDynCalendar, (long)sDynFail, sDynLast ?: @"-"];
+    return [NSString stringWithFormat:@"dyn{clock=%ld,cal=%ld,fail=%ld,seen=%ld,noimg=%ld,last=%@,cls[%@]}",
+            (long)sDynClock, (long)sDynCalendar, (long)sDynFail,
+            (long)sDynSeen, (long)sDynNotImage, sDynLast ?: @"-", TCPSiteClassSummary()];
 }
 
 BOOL TCPIconNeedsSystemComposite(id icon) {
