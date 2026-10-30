@@ -374,6 +374,10 @@ static NSInteger sCensusLayerTotal = 0;
 static NSInteger sCensusDisplayedOurs = 0; // displayedImage 交出来的是我们的
 static NSInteger sCensusDisplayedTotal = 0;
 static NSMutableArray<NSString *> *sCensusSamples = nil;
+static NSInteger sCensusIconViews = 0;      // 图标视图数（私有类 SBIconImageView 等）
+static NSInteger sCensusIconOurs = 0;       // 其中交出的是我们的图
+static NSInteger sCensusIconStock = 0;
+static NSMutableArray<NSString *> *sCensusIconSamples = nil;
 static BOOL sCensusRunning = NO;
 
 // 定义在文件后面的显示层小工具，这里先声明。
@@ -390,7 +394,7 @@ static void TCPCensusClassifyUIImage(UIImage *image) {
 
 // 普查一个视图（一个图标视图）。只读，不触发任何重画。
 static void TCPCensusInspectView(UIView *view, NSUInteger depth) {
-    if (view == nil || depth > 6) return;
+    if (view == nil || depth > 8) return;
     if (sCensusViews > 4000) return;
 
     NSString *className = NSStringFromClass([view class]);
@@ -410,6 +414,10 @@ static void TCPCensusInspectView(UIView *view, NSUInteger depth) {
                  TCPDisplayViewIcon(view) ? @"icon" : @"-"]];
         }
     }
+
+    // ①b 真正的图标视图不是 UIImageView（是私有类 SBIconImageView），
+    //     它用 displayedImage 交出画进屏幕的那张图 —— 计数在下面那段专门的遍历里做，
+    //     这里只做识别，不重复计数。
 
     // ② layer.contents —— 显示层真正画进屏幕的那张（可能是 CGImage，也可能是 UIImage）
     id contents = view.layer.contents;
@@ -443,6 +451,8 @@ void TCPRunScreenCensus(void) {
     sCensusLayerOurs = 0; sCensusLayerStock = 0; sCensusLayerTotal = 0;
     sCensusDisplayedOurs = 0; sCensusDisplayedTotal = 0;
     sCensusSamples = [NSMutableArray array];
+    sCensusIconViews = 0; sCensusIconOurs = 0; sCensusIconStock = 0;
+    sCensusIconSamples = [NSMutableArray array];
 
     NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
     // 用 windowScene 拿窗口（UIApplication.windows 在 iOS 15+ 已废弃）。
@@ -465,22 +475,64 @@ void TCPRunScreenCensus(void) {
 
     // displayedImage：视图交出去的那张图是谁的（静默打点，别把自己的询问算进 look/hit）
     SEL displayed = NSSelectorFromString(@"displayedImage");
-    Class iconImageView = objc_getClass("SBIconImageView");
-    if (iconImageView != Nil) {
+    // 图标视图不止 SBIconImageView：文件夹是 SBFolderIconImageView，名字里都带 IconImageView。
+    NSArray<Class> *iconViewClasses = nil;
+    NSMutableArray *wanted = [NSMutableArray array];
+    unsigned int count = 0;
+    Class *all = objc_copyClassList(&count);
+    for (unsigned int i = 0; i < count; i++) {
+        NSString *name = NSStringFromClass(all[i]);
+        if ([name hasPrefix:@"SB"] && [name hasSuffix:@"IconImageView"]) {
+            [wanted addObject:all[i]];
+        }
+    }
+    free(all);
+    iconViewClasses = wanted;
+
+    if (iconViewClasses.count > 0) {
         for (UIWindow *window in windows) {
             NSMutableArray *stack = [NSMutableArray arrayWithArray:window.subviews];
             NSUInteger guard = 0;
             while (stack.count > 0 && guard++ < 3000) {
                 UIView *view = stack.lastObject;
                 [stack removeLastObject];
-                if ([view isKindOfClass:iconImageView] && [view respondsToSelector:displayed]) {
+                BOOL isIconView = NO;
+                for (Class cls in iconViewClasses) {
+                    if ([view isKindOfClass:cls]) { isIconView = YES; break; }
+                }
+                if (isIconView && [view respondsToSelector:displayed]) {
                     sPixelQuietDisplayCounters = YES;
                     id value = ((id (*)(id, SEL))objc_msgSend)(view, displayed);
                     sPixelQuietDisplayCounters = NO;
                     if ([value isKindOfClass:[UIImage class]]) {
                         sCensusDisplayedTotal++;
-                        if ([[TCPThemeStore shared] isRenderedImage:(UIImage *)value]) {
+                        sCensusIconViews++;
+                        BOOL ours = [[TCPThemeStore shared] isRenderedImage:(UIImage *)value];
+                        if (ours) {
                             sCensusDisplayedOurs++;
+                            sCensusIconOurs++;
+                        } else {
+                            sCensusIconStock++;
+                        }
+                        if (sCensusIconSamples.count < 12) {
+                            [sCensusIconSamples addObject:
+                                [NSString stringWithFormat:@"%@|%@|%.0fx%.0f",
+                                 NSStringFromClass([view class]), ours ? @"ours" : @"stock",
+                                 ((UIImage *)value).size.width, ((UIImage *)value).size.height]];
+                        }
+                    }
+                    // 图标视图自己 layer.contents 里画进屏幕的那张图是谁的
+                    id contents = view.layer.contents;
+                    if (contents != nil) {
+                        sCensusLayerTotal++;
+                        if (TCPDisplayIsCGImage(contents)) {
+                            if ([[TCPThemeStore shared] isRenderedCGImagePointer:(__bridge const void *)contents]) {
+                                sCensusLayerOurs++;
+                            } else {
+                                sCensusLayerStock++;
+                            }
+                        } else if ([contents isKindOfClass:[UIImage class]]) {
+                            TCPCensusClassifyUIImage((UIImage *)contents);
                         }
                     }
                 }
@@ -495,10 +547,12 @@ void TCPRunScreenCensus(void) {
 
 NSString *TCPScreenCensusReport(void) {
     return [NSString stringWithFormat:
-            @"census{ran=%ld,views=%ld,ours=%ld,stock=%ld,layer{total=%ld,ours=%ld,stock=%ld},disp{total=%ld,ours=%ld},s=[%@]}",
+            @"census{ran=%ld,views=%ld,ours=%ld,stock=%ld,layer{total=%ld,ours=%ld,stock=%ld},disp{total=%ld,ours=%ld},icon{views=%ld,ours=%ld,stock=%ld},is=[%@],s=[%@]}",
             (long)sCensusRan, (long)sCensusViews, (long)sCensusOurs, (long)sCensusStock,
             (long)sCensusLayerTotal, (long)sCensusLayerOurs, (long)sCensusLayerStock,
             (long)sCensusDisplayedTotal, (long)sCensusDisplayedOurs,
+            (long)sCensusIconViews, (long)sCensusIconOurs, (long)sCensusIconStock,
+            sCensusIconSamples.count > 0 ? [sCensusIconSamples componentsJoinedByString:@";"] : @"-",
             sCensusSamples.count > 0 ? [sCensusSamples componentsJoinedByString:@";"] : @"-"];
 }
 

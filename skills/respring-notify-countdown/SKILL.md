@@ -1,6 +1,11 @@
 ---
 name: respring-notify-countdown
-description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 cross-chat-coordination），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用；注销前必须先让用户在屏幕上真看见倒计时（回复正文 + 灵动岛胶囊；通知不算知情），并读 CountdownHUD 诊断确认胶囊真显示了。
+description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 cross-chat-coordination），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用；注销前必须先让用户在屏幕上真看见倒计时（回复正文 + 灵动岛胶囊；通知不算知情），并读 CountdownHUD 诊断确认胶囊真显示了；装入 SpringBoard 的新插件，注销后必须查 crash list，无新报告才算装好。
+---
+
+---
+name: respring-notify-countdown
+description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 cross-chat-coordination），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用；注销前必须先让用户在屏幕上真看见倒计时（回复正文 + 灵动岛胶囊；通知不算知情），并读 CountdownHUD 诊断确认胶囊真显示了；装入 SpringBoard 的新插件，注销后必须查 crash list，无新报告才算装好。
 ---
 
 # 通知 + 倒计时 5 秒，取证后回 Apelin
@@ -59,7 +64,7 @@ description: 注销、装 deb、重启目标进程前，必须先和本机其它
 ## 零、六、先别注销：注入型插件把 App 划掉重开就生效（用户 2026-10-30 21:24 定的硬规矩）
 
 原话：「这些注入型的插件在安装后 划掉后台重进软件和插件内就能实现功能完全注入！不必重新注销桌面！…
-以后所有的对话和工程在工作时想要注销的时候看看这个常识性的知识！」
+以后所有的对话和工程在工作时想要注销的时候都要看看这个常识性的知识！」
 
 - tweak 只在目标进程**启动时**加载，所以装包 / 改代码后**重启那个进程**就够了，不需要注销整台 SpringBoard。
 - App 类：`icli app kill <bid> --force` + `icli app launch <bid>`，或用户自己上划划掉再点开；
@@ -108,6 +113,48 @@ icli prefs read com.apple.springboard CountdownHUDDiagnostics
   某个机型没有 Taptic Engine 时只是安静地什么都不发生，功能不受影响。
 - `islandWin=…|lvl=…` 是岛那只窗口的层级 —— 它必须**小于**自己窗口的 `lvl`，否则胶囊被岛盖住。
 - `shows` 归零 = SpringBoard 刚载入新代码；`shows` 不涨 = 这一条请求没显示（没有 scene 时插件会自动重试）。
+
+## 零、八、装入 SpringBoard 的新插件，注销后必须查 crash list（2026-10-31 03:31 事故，必读）
+
+**新装的 SpringBoard 插件第一次注销之后，「装好了」这句话不许凭感觉说 —— 必须查崩溃报告。**
+
+实证（CountdownHUD 1.4.0，2026-10-31 03:31）：插件在 SpringBoard 的 **dyld 构造函数**里就创建
+`UISelectionFeedbackGenerator`，启动约 0.67 秒后走
+`CHInitialize → -[UIFeedbackGenerator init] → +[UIFeedbackGenerator _defaultCoordinateSpace]
+→ +[UIScreen mainScreen] → NSAssertionHandler → abort` → SIGABRT → 崩溃循环 → **安全模式**。
+设备的 SpringBoard 报告 `SpringBoard-2026-10-31-033134.ips`。
+
+**为什么必须查**：崩溃是循环的，第一份报告出现时设备已经进了安全模式，用户看到的是「手机自己坏了」。
+崩溃列表里那份报告**就是唯一的证据**，不查就等于没修。
+
+**固定做法（装完 SpringBoard 插件、注销之后立刻做）**：
+
+```sh
+# 1) 查最新崩溃报告：进程填 SpringBoard
+apelin_crash_list process=SpringBoard        # 或 scripts/device.sh 读报告目录
+# 2) 判读：
+#    - 有比「本次注销时间」更新的报告 → 装坏了：先卸包回滚（irisin-cli remove <pkg>），再进安全模式排查
+#    - 没有新报告 → 才算装好
+# 3) 再看 SpringBoard 活着、诊断键能读：
+sh scripts/device.sh read com.apple.springboard <Tweak>Diagnostics
+```
+
+**出崩溃了怎么办（不要反复注销重试）**：
+
+1. **先卸包回滚**：`irisin-cli remove <package-id>`（root）—— 让设备恢复可用，这比继续试更重要。
+2. 再注销一次（走完整四步：查崩溃 → 通知 → 正文写 5 秒 → 真等 5 秒）把坏插件带走。
+3. 读崩溃报告定位，用 `apelin_crash_symbolicate` 对着本次构建的 dSYM 看符号。
+4. 改代码 → 云编译 → 装 → 注销 → **再查一次 crash list**，闭环。
+5. 汇报时写清：哪一步崩的、根因几帧、这次注销后会不会再进安全模式。
+
+**构造函数阶段的铁律（注入 SpringBoard 的插件尤其致命）**：
+
+- **构造函数里只准碰 Foundation，不准碰任何 UIKit API**（`UIScreen` / `UIFeedbackGenerator` /
+  `UIWindow` / `UIView` / `UIFont` …）。UIKit 那时还没初始化完，`+[UIScreen mainScreen]` 会抛断言。
+- `@try/@catch` **救不了**：`NSAssertionHandler` 走的是 `abort`，不是可捕获的 ObjC 异常。
+- 需要 UIKit 的东西一律**延迟**：拿真实 `windowScene`（= UIKit 已经活着）之后再碰，
+  或在主线程上、UIKit 就绪后再惰性创建。
+- 案例文档：仓库 `docs/cases/countdownhud-safe-mode.md`（根因 / 三步修法 / 复发处理流程）。
 
 ## 一、两种动作，两种规矩
 
@@ -189,5 +236,5 @@ icli prefs read com.apple.springboard CountdownHUDDiagnostics
 
 ## 四、汇报要求
 
-在回复里写清：通知了什么、正文里有没有写「5 秒后」，倒计时了没有，查崩溃了没有，外出多少秒。
-没做就明说没做，别含糊。
+在回复里写清：通知了什么、正文里有没有写「5 秒后」，倒计时了没有，查崩溃了没有，**注销后查了
+crash list 没有、有没有新报告**，外出多少秒。没做就明说没做，别含糊。
