@@ -123,7 +123,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (sileofix-v1.0.2)
+    name: Release (sileofix-v1.0.3)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -139,11 +139,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: sileofix-v1.0.2
-          name: SileoFix v1.0.2
+          tag_name: sileofix-v1.0.3
+          name: SileoFix v1.0.3
           body: |
             修 **SileoWallpaper** 壁纸插件导致的 Sileo 输入框失效：任意软件源页的
             「搜索软件包」点了没反应、键盘不弹、打不了字。
+
+            v1.0.3 是取证版：v1.0.2 的日志证明源内页搜索栏的中心点 hitTest 命中的
+            就是 `UISearchBarTextField` 自己，所以「装饰盖板吃触摸」不是病因。本版
+            额外记录：全部 UIWindow（含层级/隐藏/透明度/key）、搜索栏与文本框各自的
+            delegate、文本框 `canBecomeFirstResponder`、真实点击落在搜索栏区域内时
+            的命中链，以及 `becomeFirstResponder` 的调用与返回值。修复策略待这些
+            证据出来再定，不盲改。
 
             v1.0.2 修掉 v1.0.1 的崩溃（点底栏「软件包」即闪退）：UITextField 与
             UISearchBar 的 `didMoveToWindow` 曾共用一个原 IMP 槽，第二站把槽覆盖成
@@ -169,4 +176,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/sileofix-v1.0.2/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/sileofix-v1.0.3/$(basename "$DEB")"

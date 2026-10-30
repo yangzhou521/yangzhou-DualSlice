@@ -14,7 +14,13 @@
 //   文件日志（Sileo 沙盒内的 Caches/sileofix.log，App 外部可读）：
 //     icli fs ls /var/mobile/Containers/Data/Application | grep -i sileo
 //
-// 版本：1.0.2
+// 版本：1.0.3
+//   1.0.3：取证版。1.0.2 的日志证明源内页「搜索软件包」的中心点 hitTest 命中的
+//          就是 UISearchBarTextField 自己，所以「装饰盖板吃触摸」不是病因——命中
+//          之后就 return 了，等于没查。本版补三处量：① 全部 UIWindow（壁纸若自建
+//          独立窗口并设 windowLevel，主窗口 hitTest 根本看不见它）；② 搜索栏与
+//          文本框各自的 delegate、能否成为第一响应者；③ 真实点击（TouchBegan）
+//          落在搜索栏区域内时的命中链，以及键盘窗口是否已出现。
 //   1.0.2：修 1.0.1 的致命崩溃 —— UITextField 与 UISearchBar 的 didMoveToWindow
 //          共用一个原 IMP 槽，第二站把槽覆盖成自己的原实现，文本框移动窗口时
 //          执行 search bar 的实现而崩（KERN_INVALID_ADDRESS，objc_msgSend
@@ -28,7 +34,7 @@
 #import <os/log.h>
 #import <substrate.h>
 
-#define SW_VERSION "1.0.2"
+#define SW_VERSION "1.0.3"
 
 static os_log_t SWLogHandle(void) {
     static os_log_t handle;
@@ -151,6 +157,25 @@ static BOOL SWIsControl(UIView *v) {
     return NO;
 }
 
+// 全部窗口一览。壁纸可能自建独立 UIWindow（层级更高），主窗口的 hitTest 看不见它，
+// 但系统派发触摸时它排在最前面——这是「主窗口命中控件、用户却点不进去」的唯一解释通道。
+static NSString *SWWindowsDescription(void) {
+    NSMutableString *s = [NSMutableString stringWithFormat:@"wins=%lu",
+                          (unsigned long)[UIApplication sharedApplication].windows.count];
+    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+        [s appendFormat:@" [%@ lvl=%.0f hid=%d a=%.2f key=%d]",
+         SWDescribe(w), w.windowLevel, w.isHidden ? 1 : 0, w.alpha,
+         w.isKeyWindow ? 1 : 0];
+    }
+    return s;
+}
+
+static NSString *SWClassNameOf(id obj) {
+    if (!obj || obj == [NSNull null]) return @"nil";
+    Class c = [obj class];
+    return c ? NSStringFromClass(c) : @"?";
+}
+
 // 在视图里找「点 p（v 的坐标）下面最深的那个控件」，跳过隐藏/不可交互的。
 static UIView *SWFindControlAt(UIView *v, CGPoint pInV) {
     if (!v || v.hidden || v.alpha < 0.01 || !v.userInteractionEnabled) return nil;
@@ -257,9 +282,10 @@ static void SWDiagSearchBars(NSString *tag) {
         SWCollect(win, barCls, bars, 0);
 
         NSMutableString *head = [NSMutableString stringWithFormat:
-            @"DIAG(%@) window=%@ bars=%lu wallpaper=%d",
+            @"DIAG(%@) window=%@ bars=%lu wallpaper=%d %@",
             tag, SWDescribe(win), (unsigned long)bars.count,
-            NSClassFromString(@"SWPage") ? 1 : 0];
+            NSClassFromString(@"SWPage") ? 1 : 0,
+            SWWindowsDescription()];
         // 也把导航栏的图层列一下：盖板通常就贴在 nav bar 上。
         Class navCls = NSClassFromString(@"UINavigationBar");
         if (navCls) {
@@ -300,17 +326,40 @@ static void SWDiagSearchBars(NSString *tag) {
             }
             if ([tf isKindOfClass:[UIView class]]) {
                 UIView *t = (UIView *)tf;
-                [line appendFormat:@" | field=%@ enabled=%d first=%d editable=%d",
+                id barDelegate = nil, fieldDelegate = nil;
+                @try { barDelegate = [bar valueForKey:@"delegate"]; } @catch (__unused NSException *e) {}
+                @try { fieldDelegate = [t valueForKey:@"delegate"]; } @catch (__unused NSException *e) {}
+                [line appendFormat:@" | field=%@ enabled=%d first=%d editable=%d canBecome=%d barD=%@ fieldD=%@",
                  SWDescribe(t),
                  [t isKindOfClass:[UIControl class]] ? [(UIControl *)t isEnabled] : -1,
                  [t isFirstResponder] ? 1 : 0,
-                 [[t valueForKey:@"isEditable"] boolValue]];
+                 [[t valueForKey:@"isEditable"] boolValue],
+                 [t canBecomeFirstResponder] ? 1 : 0,
+                 SWClassNameOf(barDelegate), SWClassNameOf(fieldDelegate)];
                 [line appendFormat:@" fchain=%@", SWChainDescription(t)];
             } else {
                 [line appendString:@" | field=<none>"];
             }
             SWNote(line);
         }
+    }
+}
+
+// 真实点击落在搜索栏区域内时，把「谁接到了这一下」原样记下来。这是唯一能证明
+// 「系统把触摸派给谁」的证据：主窗口 hitTest 命中控件、用户却点不进去时，答案要么在
+// 另一只窗口，要么在这条链的某个 delegate 上。
+static void SWNoteClickInSearchBar(UIWindow *win, CGPoint p, UIView *hit) {
+    Class barCls = NSClassFromString(@"UISearchBar");
+    if (!barCls) return;
+    NSMutableArray<UIView *> *bars = [NSMutableArray array];
+    SWCollect(win, barCls, bars, 0);
+    for (UIView *bar in bars) {
+        CGRect r = [bar convertRect:bar.bounds toView:win];
+        if (!CGRectContainsPoint(r, p)) continue;
+        SWNote([NSString stringWithFormat:@"CLICK <%.0f,%.0f> inBar=%@ hit=%@ chain=%@ | %@",
+                p.x, p.y, SWDescribe(bar), SWDescribe(hit),
+                SWChainDescription(hit), SWWindowsDescription()]);
+        return;
     }
 }
 
@@ -358,6 +407,7 @@ static void sw_hook_sendEvent(id self, SEL _cmd, UIEvent *event) {
         CGPoint p = [t locationInView:win];
 
         UIView *hit = [win hitTest:p withEvent:event];
+        SWNoteClickInSearchBar(win, p, hit);
         if (!hit) continue;
         if (SWIsControl(hit)) continue;          // 正常命中控件，交给系统
 
@@ -380,6 +430,33 @@ static void sw_hook_sendEvent(id self, SEL _cmd, UIEvent *event) {
             }
         });
     }
+}
+
+// 焦点链取证：搜索栏的文本框到底有没有被要求成为第一响应者，返回的是 YES 还是 NO。
+// 返回 NO 说明被 delegate 的 textFieldShouldBeginEditing 之类拦了；压根没被调用，
+// 说明触摸根本没走到文本框（或点击被别的窗口/视图吃掉）。
+static void SWLogBecomeFirstResponder(UIView *v, BOOL result) {
+    NSString *cn = NSStringFromClass([v class]);
+    if (!cn) return;
+    if ([cn rangeOfString:@"Search" options:NSCaseInsensitiveSearch].location == NSNotFound) return;
+    SWNote([NSString stringWithFormat:@"becomeFirstResponder %@ -> %d first=%d",
+            SWDescribe(v), result ? 1 : 0, [v isFirstResponder] ? 1 : 0]);
+}
+
+// UITextField 一站。
+static BOOL (*sw_orig_tf_become)(id, SEL);
+static BOOL sw_hook_tf_become(id self, SEL _cmd) {
+    BOOL r = sw_orig_tf_become(self, _cmd);
+    SWLogBecomeFirstResponder((UIView *)self, r);
+    return r;
+}
+
+// UISearchBarTextField 自己的一站（若它自己重写了该方法，走这里；槽必须独立）。
+static BOOL (*sw_orig_sbtf_become)(id, SEL);
+static BOOL sw_hook_sbtf_become(id self, SEL _cmd) {
+    BOOL r = sw_orig_sbtf_become(self, _cmd);
+    SWLogBecomeFirstResponder((UIView *)self, r);
+    return r;
 }
 
 static void SWStartSweeper(void) {
@@ -432,6 +509,18 @@ __attribute__((constructor)) static void SileoFixInit(void) {
             MSHookMessageEx(win, @selector(sendEvent:),
                             (IMP)&sw_hook_sendEvent, (IMP *)&sw_orig_sendEvent);
         }
+        Class sbtf = objc_getClass("UISearchBarTextField");
+        if (sbtf && SWClassDeclares(sbtf, @selector(becomeFirstResponder))) {
+            MSHookMessageEx(sbtf, @selector(becomeFirstResponder),
+                            (IMP)&sw_hook_sbtf_become, (IMP *)&sw_orig_sbtf_become);
+        }
+        if (tf && SWClassDeclares(tf, @selector(becomeFirstResponder))) {
+            MSHookMessageEx(tf, @selector(becomeFirstResponder),
+                            (IMP)&sw_hook_tf_become, (IMP *)&sw_orig_tf_become);
+        }
+        // 每次加载清空上一次的日志：只留下一轮的现场，读起来才不混。
+        NSString *logPath = SWLogFilePath();
+        if (logPath) [[NSFileManager defaultManager] removeItemAtPath:logPath error:NULL];
         SWNote([NSString stringWithFormat:@"loaded v%s log=%@", SW_VERSION, SWLogFilePath()]);
         dispatch_async(dispatch_get_main_queue(), ^{
             SWStartSweeper();
