@@ -1,5 +1,5 @@
-var urlStr = 'https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.9.9/com.yangzhou.themecoreplus_0.9.9_iphoneos-arm64e.deb';
-var destPath = '/var/mobile/Documents/com.yangzhou.themecoreplus_0.9.9_iphoneos-arm64e.deb';
+var urlStr = 'https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.9.10/com.yangzhou.themecoreplus_0.9.10_iphoneos-arm64e.deb';
+var destPath = '/var/mobile/Documents/com.yangzhou.themecoreplus_0.9.10_iphoneos-arm64e.deb';
 var url = ObjC.use('NSURL').URLWithString_(urlStr);
 var data = ObjC.use('NSData').dataWithContentsOfURL_(url);
 if (!data) { print('ERROR nil data'); throw 'nil'; }
