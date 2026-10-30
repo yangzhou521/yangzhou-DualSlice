@@ -58,15 +58,6 @@ enum {
 // 「已认出：icon{…}」那行脚注——那是调试信息，不该占着用户的面板）。
 static NSString *TCPDiagnosticsText(NSUInteger limit);
 
-// 状态行以**实际解析结果**为准：说真话，别按配置猜。
-static NSString *TCPCurrentStatusLine(void) {
-    TCPThemeStore *store = [TCPThemeStore shared];
-    if (!store.active) {
-        return @"当前：系统原生外观（没有挂主题）";
-    }
-    return [NSString stringWithFormat:@"当前：%@", store.themeName.length > 0 ? store.themeName : @"?"];
-}
-
 // 诊断写在**目标进程自己的**偏好域：SpringBoard 的在 com.apple.springboard，
 // 本进程（设置本身也注入了插件）的在它自己的域。两个都读不到就说明还没重启过进程。
 static NSString *TCPDiagnosticsText(NSUInteger limit) {
@@ -512,9 +503,11 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     [specs addObject:[self tcpButtonNamed:@"运行日志" action:@selector(tcpShowLog)]];
 #endif
 
+    // 用户 2026-10-31 04:27 要求去掉底部那行「当前：液态玻璃」（加载状态不要再显示），
+    // 底栏只留作者与版本。
     [specs addObject:[self tcpGroupWithHeader:nil
-                                       footer:[NSString stringWithFormat:@"作者：yangzhou　·　v%@\n%@",
-                                               TCP_VERSION, TCPCurrentStatusLine()]]];
+                                       footer:[NSString stringWithFormat:@"作者：yangzhou　·　v%@",
+                                               TCP_VERSION]]];
     return specs;
 }
 
