@@ -1,6 +1,12 @@
 //
 // CountdownHUD.m —— SpringBoard 侧的自绘胶囊（「倒计时上岛」+ 纯文案提醒）
 //
+// v1.4.0：注销 / 装包这类「要动设备」的倒计时，在**画胶囊之前**先打一下最弱的震动
+//   （`UISelectionFeedbackGenerator` ＝ 系统里点选 / 滚轮那一下，全系统最弱的一档）：
+//   用户 2026-10-31 要求「有注销的打算时第一时间来个最弱的震动，震动要早于倒计时」。
+//   触发点＝请求被读到的那一拍，且同一请求只震一次（没拿到 windowScene 的重试不再震）；
+//   纯文案提醒（`!` 开头）不震。诊断串末尾多了 `haptic=N`（累计震了几次）。
+//
 // v1.2.0：同一个胶囊多了一种「纯文案」用法 —— 标签以 `!` 开头时，屏幕上是这句话本身
 //   （不显示「N 秒后」前缀、不跳数字、不做绿→橙→红的倒计时升级），显示 N 秒后淡出。
 //   用途：任务做完 / 阶段完成 / 工作进度，用户去了别的对话、桌面或别的 App 时也能在岛上看到。
@@ -43,7 +49,7 @@
 #import <math.h>
 #import <os/log.h>
 
-static NSString *const CHVersion = @"1.3.0";
+static NSString *const CHVersion = @"1.4.0";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static const NSTimeInterval CHPollInterval = 0.5;
 
@@ -91,6 +97,8 @@ static NSString *gLabelText = @"";
 static unsigned long gShows = 0;
 static unsigned long gLastSeconds = 0;
 static BOOL gPlainNotice = NO;   // v1.2.0：「!」开头的标签＝纯文案，不显示「N 秒后」，不跳数字
+static NSUInteger gHaptics = 0;      // v1.4.0：累计震了几次（诊断串 haptic=）
+static NSString *gHapticToken = nil; // v1.4.0：已经为哪条请求震过（同一请求只震一次）
 
 // 量岛的结果
 static BOOL gFollowIsland = YES;          // 量到岛就跟着岛走
@@ -363,14 +371,15 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
 }
 
 static void CHWriteDiagnostics(void) {
-    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@",
+    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu",
                          CHVersion, gShows, gLastSeconds,
                          gLabelText.length ? gLabelText : @"-",
                          gFontSize,
                          gIslandDetail, gIslandSource,
                          (unsigned long)gIslandCandidates,
                          gPlainNotice ? @"plain" : @"count",
-                         gSelfWindowDetail, gIslandWindowDetail];
+                         gSelfWindowDetail, gIslandWindowDetail,
+                         (unsigned long)gHaptics];
     CFPreferencesSetAppValue(CFSTR("CountdownHUDDiagnostics"),
                              (__bridge CFStringRef)summary,
                              kCFPreferencesCurrentApplication);
@@ -570,6 +579,43 @@ static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain) {
 static NSString *gLastToken = nil;
 static BOOL gPrimed = NO;   // 首次读到的内容只记不触发（多半是上一次留下的旧请求）
 
+#pragma mark - 弱震动（要动设备之前先震一下）
+
+// v1.4.0：用户要求「有注销的打算时第一时间来个最弱的震动，而且震动要早于倒计时」。
+// 用 UISelectionFeedbackGenerator：系统里点选 / 滚轮那一下，是全系统最弱的一档触感
+// （比 light impact 轻，比 AudioServicesPlaySystemSound 那类「震一下」温和得多）。
+// 只在真的要动设备的倒计时上震（纯文案提醒不震），而且**同一请求只震一次**：
+// 没拿到 windowScene 时那一拍只是重试，不重复震。设备侧：iPhone 8 有 Taptic Engine，
+// 在 SpringBoard 里调它会真的震；万一某个机型没有，也只是安静地什么都不发生。
+//
+// 复用同一只 generator 并提前 `prepare`：Taptic Engine 需要提前上电，第一次调用才震得干脆
+// （每次新建一只再立刻 `selectionChanged` 有把第一次吞掉的可能，而这里**第一次**恰恰最重要）。
+static UISelectionFeedbackGenerator *gHapticGenerator = nil;
+
+static void CHPrepareHaptic(void) {
+    void (^warm)(void) = ^{
+        if (gHapticGenerator == nil) {
+            gHapticGenerator = [[UISelectionFeedbackGenerator alloc] init];
+        }
+        [gHapticGenerator prepare];
+    };
+    if ([NSThread isMainThread]) {
+        warm();
+    } else {
+        dispatch_async(dispatch_get_main_queue(), warm);
+    }
+}
+
+static void CHFireWeakHaptic(void) {
+    if (gHapticGenerator == nil) {
+        gHapticGenerator = [[UISelectionFeedbackGenerator alloc] init];
+    }
+    [gHapticGenerator selectionChanged];
+    gHaptics += 1;
+    os_log(CHLog(), "weak haptic fired (#%lu)", (unsigned long)gHaptics);
+    [gHapticGenerator prepare];   // 给下一次（下一条请求）重新上电
+}
+
 static BOOL CHHandleRequest(NSString *content) {
     NSArray<NSString *> *parts = [content componentsSeparatedByString:@"|"];
     NSUInteger seconds = 5;
@@ -601,10 +647,21 @@ static BOOL CHHandleRequest(NSString *content) {
             label = [[label substringToIndex:31] stringByAppendingString:@"…"];
         }
     }
+    // v1.4.0：要动设备的动作（注销 / 装包 / 杀进程，也就是非 `!` 的倒计时）先把最弱的震动
+    // 打出去 —— 而且是**同一请求只震一次**（同一个 content 在重试时不再震），然后才画胶囊：
+    // 先震，屏幕上再出现「N 秒后…」。
+    BOOL needsHaptic = (!plain && ![content isEqualToString:gHapticToken]);
+    if (needsHaptic) {
+        gHapticToken = [content copy];
+    }
+
     // 显示一律在主线程做，并且要等它给出结果：只有真的显示出来了，这一条请求才算消费掉
     // （没有 windowScene 不算，轮询下一拍会重试）。
     __block BOOL shown = NO;
     void (^run)(void) = ^{
+        if (needsHaptic) {
+            CHFireWeakHaptic();
+        }
         shown = CHStartCountdown(seconds, label, plain);
     };
     if ([NSThread isMainThread]) {
@@ -646,6 +703,9 @@ static void CHPollOnce(void) {
 
 __attribute__((constructor)) static void CHInitialize(void) {
     os_log(CHLog(), "v%{public}@ loaded; watching %{public}@", CHVersion, CHRequestPath);
+
+    // v1.4.0：先给 Taptic Engine 上电，让「注销前的第一下弱震动」震得干脆。
+    CHPrepareHaptic();
 
     dispatch_queue_t queue = dispatch_queue_create("com.yangzhou.countdownhud.poll", DISPATCH_QUEUE_SERIAL);
     dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);

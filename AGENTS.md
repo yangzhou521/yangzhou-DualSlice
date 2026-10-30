@@ -19,7 +19,7 @@
 | `Support/ThemeCorePlusPreferenceLoader.plist` | 设置里那一行的入口（bundle + 图标 + 控制器类） |
 | `Support/ThemeCorePlusIcon@2x/@3x.png` | 面板图标（MarkTheme16 的 App 图标，180×180） |
 | `scripts/build-themecoreplus.sh` | ThemeCorePlus 的构建脚本（**只在 CI 上跑**） |
-| `scripts/respring-guard.sh` | **唯一注销入口**：先写 HUD 请求（装了 CountdownHUD 就出胶囊）再终端倒计时 5 秒，最后 `sbreload`（通知由会话先发；`sbreload` 不弹批准卡） |
+| `scripts/respring-guard.sh` | **唯一注销入口**：先写 HUD 请求（装了 CountdownHUD 就出胶囊，v1.4.0 起先震一下最弱的触感）再终端倒计时 5 秒，最后 `sbreload`（通知由会话先发；`sbreload` 不弹批准卡） |
 | `CountdownHUD/Sources/CountdownHUD.m` | 自绘胶囊（SpringBoard 顶层窗口）：倒计时「N 秒后注销」+ v1.2.0 起的**纯文案**（`!` 前缀，任务完成/进度），**不依赖通知** |
 | `Support/CountdownHUD.plist` | HUD 的注入过滤器（只进 `com.apple.springboard`） |
 | `scripts/build-countdownhud.sh` | HUD 的构建脚本（**只在 CI 上跑**，不链接 substrate） |
@@ -106,8 +106,13 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   `scripts/respring-guard.sh`）。诊断串末尾多了 `mode=plain|count`。
 - 从 shell 写这个文件必须加真根前缀：`/rootfs/var/mobile/Library/Preferences/.countdownhud-request`
   （脚本已包好，见 `scripts/respring-guard.sh` 与 `scripts/hud-notify.sh`）。
+- **注销 / 装包前先来一下最弱的震动（v1.4.0 起）**：用户 2026-10-31 02:48 要求「有注销的打算时
+  第一时间来个最弱的震动，而且震动要早于倒计时」。非 `!` 的倒计时（真要动设备的那些）先
+  `UISelectionFeedbackGenerator`（系统点选 / 滚轮那一下，全系统最弱一档）震一下，**再**画胶囊 ——
+  同一请求只震一次（没拿到 windowScene 的重试不重复震），纯文案提醒（`!`）不震。
+  诊断串末尾多了 `haptic=<累计次数>`，不用听声音也能确认震过几次。
 - 验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`
-  → `v1.2.0;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N;mode=count`；
+  → `v1.4.0;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N;mode=count;haptic=N`；
   量到的候选清单：`icli prefs read com.apple.springboard CountdownHUDIslandCandidates`
   （最多 8 行 `A|<类名>|x,y,w,h`，前缀 A = 在 Aperture 窗口里）；
   日志 `icli log syslog --subsystem com.yangzhou.countdownhud`。

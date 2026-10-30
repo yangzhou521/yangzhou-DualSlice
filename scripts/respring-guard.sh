@@ -9,6 +9,9 @@
 #   1) 装了 CountdownHUD（com.yangzhou.countdownhud）时，把请求写进
 #      `<真根>/var/mobile/Library/Preferences/.countdownhud-request`
 #      （格式 `<epoch>|<秒数>|<标签>`），SpringBoard 里那个插件自己画胶囊。
+#      **v1.4.0 起它会先打一下最弱的震动**（UISelectionFeedbackGenerator）再画胶囊 ——
+#      用户 2026-10-31 要求「有注销的打算时第一时间来个最弱的震动，且早于倒计时」。
+#      纯文案提醒（标签以 `!` 开头）不震；同一请求只震一次。诊断看 `haptic=<次数>`。
 #      **通知那条路不可靠**（Apelin 发通知会把 App 拉回前台、横幅被自己吞掉），所以不指望它。
 #   2) 没有 HUD 时，脚本自己在终端里逐秒打印，用户能从 Apelin 的正文/日志看到。
 #
