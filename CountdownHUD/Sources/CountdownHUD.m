@@ -85,7 +85,6 @@ static BOOL gFollowIsland = YES;          // 量到岛就跟着岛走
 static NSString *gIslandDetail = @"-";    // 诊断串：<类名>|x,y,w,h
 static NSString *gIslandSource = @"none"; // aperture / classname / none
 static NSUInteger gIslandCandidates = 0;
-static CGRect gIslandRect = CGRectZero;
 
 static UIWindowScene *CHActiveScene(void) {
     UIApplication *app = [UIApplication sharedApplication];
@@ -326,7 +325,6 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
     gIslandDetail = [NSString stringWithFormat:@"%@|%.0f,%.0f,%.0f,%.0f",
                      cls, bestRect.origin.x, bestRect.origin.y,
                      bestRect.size.width, bestRect.size.height];
-    gIslandRect = bestRect;
     if (outRect != NULL) {
         *outRect = bestRect;
     }
