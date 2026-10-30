@@ -234,6 +234,29 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 - **路径分两种**（见 apelin-bootstrap-paths）：主题素材在**引导根**里（`/Library/ThemeCore`、
   `/Library/Themes`），必须走 `ApelinBootstrapPath()`；`/var/mobile/…`、容器路径是系统路径，
   原样写。绝不把解析出来的 jbroot 写进任何文件。
+- **隐根（roothide）的 jbroot 前缀每次重新越狱都会变 —— 这是常识，永久有效**
+  （用户 2026-10-30 18:04 原话：「隐根越狱、每次重新越狱（jbroot 前缀换了）都会变！
+  这个常识现在写进硬性规定、记忆和技能包和上传云端！免得你以后不知道！」**所有工程、所有对话适用**）：
+  - 本机的引导装在一个 `.jbroot-<16 位十六进制>` 目录里（容器
+    `/private/var/containers/Bundle/Application/.jbroot-…`）。**每次重新越狱（换引导、重装引导、
+    重新引导）前缀都可能换一个**，整个引导根跟着改名搬家。
+  - 于是所有写死的前缀一起失效：Apelin 数据目录（jbroot 自己那份 `var/mobile/Documents/wiki.qaq.apelin`）、
+    **本工程真实路径**、`$APELIN_PROJECT_ROOT`、`$APELIN_TOOLCHAIN_BIN`、`SDKROOT`、已注册的工具链与 SDK、
+    本机技能目录 `~/Documents/wiki.qaq.apelin/skills/`、记忆文件 `memories.json`。
+  - **实测证据（同一天就换过）**：2026-10-30 中午的记忆里写的是 `.jbroot-E0BF8A83B883CBA6`，
+    当天傍晚 APELIN 环境报的是 `.jbroot-BE7CF66DAF7343C6`。写在这里只是证明它会变，**不是坐标**。
+  - **怎么防**：代码用 roothide 的 `jbroot()`（本项目用 `ApelinBootstrapPath()`，头见技能
+    apelin-bootstrap-paths）；plist / 维护脚本用 `@PREFIX@` / `@ROOTFS@`；shell 脚本用 Apelin 运行时
+    给的变量（`$APELIN_PROJECT_ROOT`、`$HOME`、`$APELIN_TOOLCHAIN_BIN`、`$SDKROOT`）或相对路径；
+    文档、技能、记忆、提交说明里**只写相对位置**（写照写成「`<jbroot>/Library/ThemeCore`」
+    「`~/Documents/wiki.qaq.apelin/skills/`」），绝不写解析后的绝对路径。
+  - **症状与处置**：路径写死过的地方，重新越狱后会表现成「文件明明在、命令说没有」
+    「诊断读得到、插件却找不到素材」「脚本报 no such file」。这时**先查当前前缀**
+    （`printenv APELIN_PROJECT_ROOT`、`icli fs ls /var/containers/Bundle/Application | grep jbroot`），
+    把路径改成变量再重跑，不要去改代码逻辑、更不要重建文件。
+  - 已装的包不用因为换了前缀重装：包就在引导根里，跟着引导根一起搬家；重装也只是换回同一个地方。
+  - 这一条同时写进技能 `a11-roothide-ondevice`（第 8 节）与 `load-all-skills-memory-repos`（第 5 节）、
+    全局记忆，三样一起同步本机与云端。
 - 站点写法：只在类**自己声明**了该方法时才挂（`class_copyMethodList` 判定），
   每个 (类, 选择器) 各有一个静态原 IMP 槽，原实现用函数指针直接调、绝不在包装函数里查表。
 - 诊断写进**目标进程自己的**偏好域（`kCFPreferencesCurrentApplication`），所以 SpringBoard 的在

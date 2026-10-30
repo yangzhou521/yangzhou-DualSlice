@@ -76,6 +76,23 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
 
 - 在 Apelin 工程里只写 `package.tweakFilter`，别自己 ship 一份 Filter plist；过滤器只列真正要注入的进程。
 - 隐根：`@ROOTFS@` 是 `/rootfs`、`@PREFIX@` 为空、不存在 `/var/jb`、jbroot 名每次越狱都变，绝不写死；代码要打开 bootstrap 里的文件用 `ApelinBootstrapPath()`（头要从 apelin-bootstrap-paths 技能拷进 `Sources/`）。
+- **jbroot 前缀每次重新越狱都会变 —— 本机常识，永久记住**（用户 2026-10-30 18:04 原话：
+  「隐根越狱、每次重新越狱（jbroot 前缀换了）都会变！这个常识现在写进硬性规定、记忆和技能包和上传云端！
+  免得你以后不知道！」）：
+  - 引导根 = 容器 `/private/var/containers/Bundle/Application/.jbroot-<16 位十六进制>`。重新越狱
+    （换引导 / 重装引导 / 重新引导）时**这个哈希会换**，整个引导根跟着改名搬家。
+  - 跟着一起变的东西（都别记死）：Apelin 数据目录 `var/mobile/Documents/wiki.qaq.apelin`（在 jbroot 里）、
+    工程真实路径、`$APELIN_PROJECT_ROOT`、`$APELIN_TOOLCHAIN_BIN`、`$SDKROOT`、注册的工具链与 SDK 路径、
+    本机技能目录、`memories.json`。
+  - 实测：2026-10-30 中午记忆里是 `.jbroot-E0BF8A83B883CBA6`，傍晚环境报 `.jbroot-BE7CF66DAF7343C6`
+    —— 同一天就换过，**这不是可以背下来的值**。
+  - 写法：代码 `jbroot()` / `ApelinBootstrapPath()`；plist 与维护脚本 `@PREFIX@` / `@ROOTFS@`；
+    shell 用运行时变量（`$APELIN_PROJECT_ROOT`、`$HOME`、`$APELIN_TOOLCHAIN_BIN`、`$SDKROOT`）或相对路径；
+    文档与记忆只写相对位置，不写解析结果。
+  - 症状：写死过路径的地方，换前缀后会「文件明明在、命令说没有」「诊断读得到、插件找不到素材」
+    「脚本 no such file」。**先查当前前缀**（`printenv APELIN_PROJECT_ROOT`、
+    `icli fs ls /var/containers/Bundle/Application | grep jbroot`），改成变量重跑；
+    别改代码逻辑、别重建文件。已装的包跟着引导根搬家，不用因为换前缀重装。
 - 面板：「面板能开、开关能拨，但插件没反应」九成是三处不一致——specifier 里的 `defaults`、插件读的偏好域、Darwin 通知名必须是同一个包 id。默认值永远不写盘，关掉就是原行为。
 - 偏好域写成目标 App 自己的 bundle id，`icli prefs read` 才读得到（沙箱里跨域写不进去）。
 

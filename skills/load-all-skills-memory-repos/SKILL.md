@@ -85,4 +85,11 @@ sh scripts/sync-all.sh diff      # 只比差异，不动文件
 - 装包 / 注销（respring）/ 杀进程前：`respring-notify-countdown` 的通知 + 正文里 5 秒倒计时（本机唯一注销入口 `sh scripts/respring-guard.sh`）。全权限不免这条仪式。
 - 离开 Apelin 取证：桌面 / 插件设置内 / 别的 App 三类去处统一 60 秒硬上限，且必须自己回来；外出前预告、回来交代并写清秒数。
 - 系统设置里的插件面板：凡有「选择 / 开关」一律 iOS 原生 `UISwitch`，不用对号（技能 `settings-switch-ui`）。
+- **隐根（roothide）的 jbroot 前缀每次重新越狱都会变**（用户 2026-10-30 18:04 原话：「隐根越狱、
+  每次重新越狱（jbroot 前缀换了）都会变！这个常识现在写进硬性规定、记忆和技能包和上传云端！」）：
+  引导根在 `.jbroot-<哈希>` 容器里，重新越狱就换名搬家，于是工程真实路径、`$APELIN_PROJECT_ROOT`、
+  工具链与 SDK 路径、本机技能目录、记忆文件全部跟着换前缀。**任何文件里都不许写解析后的 jbroot 绝对路径**：
+  代码用 `jbroot()` / `ApelinBootstrapPath()`，plist 与维护脚本用 `@PREFIX@` / `@ROOTFS@`，shell 用
+  `$APELIN_PROJECT_ROOT` / `$HOME` / `$SDKROOT` 或相对路径，文档与记忆只写相对位置。
+  路径突然「找不到」时先查当前前缀，别改代码、别重建文件（详见技能 `a11-roothide-ondevice` 第 8 节）。
 - 本机编不了任何东西（A11 缺 FEAT_LRCPC）：一律 GitHub Actions 云编译 arm64 + arm64e 双切片，再用 `irisin-cli install` 装到本机、重启进程读诊断验证。
