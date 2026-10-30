@@ -494,6 +494,77 @@ NSString *TCPClassCensusForSubstrings(NSArray<NSString *> *substrings,
     return parts.count > 0 ? [parts componentsJoinedByString:@"\n"] : @"-";
 }
 
+// 方法名普查（0.9.7）：类名含 substrings 的类，各自把「自己声明的、方法名匹配正则」的方法列出来。
+// 与 TCPClassCensusForSubstrings 的区别：那个是「你猜的选择器在不在」，这个是「这个类到底声明了
+// 哪些方法」—— 角标站的入口名在 iOS 版本间来回搬，靠猜会挂错地方（代价是安全模式），
+// 所以把真名读回诊断里。行格式 类名:父类=方法 方法 …，父类名也在，家族关系一眼看得出。
+NSString *TCPClassMethodCensusForSubstrings(NSArray<NSString *> *substrings,
+                                            NSString *methodPattern,
+                                            NSUInteger limit) {
+    if (substrings.count == 0) return @"-";
+    NSRegularExpression *pattern = nil;
+    if (methodPattern.length > 0) {
+        pattern = [NSRegularExpression regularExpressionWithPattern:methodPattern
+                                                           options:0
+                                                             error:NULL];
+    }
+    unsigned int count = 0;
+    Class *classes = objc_copyClassList(&count);
+    if (classes == NULL) return @"-";
+
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    NSUInteger used = 0;
+    for (unsigned int i = 0; i < count && used < limit; i++) {
+        Class cls = classes[i];
+        if (cls == Nil) continue;
+        const char *raw = class_getName(cls);
+        if (raw == NULL) continue;
+        NSString *name = @(raw);
+        BOOL wanted = NO;
+        for (NSString *part in substrings) {
+            if ([name containsString:part]) { wanted = YES; break; }
+        }
+        if (!wanted) continue;
+
+        // pass 0 = 实例方法，pass 1 = 类方法（名字前加 + 区分）。
+        NSMutableArray<NSString *> *methods = [NSMutableArray array];
+        for (int pass = 0; pass < 2; pass++) {
+            Class owner = (pass == 0) ? cls : object_getClass(cls);
+            unsigned int methodCount = 0;
+            Method *list = class_copyMethodList(owner, &methodCount);
+            for (unsigned int k = 0; k < methodCount; k++) {
+                NSString *selectorName = NSStringFromSelector(method_getName(list[k]));
+                if (selectorName.length == 0) continue;
+                if (pattern != nil &&
+                    [pattern firstMatchInString:selectorName
+                                        options:0
+                                          range:NSMakeRange(0, selectorName.length)] == nil) {
+                    continue;
+                }
+                [methods addObject:(pass == 0 ? selectorName
+                                              : [@"+" stringByAppendingString:selectorName])];
+            }
+            if (list) free(list);
+        }
+        if (methods.count == 0) continue;
+
+        Class superClass = class_getSuperclass(cls);
+        NSString *superName = (superClass != Nil) ? NSStringFromClass(superClass) : @"-";
+        NSString *joined = [methods componentsJoinedByString:@" "];
+        NSUInteger room = (limit > used) ? (limit - used) : 0;
+        NSString *head = [NSString stringWithFormat:@"%@:%@=", name, superName];
+        if (head.length + joined.length > room) {
+            NSInteger keep = (NSInteger)room - (NSInteger)head.length - 1;
+            joined = (keep > 0) ? [joined substringToIndex:(NSUInteger)keep] : @"";
+        }
+        NSString *line = [head stringByAppendingString:joined];
+        [parts addObject:line];
+        used += line.length + 1;
+    }
+    if (classes) free(classes);
+    return parts.count > 0 ? [parts componentsJoinedByString:@"\n"] : @"-";
+}
+
 #pragma mark - 「谁 hook 了它」
 
 // dladdr 给出 IMP 所在的镜像。MSHookMessageEx 换上的 IMP 落在插件自己的 dylib 里，

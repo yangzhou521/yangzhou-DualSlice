@@ -100,6 +100,15 @@ NSString *TCPClassCensusForSubstrings(NSArray<NSString *> *substrings,
                                       NSArray<NSString *> *selectors,
                                       NSUInteger limit);
 
+// 方法名普查（0.9.7）：类名含 substrings 之一的类，把它自己声明的、**方法名匹配 methodPattern
+// 正则**的方法列出来，写成 "类名:父类=方法…" 的行。热补丁的入口名在 iOS 版本间来回搬
+// （角标就是 _checkoutBackgroundImage / _checkoutBackgroundImageTuple /
+// +_checkoutImageForText:font:highlighted: 三条候选），猜名字的代价是安全模式，
+// 所以在设备上把真名读出来。methodPattern 传 nil 就是「这个类的全部方法」。
+NSString *TCPClassMethodCensusForSubstrings(NSArray<NSString *> *substrings,
+                                            NSString *methodPattern,
+                                            NSUInteger limit);
+
 NSUInteger TCPTotalSiteCount(void);
 NSArray<NSString *> *TCPSiteDescriptions(void);
 

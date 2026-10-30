@@ -1,6 +1,9 @@
 0234b652	?	working	?	继续	none	1793381958
-5781b4c7	yangzhouDualSlice	working	CountdownHUD 1.3.0 deb已下载(15520B)，校验sha256中	next=装机+读诊断验证	none	1793383137
 e0113233	yangzhouDualSlice	working	停了让给 5781b4c7：CountdownHUD 1.3.0 它已在跑（deb已下+校验中），我不装、设备已释放	next=回自己的活：ThemeCorePlus screen{ours=0} 方案A	none	1793383507
-f8fbdbd5	yangzhouDualSlice	working	Fleet协调群+relay+技能更新+云端同步已完成(commit 4eaad22)	next=回压缩任务/帮别的对话	none	1793383555
-ba1a3a02	yangzhouDualSlice	working	watchdog 升级完成并实测：补 waiting-approval 跳过 + 心跳；launchd 每 303s 一跳已验证；名册补 5781b4c7	进展：watchdog 实测：心跳 303s、log 空（无误报）。已把 watchdog 机制写进记忆 b00363d8 附录；f8fbdbd5 的 sync-all 会一起上云。另：本机 CountdownHUD 已是 1.3.0（shows=3/scene=SBWindowScene/win=CHWindow|bounds=375x667），1.3.0 装机且真在渲染。	none	1793383783
-b3adfeb5	yangzhouDualSlice	working	Fleet协调群开工：转发/看护/relay/分配	next=唤醒0234b652 + relay 5781b4c7 + 广播	none	1793384002
+f8fbdbd5	yangzhouDualSlice	working	接管协调职责：旧协调群三次创建都context爆死，本对话直接协调。正在唤醒全队	next=唤醒全队+分配任务	none	1793385513
+b3adfeb5	yangzhouDualSlice	done	context爆死已关闭	-	none	1793385514
+544f3607	yangzhouDualSlice	done	context爆死已关闭	-	none	1793385515
+b04746bb	yangzhouDualSlice	done	context爆死已关闭	-	none	1793385516
+yangzhouDualSlice	done	157b2985 免批准卡片方案落地完成：scripts/device.sh + AGENTS.md 一节 + 技能 + 记忆，已 push main（e2dce94）；胶囊已上岛（shows=6,scene=SBWindowScene）	?	?	none	1793385623
+ba1a3a02	yangzhouDualSlice	working	仓库卫生：加 .gitignore（probe*.js/截图/临时文件）；曾摘 fleet 快照跟踪、按设计意图已回滚(e79f82d)；5a42fd9+e79f82d 已随 e2dce94 上云	看护误报诊断：0234b652 实为等批准卡、不是睡死；全队被 20m 阈值误判	none	1793385780
+5781b4c7	yangzhouDualSlice	working	CountdownHUD「任何界面可见」	进展：1.3.0 装机实测 shows=5/island=SBSystemApertureContainerView|125,18,125,37/win 有 scene＋lvl=2e7；已发 25 秒可见性测试，等用户在 Apelin 前台当场确认	none	1793385790
