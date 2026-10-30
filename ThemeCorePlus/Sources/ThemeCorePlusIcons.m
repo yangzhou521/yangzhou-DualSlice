@@ -333,12 +333,19 @@ static NSString *sDynLast = nil;
 // 还是「被问了但没认出 bundle id」。0.9.14 诊断里 dyn 全是 0，就是靠这一栏分辨的。
 static NSMutableDictionary<NSString *, NSNumber *> *sSiteClasses = nil;
 
+static id TCPSiteClassLock(void) {
+    static id lock = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ lock = [NSObject new]; });
+    return lock;
+}
+
 void TCPNoteIconSiteClass(NSString *className) {
     if (className.length == 0) return;
-    @synchronized (sSiteClasses ?: [NSNull null]) {
+    @synchronized (TCPSiteClassLock()) {
         if (sSiteClasses == nil) sSiteClasses = [NSMutableDictionary dictionary];
-        NSNumber *count = sSiteClasses[className];
-        sSiteClasses[className] = @(count.integerValue + 1);
+        NSNumber *count = [sSiteClasses objectForKey:className];
+        [sSiteClasses setObject:@(count.integerValue + 1) forKey:className];
     }
 }
 
@@ -346,16 +353,16 @@ void TCPNoteDynamicSeen(void) { __sync_fetch_and_add(&sDynSeen, 1); }
 void TCPNoteDynamicNotImage(void) { __sync_fetch_and_add(&sDynNotImage, 1); }
 
 static NSString *TCPSiteClassSummary(void) {
-    NSArray<NSString *> *keys = nil;
-    @synchronized (sSiteClasses ?: [NSNull null]) {
-        keys = [sSiteClasses keysSortedByValueUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) {
-            return [b compare:a];
-        }];
-    }
     NSMutableArray<NSString *> *parts = [NSMutableArray array];
-    for (NSString *key in keys) {
-        if (parts.count >= 6) break;
-        [parts addObject:[NSString stringWithFormat:@"%@=%ld", key, (long)sSiteClasses[key].integerValue]];
+    @synchronized (TCPSiteClassLock()) {
+        NSArray *keys = [sSiteClasses keysSortedByValueUsingComparator:^NSComparisonResult(id a, id b) {
+            return [(NSNumber *)b compare:(NSNumber *)a];
+        }];
+        for (NSString *key in keys) {
+            if (parts.count >= 6) break;
+            NSNumber *count = [sSiteClasses objectForKey:key];
+            [parts addObject:[NSString stringWithFormat:@"%@=%ld", key, (long)count.integerValue]];
+        }
     }
     return parts.count > 0 ? [parts componentsJoinedByString:@","] : @"-";
 }
