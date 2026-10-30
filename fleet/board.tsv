@@ -6,4 +6,4 @@ b3adfeb5	yangzhouDualSlice	done	context爆死已关闭	-	none	1793385514
 b04746bb	yangzhouDualSlice	done	context爆死已关闭	-	none	1793385516
 yangzhouDualSlice	done	157b2985 免批准卡片方案落地完成：scripts/device.sh + AGENTS.md 一节 + 技能 + 记忆，已 push main（e2dce94）；胶囊已上岛（shows=6,scene=SBWindowScene）	?	?	none	1793385623
 ba1a3a02	yangzhouDualSlice	working	仓库卫生：加 .gitignore（probe*.js/截图/临时文件）；曾摘 fleet 快照跟踪、按设计意图已回滚(e79f82d)；5a42fd9+e79f82d 已随 e2dce94 上云	看护误报诊断：0234b652 实为等批准卡、不是睡死；全队被 20m 阈值误判	none	1793385780
-5781b4c7	yangzhouDualSlice	working	CountdownHUD「任何界面可见」	进展：1.3.0 装机实测 shows=5/island=SBSystemApertureContainerView|125,18,125,37/win 有 scene＋lvl=2e7；已发 25 秒可见性测试，等用户在 Apelin 前台当场确认	none	1793385790
+5781b4c7	yangzhouDualSlice	working	CountdownHUD「任何界面可见」+ 用户要的「动设备前先最弱震动」	进展：1.4.0 因在 dyld 构造函数里创建 UISelectionFeedbackGenerator 导致 SpringBoard 崩溃进安全模式(报告 033134)→ 1.4.1 惰性创建修好，CI run 41117240700 成功，已装机 v1.4.1（诊断 haptic=2、mode=plain 不震、无新崩溃）；设备已释放，等用户确认体感与 25 秒可见性测试	下一步：用户回「震到了/没震到」，没震到就换 UIImpactFeedbackStyleLight 兜底	none	1793386000
