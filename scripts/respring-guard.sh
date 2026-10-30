@@ -14,11 +14,13 @@
 #
 # 通知仍然必须先发：apelin_notification_send 由会话调用，脚本发不了。
 #
-# 本机命令是 `icli sb respring`（2026-10-30 实测：`icli respring` 报
-# "Unexpected argument 'respring'"）；切记。
+# 本机命令：
+#   - 注销用 `sbreload`（不弹批准卡片）。2026-10-30 的写法 `icli sb respring` 仍然可用，
+#     但本机开着 Apelin「使用屏幕前先询问」时每条 icli 都要用户点一次批准，所以换成 sbreload。
+#   - 2026-10-30 实测 `icli respring` 报 "Unexpected argument 'respring'"；要用 icli 就得写 sb respring。
 #
 # 用法：
-#   sh scripts/respring-guard.sh                 # 5 秒倒计时后 icli sb respring
+#   sh scripts/respring-guard.sh                 # 5 秒倒计时后注销（sbreload）
 #   RESPRING_GUARD_NO_RESPRING=1 sh scripts/respring-guard.sh 5 装包   # 只倒计时
 #   sh scripts/respring-guard.sh 8 装包           # 8 秒，标签「装包」
 #
@@ -67,4 +69,6 @@ if [ "$NO_RESPRING" = "1" ]; then
   echo "respring-guard: 只倒计时，不注销（RESPRING_GUARD_NO_RESPRING=1）"
   exit 0
 fi
-exec icli sb respring
+
+# sbreload 不弹批准卡（icli sb respring 在不点卡片时会被卡住，见仓库 scripts/device.sh 的说明）。
+exec sbreload

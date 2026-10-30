@@ -20,6 +20,12 @@
 #
 # 为什么点元素而不是点坐标：`icli ui tap "<文字>"` 按 label/identifier 匹配，
 # 不受列表滚动位置影响（坐标点击已经跑偏过一次）。
+#
+# 2026-10-31：起 App 与回程改用 `uiopen --bundleid`（不弹批准卡片）。本机开着 Apelin 的
+# 「使用屏幕前先询问」时，**每条 icli 都要用户点一次批准**，而读界面树/点元素/截图只有 icli
+# 能做，所以那些留着；`icli app frontmost` 的校验改成可选：默认不查（省一张卡），
+# 要严格校验回程就 `ERRAND_VERIFY=1 sh scripts/errand-in-app.sh …`。
+# 设备操作一览见 scripts/device.sh。
 
 set -u
 
@@ -27,14 +33,15 @@ TARGET=${1:-}
 LIMIT=${2:-60}
 shift 2 2>/dev/null || shift $#   # 余下参数都是要依次点击的元素文字
 APELIN_BID=wiki.qaq.apelin
+VERIFY=${ERRAND_VERIFY:-0}
 
 if [ -z "$TARGET" ]; then
     echo "用法: sh scripts/errand-in-app.sh <bundle-id> [最长时间秒] [要点的元素文字]" >&2
     exit 2
 fi
 
-if ! command -v icli >/dev/null 2>&1; then
-    echo "icli 不在 PATH 上，无法执行（请确认设备越狱环境）" >&2
+if ! command -v uiopen >/dev/null 2>&1; then
+    echo "uiopen 不在 PATH 上，无法起 App（请确认设备越狱环境）" >&2
     exit 3
 fi
 
@@ -42,7 +49,14 @@ STAMP=$(date +%Y%m%d-%H%M%S)
 SHOT=${TMPDIR:-/tmp}/apelin-errand-$STAMP.jpg
 START=$(date +%s)
 
+# 起 App：uiopen --bundleid（不弹卡）。回程也一样。
+open_app() {
+    uiopen --bundleid "$1" >/dev/null 2>&1
+}
+
+# 前台 App 只有 icli 能问（会弹一张卡），所以默认不查；ERRAND_VERIFY=1 时才查。
 frontmost_bid() {
+    [ "$VERIFY" = "1" ] || { echo ""; return; }
     icli app frontmost 2>/dev/null \
         | sed -n 's/.*"bundle_id" *: *"\([^"]*\)".*/\1/p' \
         | head -1
@@ -51,15 +65,19 @@ frontmost_bid() {
 # 回程：无论怎么退出都会跑（EXIT/INT/TERM）。launch 失败再试一次，
 # 因为 launch 内部等前台是超时语义，偶发一次不生效。
 back_to_apelin() {
-    icli app launch "$APELIN_BID" >/dev/null 2>&1 || true
-    now=$(frontmost_bid)
-    if [ "$now" != "$APELIN_BID" ]; then
-        icli app launch "$APELIN_BID" >/dev/null 2>&1 || true
+    open_app "$APELIN_BID" || true
+    if [ "$VERIFY" = "1" ]; then
         now=$(frontmost_bid)
-    fi
-    echo "回到 Apelin: ${now:-未知}（外出 $(( $(date +%s) - START )) 秒）"
-    if [ "${now:-}" != "$APELIN_BID" ]; then
-        echo "警告: 前台不是 Apelin —— 用户看不到聊天，请手动切回" >&2
+        if [ "$now" != "$APELIN_BID" ]; then
+            open_app "$APELIN_BID" || true
+            now=$(frontmost_bid)
+        fi
+        echo "回到 Apelin: ${now:-未知}（外出 $(( $(date +%s) - START )) 秒）"
+        if [ "${now:-}" != "$APELIN_BID" ]; then
+            echo "警告: 前台不是 Apelin —— 用户看不到聊天，请手动切回" >&2
+        fi
+    else
+        echo "已请系统打开 Apelin（外出 $(( $(date +%s) - START )) 秒；未用 icli 校验前台，要校验加 ERRAND_VERIFY=1）"
     fi
 }
 trap 'back_to_apelin' EXIT INT TERM
@@ -68,7 +86,7 @@ elapsed() { echo $(( $(date +%s) - START )); }
 over_limit() { [ "$(elapsed)" -ge "$LIMIT" ]; }
 
 echo "去 $TARGET 办事（上限 ${LIMIT}s，超时就回）"
-icli app launch "$TARGET" >/dev/null 2>&1 || echo "launch $TARGET 返回非零，继续尝试取证"
+open_app "$TARGET" || echo "uiopen $TARGET 返回非零，继续尝试取证"
 sleep 3
 
 if over_limit; then
