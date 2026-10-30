@@ -946,7 +946,7 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
                 // 限量：指针集只增不减会慢慢涨，800 张足够覆盖一屏图标 + 几轮重画。
                 if (self.renderedCGPointers.count < 800) {
                     [self.renderedCGPointers addObject:
-                        [NSValue valueWithPointer:(__bridge const void *)rendered.CGImage]];
+                        [NSValue valueWithPointer:(const void *)rendered.CGImage]];
                 }
             }
         }
@@ -963,7 +963,7 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
             return YES;
         }
         if (image.CGImage && [self.renderedCGPointers containsObject:
-                [NSValue valueWithPointer:(__bridge const void *)image.CGImage]]) {
+                [NSValue valueWithPointer:(const void *)image.CGImage]]) {
             return YES;
         }
         return NO;
@@ -975,7 +975,7 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
     if (cg == NULL) return NO;
     @synchronized (self) {
         return [self.renderedCGPointers containsObject:
-                [NSValue valueWithPointer:(__bridge const void *)cg]];
+                [NSValue valueWithPointer:(const void *)cg]];
     }
 }
 
