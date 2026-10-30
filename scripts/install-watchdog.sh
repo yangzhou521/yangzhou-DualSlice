@@ -14,9 +14,13 @@ set -u
 ACTION=${1:-status}
 LABEL="com.yangzhou.fleet-watchdog"
 
-# fleet 目录（mobile 的 Apelin 数据目录，在 jbroot 里）
+# fleet 目录（用 glob 查找：root 下 $HOME=/var/root，不能用）
 PROJ="${APELIN_PROJECT_ROOT:-$(pwd)}"
-FLEET_DIR="$HOME/Documents/wiki.qaq.apelin/fleet"
+FLEET_DIR=""
+for _d in /private/var/containers/Bundle/Application/.jbroot-*/var/mobile/Documents/wiki.qaq.apelin/fleet; do
+  [ -d "$_d" ] && FLEET_DIR="$_d" && break
+done
+[ -z "$FLEET_DIR" ] && FLEET_DIR="$HOME/Documents/wiki.qaq.apelin/fleet"  # fallback
 SCRIPT_SRC="$PROJ/scripts/fleet-watchdog.sh"
 SCRIPT_DST="$FLEET_DIR/fleet-watchdog.sh"
 PLIST="/Library/LaunchDaemons/${LABEL}.plist"
