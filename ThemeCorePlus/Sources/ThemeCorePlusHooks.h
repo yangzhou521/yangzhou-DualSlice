@@ -126,6 +126,13 @@ NSString *TCPHookOwnerCensus(NSArray<NSString *> *classNames,
 // —— 站点拿到机会时问模块要替换素材；模块拿不出就返回 nil / 原对象，包装函数照原样转发 ——
 // 由 ThemeCorePlusIcons.m / ThemeCorePlusBadges.m / ThemeCorePlusFolders.m 实现。
 UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info);
+// 时钟 / 日历这两样系统图标自带动态内容（实时指针 / 当天日期），主题素材只有静态底图，
+// 整幅替换 = 把指针和日期抹掉。所以站点先让系统照常出图，再把「主题素材 + 系统那张图」
+// 交给这里叠成一张：不是动态图标就返回 nil，站点照原样转发。
+BOOL TCPIconNeedsSystemComposite(id icon);
+UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *systemImage);
+// 动态图标合成打点：各叠了几张、混合模式、最后一次的像素量，写进诊断。
+NSString *TCPDynamicProbeReport(void);
 // 图标站打点：被问过几次、参数不可信跳过几次、没素材几次、换成几张。写进诊断。
 NSString *TCPIconProbeReport(void);
 // 显示层站：original 是视图正要画的那张图（UIImage 或 CGImage），view 是 SBIconImageView。

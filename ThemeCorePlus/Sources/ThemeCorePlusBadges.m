@@ -181,9 +181,24 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
                               NSStringFromClass([target class]), touched ? @"*" : @""]];
         }
     }
+    // 除「我们的图」这条祖先链之外，其余子视图一律藏起来。本机实测：只清颜色清不干净，
+    // 系统自己还会画一层（用户 2026-10-31 04:53「一个图标二层、一个图标一层」，
+    // 诊断 tree=SBDarkeningImageView 没有 * 就是那层根本没被清动）。
+    NSMutableSet<UIView *> *keep = [NSMutableSet set];
+    for (UIView *p = ourHost; p != nil && p != view; p = p.superview) [keep addObject:p];
+    for (UIView *sub in view.subviews) {
+        if (sub == ourHost || [keep containsObject:sub]) continue;
+        if (TCPBadgeLayerIsOurs(sub.layer)) continue;
+        if (!sub.hidden) {
+            sub.hidden = YES;
+            cleared++;
+            if (names.count < 6) [names addObject:[NSString stringWithFormat:@"%@!", NSStringFromClass([sub class])]];
+        }
+    }
+
     if (cleared > 0) sBadgeSysHidden += (NSInteger)cleared;
 
-    // 取证：底板节点是谁、清没清掉（带 * = 清过），装完机不看屏幕也知道做对没有。
+    // 取证：底板节点是谁、清没清掉（带 * = 清过，带 ! = 被藏），装完机不看屏幕也知道做对没有。
     sBadgeSysTree = names.count > 0 ? [names componentsJoinedByString:@","] : @"-";
 
     sBadgeHiding = NO;

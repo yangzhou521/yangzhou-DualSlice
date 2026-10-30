@@ -52,7 +52,11 @@ static NSString *TCPIconBundleIdentifier(id icon) {
 static void TCPNoteComposedImage(UIImage *image, NSString *bundleID);
 
 // 时钟 / 日历是系统动态图标（实时指针 / 当天日期）：主题素材只有静态底图，整幅替换必然丢内容。
-// 处理方式见下面 TCPThemedIconImage 里「一律不替换」那一段。
+// 处理方式见 TCPThemedIconImage 的「交给合成站」那一段 + 下面 TCPCompositeDynamicIcon()。
+static BOOL TCPBundleIsDynamic(NSString *bundleID) {
+    return [bundleID isEqualToString:@"com.apple.mobiletimer"] ||
+           [bundleID isEqualToString:@"com.apple.mobilecal"];
+}
 
 UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info) {
     if (icon == nil || info.size.width <= 0 || info.size.height <= 0) return nil;
@@ -62,15 +66,9 @@ UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info) {
     TCPThemeStore *store = [TCPThemeStore shared];
     if (!store.active) return nil;
 
-    // 时钟 / 日历是系统动态图标（实时指针 / 当天日期）。本机主题素材里没有动态内容：
-    // ClockIconBackgroundSquare 是透明玻璃底、IconBundles/mobilecal-large 只有底图没数字。
-    // 0.9.11 把这两样交给系统之后，屏幕上就是「时钟空白、日历只有底图没有日期」
-    // （用户 2026-10-31 04:55 实测）。在做出「主题底 + 系统动态层」的分层方案之前，
-    // 这两个一律不替换 —— 宁可样式和别的图标不同，也不能让用户看不见时间与日期。
-    if ([bundleID isEqualToString:@"com.apple.mobiletimer"] ||
-        [bundleID isEqualToString:@"com.apple.mobilecal"]) {
-        return nil;
-    }
+    // 时钟 / 日历：不在这里整幅替换（0.9.11 实测「时钟空白、日历只有底图没有日期」），
+    // 交给站点：先让系统照常出图，再由 TCPCompositeDynamicIcon() 叠「主题底 + 系统动态层」。
+    if (TCPBundleIsDynamic(bundleID)) return nil;
 
     // 遮罩：优先用主题自带的作者遮罩（store 自己会套）；IconCornerMask 只是没有素材时的兜底。
     CGFloat radius = [store cornerMaskEnabled] ? info.cornerRadius : 0;
@@ -236,6 +234,99 @@ static void TCPNoteComposedImage(UIImage *image, NSString *bundleID) {
     sComposedLast = [NSString stringWithFormat:@"%@:%.0fx%.0f@%.0f,cov=%.2f,lum=%.2f",
                      bundleID ?: @"?", image.size.width, image.size.height, image.scale,
                      (double)stats.coverage, (double)stats.luminance];
+}
+
+#pragma mark - 时钟 / 日历：主题底 + 系统动态层
+
+// 这两样系统图标自带动态内容（实时指针 / 当天日期），主题素材只有静态底图：
+//   · 整幅替换 → 指针、日期全没（0.9.11 用户实测「时钟空白、日历只有底图没有日期」）；
+//   · 全交给系统 → 主题素材根本没加载（用户 2026-10-31 04:58 实测）。
+// 所以站点先把系统那张图（表盘+指针 / 底图+日期）要回来，再由这里叠一张：
+//   时钟：系统表盘垫底（不透明的白/黑脸），主题表盘叠在上面 —— 指针仍由
+//         SBHClockApplicationIconImageView 自己实时画在最上层，所以还是活的。
+//   日历：主题底图垫底，系统那张图按亮度选混合模式压上去 —— 白底取「正片叠底」
+//         （白 = 不改变底图，只留下数字的墨），深底取「滤色」（深色不改变底图，只留浅色字）。
+static NSInteger sDynClock = 0;
+static NSInteger sDynCalendar = 0;
+static NSInteger sDynFail = 0;
+static NSString *sDynLast = nil;
+
+NSString *TCPDynamicProbeReport(void) {
+    return [NSString stringWithFormat:@"dyn{clock=%ld,cal=%ld,fail=%ld,last=%@}",
+            (long)sDynClock, (long)sDynCalendar, (long)sDynFail, sDynLast ?: @"-"];
+}
+
+BOOL TCPIconNeedsSystemComposite(id icon) {
+    if (icon == nil) return NO;
+    return TCPBundleIsDynamic(TCPIconBundleIdentifier(icon));
+}
+
+UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *systemImage) {
+    if (icon == nil || info.size.width <= 0 || info.size.height <= 0) return nil;
+    NSString *bundleID = TCPIconBundleIdentifier(icon);
+    if (!TCPBundleIsDynamic(bundleID)) return nil;
+
+    TCPThemeStore *store = [TCPThemeStore shared];
+    if (!store.active) return nil;
+
+    CGFloat radius = [store cornerMaskEnabled] ? info.cornerRadius : 0;
+    UIImage *themed = [store iconImageForBundleID:bundleID
+                                             size:info.size
+                                            scale:info.scale
+                                     cornerRadius:radius];
+    if (themed == nil) {
+        __sync_fetch_and_add(&sDynFail, 1);
+        sDynLast = [NSString stringWithFormat:@"%@:noasset", bundleID];
+        return nil;
+    }
+
+    BOOL clock = [bundleID isEqualToString:@"com.apple.mobiletimer"];
+    CGFloat scale = info.scale > 0 ? info.scale : 1.0;
+    CGRect rect = CGRectMake(0, 0, info.size.width, info.size.height);
+
+    UIGraphicsBeginImageContextWithOptions(info.size, NO, scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx) {
+        UIGraphicsEndImageContext();
+        __sync_fetch_and_add(&sDynFail, 1);
+        sDynLast = [NSString stringWithFormat:@"%@:noctx", bundleID];
+        return nil;
+    }
+
+    NSString *how = @"-";
+    if (clock) {
+        // 脸垫底：主题表盘是玻璃底（本机素材不透明比只有 0.29），底下没脸就是「图标空白」。
+        if (systemImage) [systemImage drawInRect:rect];
+        [themed drawInRect:rect];
+        how = @"face";
+    } else {
+        [themed drawInRect:rect];
+        if (systemImage) {
+            TCPPixelStats stats = TCPPixelStatsForImage(systemImage);
+            BOOL light = !stats.valid || stats.luminance > 0.5;
+            CGContextSaveGState(ctx);
+            CGContextSetBlendMode(ctx, light ? kCGBlendModeMultiply : kCGBlendModeScreen);
+            [systemImage drawInRect:rect];
+            CGContextRestoreGState(ctx);
+            how = light ? @"mul" : @"scr";
+        }
+    }
+
+    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (result == nil) {
+        __sync_fetch_and_add(&sDynFail, 1);
+        sDynLast = [NSString stringWithFormat:@"%@:noimage", bundleID];
+        return nil;
+    }
+
+    if (clock) __sync_fetch_and_add(&sDynClock, 1);
+    else __sync_fetch_and_add(&sDynCalendar, 1);
+    TCPPixelStats out = TCPPixelStatsForImage(result);
+    sDynLast = [NSString stringWithFormat:@"%@:%.0fx%.0f@%.0f,%@,cov=%.2f",
+                bundleID, info.size.width, info.size.height, scale, how, (double)out.coverage];
+    TCPNoteComposedImage(result, bundleID);
+    return result;
 }
 
 // —— 视图层：屏幕上到底挂了什么 ——

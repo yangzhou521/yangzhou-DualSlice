@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.12
+  VERSION: 0.9.13
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.12)
+    name: Release (themecoreplus-v0.9.13)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,10 +185,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.12
-          name: ThemeCorePlus v0.9.12
+          tag_name: themecoreplus-v0.9.13
+          name: ThemeCorePlus v0.9.13
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.12 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.13 —— MarkTheme 式的主题引擎，作者 yangzhou。
 
             v0.9.11：
 
@@ -296,7 +296,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.12/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.13/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'

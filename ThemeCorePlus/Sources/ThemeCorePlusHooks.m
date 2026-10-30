@@ -120,7 +120,17 @@ static UIImage *TCPIconHandle(IMP *slot, id self, SEL _cmd, TCPIconImageInfo inf
         return themed;
     }
     __sync_fetch_and_add(&sIconMiss, 1);
-    return ((TCPIconImageInfoFn)original)(self, _cmd, info);
+    UIImage *originalImage = ((TCPIconImageInfoFn)original)(self, _cmd, info);
+    // 时钟 / 日历：系统那张图（表盘+指针 / 底图+日期）拿到手，再和主题素材叠成一张。
+    // 别的图标不走这里，原样返回系统图。
+    if ([originalImage isKindOfClass:[UIImage class]] && TCPIconNeedsSystemComposite(self)) {
+        UIImage *composed = TCPCompositeDynamicIcon(self, info, originalImage);
+        if (composed != nil) {
+            __sync_fetch_and_add(&sIconHit, 1);
+            return composed;
+        }
+    }
+    return originalImage;
 }
 
 #define TCP_DEFINE_ICON_SLOT(n)                                                \
