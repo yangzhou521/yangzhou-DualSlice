@@ -32,14 +32,27 @@ static inline os_log_t TCPLogHandle(void) {
     return handle;
 }
 
-// iOS 14+ 传给 -[SBIcon iconImageWithInfo:] 的结构体。真身随版本可能加字段：
-// 只许多读、绝不许少读 —— 少读会让原实现从栈上读到垃圾（图标变形甚至崩）。
+// iOS 14+ 传给 -[SBIcon iconImageWithInfo:] / -generateIconImageWithInfo: 的结构体。
+//
+// 铁律（2026-10-30 用崩溃报告坐实，别再犯）：**字段必须和系统一模一样，多一个都不行**。
+// 系统里是 {CGSize size; CGFloat scale; CGFloat cornerRadius;}，sizeof = 32、全是 double，
+// 在 arm64 ABI 里算「同质浮点聚合（HFA）」，4 个成员正好走 d0–d3 寄存器。
+// 我们曾在这后面补 reserved[5] 想「多读不亏」，结果它变成 8 个 double、不再是 HFA，
+// 编译器于是改成「从 x2 取结构体指针、按内存读」——而真实调用根本不填 x2。
+// 崩溃实证（SpringBoard-2026-10-30-112204.ips）：tcpIconHook6+0x20 读 [x2+0x20]，
+// x2 = 0 → KERN_INVALID_ADDRESS at 0x20，consecutiveCrashCount=8。
+// 结论：宁可字段少，也绝不能让结构体越过 4 个 double 的 HFA 界限。
 typedef struct {
     CGSize size;
     CGFloat scale;
     CGFloat cornerRadius;
-    CGFloat reserved[5];
 } TCPIconImageInfo;
+
+// 编译期闸门：这个结构体必须是 4 个 double（32 字节）的 HFA，多一个字段
+// 就会从「d0–d3 传值」变成「x2 传指针」，而系统调用方根本不设 x2 —— 装机即安全模式。
+// 断言放在这里，谁以后再往里加字段，CI 当场编译失败，而不是在 SpringBoard 里炸。
+_Static_assert(sizeof(TCPIconImageInfo) == 32,
+               "TCPIconImageInfo must be 4 doubles (HFA): {CGSize, scale, cornerRadius}");
 
 typedef NS_ENUM(NSUInteger, TCPSiteKind) {
     // -[SBIcon iconImageWithInfo:] / -[SBIcon unmaskedIconImageWithInfo:]：结构体进、UIImage 出
@@ -90,6 +103,8 @@ NSString *TCPHookOwnerCensus(NSArray<NSString *> *classNames,
 // —— 站点拿到机会时问模块要替换素材；模块拿不出就返回 nil / 原对象，包装函数照原样转发 ——
 // 由 ThemeCorePlusIcons.m / ThemeCorePlusBadges.m / ThemeCorePlusFolders.m 实现。
 UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info);
+// 图标站打点：被问过几次、参数不可信跳过几次、没素材几次、换成几张。写进诊断。
+NSString *TCPIconProbeReport(void);
 // 显示层站：original 是视图正要画的那张图（UIImage 或 CGImage），view 是 SBIconImageView。
 // 换不了（没素材、尺寸未知）就原样返回 original。
 id TCPThemedDisplayReplacement(id original, id view);

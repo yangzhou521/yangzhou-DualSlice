@@ -25,7 +25,7 @@ set -eu
 PRODUCT=ThemeCorePlus
 PREFS_BUNDLE=ThemeCorePlusPrefs
 PACKAGE_ID=com.yangzhou.themecoreplus
-VERSION=0.6.0
+VERSION=0.6.1
 NAME_ZH="主题美化 +"
 AUTHOR=yangzhou
 DESCRIPTION="MarkTheme 式主题引擎：读 SnowBoard / IconBundles 主题原素材，改主屏与文件夹图标、角标底图与系统图片覆盖；带设置面板与一键回滚。作者 yangzhou。"

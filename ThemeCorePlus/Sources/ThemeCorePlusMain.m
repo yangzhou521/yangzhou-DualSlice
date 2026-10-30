@@ -59,8 +59,9 @@ static void TCPWriteDiagnostics(void) {
     }
     NSString *themeText = themeNames.count > 0 ? [themeNames componentsJoinedByString:@"|"] : @"-";
 
-    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
                       [store diagnostics], TCPDisplayProbeReport(), TCPRefreshProbeReport(),
+                      TCPIconProbeReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
                       TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText];
     TCPWriteProcessPreference(TCPKeyDiagnostics, text);

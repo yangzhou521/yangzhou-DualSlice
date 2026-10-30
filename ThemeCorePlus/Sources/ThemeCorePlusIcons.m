@@ -104,13 +104,10 @@ NSString *TCPRefreshProbeReport(void) {
             (long)sRefreshCacheMiss, sRefreshPurgeName ?: @"-"];
 }
 
-// SBIconImageView 自己声明的 -iconImageInfo / -setIconImageInfo: 用的就是这个结构：
-// 用例是「拿现值再设回去」，多读的字节不影响结果，少读才会让原实现读到垃圾。
-typedef struct {
-    CGSize size;
-    CGFloat scale;
-    CGFloat cornerRadius;
-} TCPIconImageInfoShort;
+// SBIconImageView 自己声明的 -iconImageInfo / -setIconImageInfo: 用的就是这个结构。
+// 与 ThemeCorePlusHooks.h 的 TCPIconImageInfo 完全同构（4 个 double，按 HFA 走 d0–d3），
+// 这里不再另抄一份字段：ABI 关键结构体只能有一个定义，抄两份迟早改一边漏一边。
+typedef TCPIconImageInfo TCPIconImageInfoShort;
 
 // 图标图缓存对象上的清空方法：不同版本名字不同，按顺序试第一个存在的。
 // 都是无参方法 —— 带参数的那种（purgeCachedImagesForIcons:）要传图标集合，不在刷新路径上冒险。

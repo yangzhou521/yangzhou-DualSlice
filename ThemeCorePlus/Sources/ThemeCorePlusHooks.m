@@ -81,16 +81,45 @@ typedef UIImage *(*TCPIconImageInfoFn)(id, SEL, TCPIconImageInfo);
 // 取图流程里，就直接把调用交给原实现：宁可这一张图不主题化，也不能再重入。
 static __thread int tcpIconDepth = 0;
 
+// 打点：装完机读诊断就知道「图标站到底有没有被问、跳过几张、换成几张」，
+// 不必再靠反复注销看屏幕。old 版本的诊断串里没有 icon{，所以它也是「新代码跑起来了」的标记。
+static long sIconLook = 0, sIconSkip = 0, sIconMiss = 0, sIconHit = 0;
+
+NSString *TCPIconProbeReport(void) {
+    return [NSString stringWithFormat:@"icon{look=%ld,skip=%ld,miss=%ld,hit=%ld}",
+            sIconLook, sIconSkip, sIconMiss, sIconHit];
+}
+
+// 参数可信吗：结构体是 4 个 double、按 HFA 走 d0–d3 进来，尺寸/缩放不可能是 0 或 NaN。
+// 不像人样的参数就当自己没被问过，原样转发（绝不在自己这里崩）。
+static BOOL TCPIconInfoUsable(TCPIconImageInfo info) {
+    CGFloat widths[2] = { info.size.width, info.size.height };
+    for (int i = 0; i < 2; i++) {
+        if (!(widths[i] > 0.0) || widths[i] > 8192.0) return NO;
+    }
+    if (!(info.scale > 0.0) || info.scale > 16.0) return NO;
+    return YES;
+}
+
 static UIImage *TCPIconHandle(IMP *slot, id self, SEL _cmd, TCPIconImageInfo info) {
     IMP original = *slot;
     if (original == NULL) return nil;
+    __sync_fetch_and_add(&sIconLook, 1);
+    if (!TCPIconInfoUsable(info)) {
+        __sync_fetch_and_add(&sIconSkip, 1);
+        return ((TCPIconImageInfoFn)original)(self, _cmd, info);
+    }
     if (tcpIconDepth > 0) {
         return ((TCPIconImageInfoFn)original)(self, _cmd, info);
     }
     tcpIconDepth++;
     UIImage *themed = TCPThemedIconImage(self, info);
     tcpIconDepth--;
-    if (themed != nil) return themed;
+    if (themed != nil) {
+        __sync_fetch_and_add(&sIconHit, 1);
+        return themed;
+    }
+    __sync_fetch_and_add(&sIconMiss, 1);
     return ((TCPIconImageInfoFn)original)(self, _cmd, info);
 }
 
