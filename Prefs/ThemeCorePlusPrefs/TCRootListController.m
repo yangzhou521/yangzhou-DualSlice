@@ -177,7 +177,31 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
 //   · 表格的数据源、代理、勾选、返回，全是 UIKit 公开 API，Preferences 一行都不碰；
 //   · Preferences 只负责把我们的控制器 push 进导航栈（它 push 任何 UIViewController 都行）；
 //   · 没有再覆盖 reloadSpecifiers / setSpecifiers:，也就没有那套段落缓存的坑。
-// 这样「点进来闪退」的入口在结构上就不存在了，页面本身也更好用：带副标题和勾选。
+// 这样「点进来闪退」的入口在结构上就不存在了，页面本身也更好用：带副标题，右端是系统开关。
+#pragma mark - 选择主题页的行单元
+
+// 主题行的右端是**系统开关**（UISwitch —— 与设置里「启用插件」那颗是同一个控件、同一套观感），
+// 不再用对号。用户 2026-10-30 17:09~17:11 定的硬规矩（已写入技能包 settings-switch-ui）：
+// 凡是挂进系统设置的插件，选项一律用系统开关，不用对号。
+// 行本体照样可点（点行 = 拨这颗开关），保留原来「点一下选上、再点一下取消」的手感。
+@interface TCPThemeSwitchCell : UITableViewCell
+@property (nonatomic, strong, readonly) UISwitch *tcpSwitch;
+@end
+
+@implementation TCPThemeSwitchCell
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    self = [super initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:reuseIdentifier];
+    if (self) {
+        _tcpSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+        _tcpSwitch.accessibilityLabel = @"选中这个主题";
+        self.accessoryView = _tcpSwitch;      // 右端开关，与设置里一样；不设 accessoryType（那就是对号）
+    }
+    return self;
+}
+
+@end
+
 @interface TCPThemeChooserController : UITableViewController
 @end
 
@@ -242,7 +266,7 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
         if ([path isKindOfClass:[NSString class]] && path.length > 0) [_selected addObject:path];
     }
     // 只列主题本身。「系统原生外观」那一行已删（用户 2026-10-30 17:03）：
-    // 想回滚就把勾着的层一层层取消（再点一次 = 取消这一层），空链就是系统原生外观。
+    // 想回滚就把开着的层一层层关掉（拨开关、点这一行都行），空链就是系统原生外观。
     _rows = [store availableThemePaths] ?: @[];
     [self tcpReloadMaterials];             // 接着清点每个主题自己的素材（浅扫，见 store）
     [self.tableView reloadData];
@@ -306,34 +330,31 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     return (NSInteger)_rows.count;
 }
 
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return [NSString stringWithFormat:@"主题（%lu 个）", (unsigned long)_rows.count];
-}
-
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return @"可以多选：勾几个就叠几层，副标题里的「第 N 层」就是叠加顺序 —— 数字大的盖住数字小的（同一张素材谁在上层就用谁的）。"
-           @"「图标包 ＋ 角标包」这种各管一块的组合随便勾；重叠的部分后勾的那个说了算。再点一次 = 取消这一层。"
-           @"名字下面那一行写的是这个主题自己带了什么素材。"
-           @"勾完点右上角「完成」（或左上角返回）。选中立刻生效，不用注销：桌面图标会自己重取一遍图。";
-}
+// 这一页**只有主题行**（用户 2026-10-30 17:1x：「选择主题 里面只有主题项目，用来开关选择主题素材包！
+// 别的不要有！」）：段落标题与页脚说明都不再有 —— 段落标题（「主题（N 个）」）和那一大段叠加规则
+// 都是页面自己贴上去的字，不是主题项目本身。别的功能（图标 / 文件夹 / 角标 / 系统界面图）一律默认开启，
+// 面板上不给开关，主题里没那类素材就自然不换、也不会去加载它。
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     static NSString *identifier = @"TCPThemeChoiceCell";
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
+    TCPThemeSwitchCell *cell = (TCPThemeSwitchCell *)[tableView dequeueReusableCellWithIdentifier:identifier];
     if (cell == nil) {
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
-                                      reuseIdentifier:identifier];
+        cell = [[TCPThemeSwitchCell alloc] initWithStyle:UITableViewCellStyleSubtitle
+                                         reuseIdentifier:identifier];
     }
-    cell.accessoryView = nil;
+    // 单元是复用的：每次都得把上一行留下的 target 摘掉，否则拨一颗开关会连带触发别的行。
+    [cell.tcpSwitch removeTarget:nil action:NULL forControlEvents:UIControlEventValueChanged];
     cell.detailTextLabel.font = [UIFont systemFontOfSize:12.0];
     cell.detailTextLabel.numberOfLines = 2;
 
     NSString *path = [self tcpPathAtIndexPath:indexPath];
     if (path.length == 0) {
-        // 越界（表格刷新与数据不同步）时给个空单元，别把主题名写到别人的行上
+        // 越界（表格刷新与数据不同步）时给个空单元，别把主题名写到别人的行上；开关也停用，别让人拨到空行。
         cell.textLabel.text = @"";
         cell.detailTextLabel.text = @"";
-        cell.accessoryType = UITableViewCellAccessoryNone;
+        cell.tcpSwitch.tag = -1;
+        cell.tcpSwitch.on = NO;
+        cell.tcpSwitch.enabled = NO;
         return cell;
     }
 
@@ -353,30 +374,48 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     }
     cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@",
                                  prefix, [self tcpMaterialTagsForPath:path]];
-    cell.accessoryType = layer > 0 ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+    // 右端：系统开关，开 = 这一层生效（与设置里「启用插件」那颗开关同款）
+    cell.tcpSwitch.enabled = YES;
+    cell.tcpSwitch.tag = (NSInteger)indexPath.row;
+    cell.tcpSwitch.on = (layer > 0);
+    [cell.tcpSwitch addTarget:self action:@selector(tcpSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     return cell;
+}
+
+// 开关被拨动：行号记在 tag 上，直接当索引使（单元复用后 tag 每次都会重写，不会串行）
+- (void)tcpSwitchChanged:(UISwitch *)sender {
+    if (sender.tag < 0 || (NSUInteger)sender.tag >= _rows.count) {
+        [self.tableView reloadData];       // 越界：把开关拨回它该在的位置
+        return;
+    }
+    [self tcpToggleThemeAtIndex:(NSUInteger)sender.tag];
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    [self tcpToggleThemeAtIndex:(NSUInteger)indexPath.row];   // 点行 = 拨这颗开关，两条路行为一致
+}
 
-    NSString *path = [self tcpPathAtIndexPath:indexPath];
-    if (path.length == 0) return;                            // 越界的空行：什么都不做
+// 选中 / 取消一层：唯一的写入口（开关与点行走的都是这里）
+- (void)tcpToggleThemeAtIndex:(NSUInteger)row {
+    NSString *path = row < _rows.count ? _rows[row] : nil;
+    if (path.length == 0) return;                               // 越界的空行：什么都不做
 
     NSInteger layer = [self tcpLayerForPath:path];
     if (layer > 0) {
-        [_selected removeObjectAtIndex:(NSUInteger)(layer - 1)];   // 再点一次 = 去掉这一层
+        [_selected removeObjectAtIndex:(NSUInteger)(layer - 1)];   // 关掉开关 = 去掉这一层
     } else if (_selected.count >= TCPMaxThemeLayers) {
-        // 到上限就明说，别静默丢掉用户这一勾（诊断里也只会显示前 8 层）。
+        // 到上限就明说，别静默丢掉用户这一开（诊断里也只会显示前 8 层）。
         UIAlertController *alert =
             [UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"最多叠 %lu 层", (unsigned long)TCPMaxThemeLayers]
-                                                message:@"每多一层都要把整个主题目录重扫一遍，叠太多既卡又没法排查是哪层出的问题。先取消一层再勾。"
+                                                message:@"每多一层都要把整个主题目录重扫一遍，叠太多既卡又没法排查是哪层出的问题。先关掉一层再开。"
                                          preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
+        [self.tableView reloadData];                            // 把这颗开不上去的开关拨回原位
         return;
     } else {
-        [_selected addObject:path];                                // 后勾的 = 更上层（覆盖先勾的）
+        [_selected addObject:path];                                // 后开的 = 更上层（覆盖先开的）
     }
     // 只留 ThemePaths 一个键：旧的两个键是单主题时代的写法，留着只会跟叠加链打架。
     // 空数组 = 删键 = 系统原生外观（传 nil 给 CFPreferencesSetAppValue 就是删）。
@@ -386,7 +425,7 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     TCPWritePreference(TCPKeyThemeName, nil);
     TCPPostPreferencesChanged();                            // SpringBoard 收到立刻重读 + 重取图标图
 
-    [tableView reloadData];                                 // 停在原地继续勾，不自动返回
+    [self.tableView reloadData];                                 // 停在原地接着拨，不自动返回
 }
 
 @end
@@ -489,8 +528,8 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     //   通用 = 启用插件
     //   主题 = 选择主题 + 刷新图标
     //   底部 = 作者
-    // 回滚不用单独按钮：在「选择主题」里把勾着的层一层层取消就是回滚（用户 2026-10-30 17:03
-    // 让把列表顶部那行「系统原生外观（点它 = 清空全部主题）」去掉，勾选框本身就说清了状态）。
+    // 回滚不用单独按钮：在「选择主题」里把开着的层一层层关掉就是回滚（用户 2026-10-30 17:03
+    // 让把列表顶部那行「系统原生外观（点它 = 清空全部主题）」去掉，那一行右端的开关本身就说清了状态）。
     // 用户 2026-10-30 15:13/15:14 连着两条要求：**面板要简洁**（照 ThemeCore 0.5.1 的样子，
     // 别写功能说明）——「开关只是用不用」这类解释、功能清单、诊断串一律不出现在面板正文里。
     // 用户 2026-10-30 16:0x 曾把四个功能开关（应用图标 / 文件夹 / 角标 / 系统界面图）收进「选择主题」

@@ -182,6 +182,17 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   - 回程写在 `trap EXIT/INT/TERM`（报错、超时、Ctrl-C 都会回），末尾 `icli app frontmost` 校验并打印
     「回到 Apelin: <bundle-id>（外出 N 秒）」；一次调用取齐证据用 `sh scripts/errand-in-app.sh`。
     **汇报里必须写清外出多少秒，超了也照写。** 绝不要求用户手动切回，也不把验证推回给用户。
+- **面板里凡是有「选择」的地方，一律用设置里那种系统开关（`UISwitch`），不许用对号 / 勾选标记。**
+  用户 2026-10-30 17:09 / 17:11 原话：「插件面板的选择开关的按钮形状和 iOS 设置内的按钮保持一致！像启用插件开关一样！
+  以后凡是应用到系统设置的插件，全部插件的开关都是按钮开关！不要用对号！」「不要用这个不好看不好用！」
+  ——**所有工程、所有对话适用**，已写进技能包 `settings-switch-ui`、全局记忆与本文件：
+  - 判据：插件只要挂在系统设置里（PreferenceLoader 面板，含二级页），功能开关、多选、单选，
+    右端都是 `UISwitch` —— `PSSpecifier` 用 `PSSwitchCell`；纯 UIKit 页把 `UISwitch` 放进
+    `cell.accessoryView`（与「启用插件」那颗同一个控件、同一套观感）。
+  - 明确不用：`UITableViewCellAccessoryCheckmark`、自己画的对号 / 勾选图、
+    `UITableViewCellAccessoryDetailButton` 之类冒充选择态的配件。
+  - 多选列表照样用开关：**打开的顺序就是生效顺序**，关掉 = 取消这一项；点整行应与拨开关等价。
+  - 本工程落点：`Prefs/ThemeCorePlusPrefs/TCRootListController.m` 里的 `TCPThemeSwitchCell`（0.9.3 起）。
 - **不许 `-undefined dynamic_lookup` / `-undefined suppress`。** 缺符号就逐个写
   `-Wl,-U,_符号名`（面板的 `PSListController`/`PSSpecifier` 就是这么处理的）。
 - **不许给私有类写消息发送。** 代码里出现 `[SBIconController sharedInstance]` 就会多出一个
@@ -233,8 +244,10 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   0.6.0 的崩溃根因写在提交 `ef781ae1`：`TCPIconImageInfo` 多写 `reserved[5]` 把 4 个 double 的 HFA
   撑成 8 个 → 编译器改成从 x2 取结构体指针，而系统调用方不设 x2 → `tcpIconHook6+0x20` 崩；
   现在结构体与系统一致，并加了 `_Static_assert(sizeof(...)==32)`。
-- **ThemeCorePlus 0.9.2 待装（2026-10-30 17:0x 改）**：面板只剩「主题」——「素材开关」四行删干净、
-  「系统原生外观」那行删掉、主题行副标题带素材清单；四类素材一律全换。
+- **ThemeCorePlus 0.9.3 待装（2026-10-30 17:0x~17:2x 改）**：面板只剩「主题」——「素材开关」四行删干净、
+  「系统原生外观」那行删掉、主题行副标题带素材清单；四类素材一律全换（默认开启，没素材就不换也不加载）；
+  「选择主题」页每一行右端是**系统开关**（`UISwitch`，与设置里「启用插件」那颗同款），不用对号，
+  而且**整页只有主题行**：段落标题与页脚说明都删了。
 - 装机用的 0.6.0 包：Release `themecoreplus-v0.6.0` 资产（run 40983356266 编译），
   100720 B，sha256 `beba61e58738a7b268e46f1482ac604d1a048dce7c6df15fe7662d55d61f98b7`。
   **装包不会 reload 已跑的 SpringBoard**，改 dylib 必须重启进程才算数。
@@ -254,9 +267,9 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   `globalFileMap`/`bundleFileMap`）都是「先到先得」（`if (!entry[key])`），所以倒着扫 = 靠后的优先；
   作者素材（蒙板/底图/overlay/文件夹底板）也按层补缺（表里有就不再动）。单个主题内部的行为
   与只支持单主题时一字不差。
-- **面板**：`TCPThemeChooserController` 改成勾选式，勾选顺序即叠加顺序，副标题写「叠加第 N 层 ·
-  根目录名」，再点一次取消，「系统原生外观」那行点一下 = 清空整条链；勾完**不自动 pop**，
-  右上角有「完成」，Preferences 的返回键也能回去。改完立刻 `TCPPostPreferencesChanged()`。
+- **面板**：`TCPThemeChooserController` 用「一行一颗系统开关」，开着的顺序即叠加顺序，副标题写「叠加第 N 层 ·
+  根目录名」，关掉开关 ＝ 取消这一层（点这一行同样），「系统原生外观」那行已删（关光所有开关就是它）；
+  拨完**不自动 pop**，右上角有「完成」，Preferences 的返回键也能回去。改完立刻 `TCPPostPreferencesChanged()`。
 - **诊断**：`ThemeCorePlusDiagnostics` 里多了 `layers=N[层1|层2|…]`（从左到右 = 从下到上；
   末尾那个 `themes=` 是「扫到几个主题」的普查，两回事），`theme=` 是「层1 + 层2」的合并名，
   `mask/base/overlay/folder` 是最终选中的四样素材。
@@ -280,11 +293,21 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 **「选择主题」页（`TCPThemeChooserController`，纯 UIKit 的 UITableViewController，只有一段）**：
 
-- **只列主题**，一行一个：标题＝主题名，副标题＝`第 N 层 · 图标 84 · 角标 3 · 界面图 7`
+- **这一页只有主题行，别的什么都没有**（用户 2026-10-30 17:1x 原话：「选择主题 里面只有主题项目，
+  用来开关选择主题素材包！别的不要有！别的功能默认开启！它们没素材既不生效也不加载！」）：
+  段落标题（原来是「主题（N 个）」）与整段页脚说明都已删，页面就是一张光列表 —— 每一行一个主题，
+  右端一颗开关。别的功能（图标 / 文件夹 / 角标 / 系统界面图）一律**默认开启**、面板上不给开关；
+  主题里没有那类素材，就既不生效也不去加载（`TCPThemeStore` 里 flags 恒为四类全开）。
+- 一行一个：标题＝主题名，副标题＝`第 N 层 · 图标 84 · 角标 3 · 界面图 7`
   （没勾时副标题开头写主题所在的根目录名；一类素材都没有就写「里面没有可用素材」）。
-- **勾选 = 叠加**：勾选顺序就是叠加顺序，靠后的盖住靠前的（同一张素材谁在上层用谁的）；
-  再点一次取消这一层；到 `TCPMaxThemeLayers`（8）弹窗明说，不静默丢勾。页脚写着这套语义。
-- **`系统原生外观` 那行已删**（用户 17:03）：全部取消勾选就是系统原生外观，回滚不再占一行，
+- **右端是系统开关**（`TCPThemeSwitchCell`）：`UISwitch` 作 `accessoryView`，与设置里「启用插件」那颗
+  同一个控件、同一套观感 —— **不用对号**（用户 2026-10-30 17:09 起的硬规矩，见下节）。开关被拨 =
+  唯一写入口 `-tcpToggleThemeAtIndex:`；**点这一行同样拨这颗开关**（保留原来单击选上的手感），
+  越界行把开关停用，单元复用时先 `removeTarget:` 免得串行。
+- **开关 = 叠加**：打开顺序就是叠加顺序，靠后的盖住靠前的（同一张素材谁在上层用谁的）；
+  关掉开关取消这一层；到 `TCPMaxThemeLayers`（8）弹窗明说并把那颗开关拨回原位，不静默丢选择。
+  （这套语义原先写在页脚，17:1x 起页脚也删了 —— 页面上除了主题行不留任何文字。）
+- **`系统原生外观` 那行已删**（用户 17:03）：全部关掉就是系统原生外观，回滚不再占一行，
   面板里也没有单独的「清空 / 恢复」按钮（`-tcpRestoreNativeAppearance` 只留给别的入口用）。
 - **分类素材开关（`素材开关` 一段四行）已整组删掉**（用户 16:59 / 17:00）：四类素材一律全换；
   `IconsEnabled / FoldersEnabled / BadgesEnabled / FilesEnabled` 四个键不再读、不再写

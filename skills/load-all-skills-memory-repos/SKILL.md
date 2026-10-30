@@ -26,6 +26,7 @@ apelin_skill_read axs-ios-tweaks
 apelin_skill_read respring-notify-countdown
 apelin_skill_read load-all-skills-memory-repos
 apelin_skill_read icli-status-self-check
+apelin_skill_read settings-switch-ui
 ```
 
 - 本机技能目录（Apelin 真正读的那份）：`~/Documents/wiki.qaq.apelin/skills/`。清单里出现上面之外的，一并读。
