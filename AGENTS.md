@@ -199,6 +199,10 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 用户 2026-10-31 01:34 原话：「我每个对话框内都要点批准！不点它们就不继续工作了！」
 
+> **2026-10-31 03:05 用户已把「使用屏幕前先询问」关掉**，当时实测 `icli app frontmost` 直接返回
+> （`wiki.qaq.apelin`，无卡片）→ icli 的卡片从此不该再出现，全部对话都能正常用 icli。
+> 下面这张表继续留着：它快（`defaults`/`launchctl` 比 icli 轻），也是「万一开关又被打开」时的兜底。
+
 - **卡片从哪来**：Apelin 设置里的「使用屏幕前先询问」（Ask Before Using the Screen，二进制里的键
   `asksBeforeScreen`）。它开着时，`apelin_screen_read_tree`、`apelin_screen_interact` 与
   **每一条 icli 命令**都会弹一张批准卡（权限模式 Full 也照弹）。开关存在 root 侧的宿主偏好里，
@@ -584,6 +588,23 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   所以它不依赖 dylib 的符号（自己扫盘、自己读写偏好）。代价：设置进程里同一批类名被注册两次，
   日志里会出现 "Class TCPThemeStore is implemented in both …" 的**预期告警**，功能无碍；
   两个镜像各用各的实例，别试图让面板和 dylib 共享单例。
+- **唤醒全队靠三层防线，不靠人推**（用户 2026-10-31 02:5x 原话：「唤醒机器人队员有什么更有效果的方案和方法没？
+  目前不怎么有效果啊！都是我人为唤醒的！」→「1 2 3 全部实现！」**所有工程、所有对话、永久适用**）：
+  - **根因**：agent 回合结束后变 `idle`，只有外部 `apelin_conversation_send` 能叫醒；launchd watchdog 是纯
+    shell，能发现谁睡了但**不能叫醒**（没有 agent 权限）。独立协调群三次创建全部 context 爆死 → 放弃。
+  - **第一层·自跳心跳**：每个 agent 回合结束前做三步——① `sh "$HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh" beat`
+    刷心跳；② `apelin_conversation_list` 找 `isThisConversation:true` 那条的 `sessionID`；
+    ③ `apelin_conversation_send(自己的sessionID, "【心跳】继续…")`。消息**排队**，本回合结束自动触发下一轮。
+    三振出局：连续 3 次黑板无实质进展 → 停跳 `post … idle`。`done` / `waitingForApproval` 不自跳。
+  - **第二层·互叫醒**：每次回合结束前顺带 `apelin_conversation_list`，对 `state=open`、`lastActive` 超 **15 分钟**、
+    非本对话的队友发一句「【互叫】你 N 分钟没动了。继续干活或 post idle。」——**只叫醒，不指挥**（指挥走黑板）。
+  - **第三层·专职心跳发生器**：一个独立对话（标题「心跳发生器」），只做 4 步——`list` → 叫醒 `idle>10m` 的 →
+    找自己 → 给自己 `tick`；**不读技能、不读记忆、不读黑板、不改任何文件**。全队都忘了自跳时它兜底。
+    用户定：**有用就留着，没用就删掉**。
+  - **红线**：三层**都不替代汇报**（有结果先正文说清 + 上岛）、**不替代协调**（动设备仍走「协调→通知→5 秒」）、
+    **不替代回执**（别人消息第一时间回）；消息一句话就够，省 context。
+  - 落地：技能 `cross-chat-coordination` §十九（自跳）＋ §二十（互叫醒）＋ §二十一（发生器提示词与重建）；
+    本 AGENTS.md 这一条；全局记忆。**三样一起同步本机与云端**。
 
 ## 当前状态
 
