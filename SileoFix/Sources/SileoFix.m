@@ -14,7 +14,14 @@
 //   文件日志（Sileo 沙盒内的 Caches/sileofix.log，App 外部可读）：
 //     icli fs ls /var/mobile/Containers/Data/Application | grep -i sileo
 //
-// 版本：1.0.3
+// 版本：1.0.4
+//   1.0.4：真正修因。1.0.3 的现场日志把病灶钉死在导航栏上：源内页与软件源页的
+//          UINavigationBar 是 userInteractionEnabled = NO（日志里显示 (noUI)），而
+//          「搜索软件包」输入框和左边那颗「所有分类」按钮都挂在它上面 —— 导航栏
+//          一关交互，整片就成死区；同一时刻已安装页的导航栏是可交互的，所以那里
+//          点得动。本版给 UINavigationBar 加一条 hitTest 旁路：点在它自己的
+//          UISearchBar / UIControl 上就接管，别处照旧穿透（壁纸、列表不受影响），
+//          既不改布局，也不去改 SileoWallpaper 设的状态。
 //   1.0.3：取证版。1.0.2 的日志证明源内页「搜索软件包」的中心点 hitTest 命中的
 //          就是 UISearchBarTextField 自己，所以「装饰盖板吃触摸」不是病因——命中
 //          之后就 return 了，等于没查。本版补三处量：① 全部 UIWindow（壁纸若自建
@@ -34,7 +41,7 @@
 #import <os/log.h>
 #import <substrate.h>
 
-#define SW_VERSION "1.0.3"
+#define SW_VERSION "1.0.4"
 
 static os_log_t SWLogHandle(void) {
     static os_log_t handle;
@@ -459,6 +466,59 @@ static BOOL sw_hook_sbtf_become(id self, SEL _cmd) {
     return r;
 }
 
+// ⑤ 导航栏命中旁路 —— 1.0.4 的真正修因。
+// SileoWallpaper 把源内页/软件源页的 UINavigationBar 关成交互禁用（日志里的 (noUI)），
+// 「搜索软件包」搜索栏与「所有分类」按钮都挂在它上面，于是整片变死区；导航栏只有 44 高
+// 时，搜索栏溢出的部分连 pointInside 都过不去。这里只做一件事：点在导航栏自己的搜索栏
+// 或控件上就接管，其余位置返回 nil 照旧穿透 —— 不动布局，也不改 SileoWallpaper 设的状态。
+static NSUInteger sw_navHitNotes = 0;
+
+// 按点找导航栏里真正该接收它的交互子视图（搜索栏优先，其次一般控件）。
+static UIView *SWNavBarTargetAt(UIView *navBar, CGPoint p, UIEvent *event) {
+    if (!navBar) return nil;
+
+    NSMutableArray<UIView *> *cands = [NSMutableArray array];
+    SWCollect(navBar, [UISearchBar class], cands, 0);   // 常常溢在导航栏 bounds 之外
+    NSMutableArray<UIView *> *ctls = [NSMutableArray array];
+    SWCollect(navBar, [UIControl class], ctls, 0);      // 「所有分类」这颗按钮
+    [cands addObjectsFromArray:ctls];
+
+    for (UIView *v in [cands reverseObjectEnumerator]) {
+        if (v == navBar) continue;
+        if (v.hidden || v.alpha < 0.01 || !v.userInteractionEnabled) continue;
+        if (CGRectIsEmpty(v.bounds)) continue;
+        CGPoint q = [v convertPoint:p fromView:navBar];
+        if (![v pointInside:q withEvent:event]) continue;
+        UIView *h = [v hitTest:q withEvent:event];
+        return h ?: v;
+    }
+    return nil;
+}
+
+// UINavigationBar 没有自己实现 hitTest:withEvent:（继承 UIView），所以这里是
+// class_addMethod 新增一站，原 IMP 取 UIView 的那份；绝不能直接 MSHook 到父类。
+static UIView *(*sw_orig_navbar_hitTest)(id, SEL, CGPoint, UIEvent *);
+
+static UIView *sw_hook_navbar_hitTest(id self, SEL _cmd, CGPoint p, UIEvent *event) {
+    UIView *navBar = (UIView *)self;
+    if (navBar.hidden || navBar.alpha < 0.01) return nil;
+
+    // 正常可交互、点也在范围内：完全走系统原样（已安装页就是这么点的，不会进旁路）。
+    if (navBar.userInteractionEnabled && CGRectContainsPoint(navBar.bounds, p)) {
+        UIView *r = sw_orig_navbar_hitTest(self, _cmd, p, event);
+        if (r) return r;
+    }
+
+    UIView *target = SWNavBarTargetAt(navBar, p, event);
+    if (target && sw_navHitNotes < 12) {
+        sw_navHitNotes++;
+        SWNote([NSString stringWithFormat:@"navHitTest 接管 %@ -> %@ at <%.0f,%.0f>%s",
+                SWDescribe(navBar), SWDescribe(target), p.x, p.y,
+                navBar.userInteractionEnabled ? "(溢出)" : "(noUI)"]);
+    }
+    return target;
+}
+
 static void SWStartSweeper(void) {
     __block int ticks = 0;
     [NSTimer scheduledTimerWithTimeInterval:1.5 repeats:YES block:^(NSTimer *timer) {
@@ -504,6 +564,19 @@ __attribute__((constructor)) static void SileoFixInit(void) {
             MSHookMessageEx(sb, @selector(didMoveToWindow),
                             (IMP)&sw_hook_sb_didMoveToWindow, (IMP *)&sw_orig_sb_didMoveToWindow);
         }
+        // 导航栏自己的 hitTest:withEvent: 是新增的一站（原 IMP = UIView 那份）。
+        Class navBarCls = objc_getClass("UINavigationBar");
+        SEL htSel = @selector(hitTest:withEvent:);
+        Method htMethod = navBarCls ? class_getInstanceMethod(navBarCls, htSel) : NULL;
+        if (htMethod) {
+            sw_orig_navbar_hitTest = (UIView *(*)(id, SEL, CGPoint, UIEvent *))method_getImplementation(htMethod);
+            if (!class_addMethod(navBarCls, htSel, (IMP)&sw_hook_navbar_hitTest,
+                                 method_getTypeEncoding(htMethod))) {
+                class_replaceMethod(navBarCls, htSel, (IMP)&sw_hook_navbar_hitTest,
+                                    method_getTypeEncoding(htMethod));
+            }
+        }
+
         Class win = objc_getClass("UIWindow");
         if (win && SWClassDeclares(win, @selector(sendEvent:))) {
             MSHookMessageEx(win, @selector(sendEvent:),

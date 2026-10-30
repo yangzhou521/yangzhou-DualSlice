@@ -123,7 +123,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (sileofix-v1.0.3)
+    name: Release (sileofix-v1.0.4)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -139,11 +139,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: sileofix-v1.0.3
-          name: SileoFix v1.0.3
+          tag_name: sileofix-v1.0.4
+          name: SileoFix v1.0.4
           body: |
             修 **SileoWallpaper** 壁纸插件导致的 Sileo 输入框失效：任意软件源页的
-            「搜索软件包」点了没反应、键盘不弹、打不了字。
+            「搜索软件包」点了没反应、键盘不弹、打不了字，左边「所有分类」也点不动。
+
+            v1.0.4 是真正的修复。v1.0.3 的现场日志把病灶钉死在导航栏上：源内页与
+            软件源页的 `UINavigationBar` 被设成 `userInteractionEnabled = NO`
+            （日志里的 `(noUI)`），而搜索栏与「所有分类」按钮都挂在它上面，于是整片
+            变成死区；导航栏只有 44 高时，搜索栏溢出的部分连 `pointInside` 都过不去。
+            同一时刻「已安装」页的导航栏是可交互的，所以那里一直点得动。本版给
+            `UINavigationBar` 加一条 `hitTest:withEvent:` 旁路：点在它自己的
+            `UISearchBar` / `UIControl` 上就接管，别处照旧穿透，壁纸与列表行为不变。
 
             v1.0.3 是取证版：v1.0.2 的日志证明源内页搜索栏的中心点 hitTest 命中的
             就是 `UISearchBarTextField` 自己，所以「装饰盖板吃触摸」不是病因。本版
@@ -176,4 +184,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/sileofix-v1.0.3/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/sileofix-v1.0.4/$(basename "$DEB")"
