@@ -1,3 +1,7 @@
+> **已废弃（2026-10-31 05:5x）**：黑板 board.tsv、看护 fleet-watchdog、唤醒队列 wake-needed.tsv、
+> 心跳环形互跳整套已删除，跨对话同步只走 `apelin_conversation_send` + `scripts/fleet-live.sh`。
+> 本文只作反面教材保留。
+
 # 案例：车队看护把「已结束的对话」当成睡死，反复唤醒（误报诊断）
 
 时间：2026-10-31 03:2x　诊断人：ba1a3a02　关联：fleet 看护脚本 `fleet/fleet-watchdog.sh`、`fleet/fleet.sh`

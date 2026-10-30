@@ -4,9 +4,9 @@
 # 建立于 2026-10-31（ba1a3a02 整理）。改这里之前先看 docs/ 与 AGENTS.md。
 # ---------------------------------------------------------------------------
 
-# ---- 协作黑板：运行时快照（由 scripts/fleet.sh snapshot 生成）---------------
-# 这三个**有意**继续版本化：技能 fleet-shared-board 写明快照是「方便上云和换机时看见」。
-# （2026-10-31 02:2x：曾尝试摘掉，发现与设计意图冲突，已回滚并与 f8fbdbd5 对接后再定。）
+# ---- 已废弃：协作黑板（2026-10-31 05:5x 整套删除，别再建）-------------------
+# board.tsv / fleet.sh / fleet-watchdog / wake-needed.tsv / coordinator.txt 全部作废，
+# 跨对话同步只走 apelin_conversation_send + scripts/fleet-live.sh（见 AGENTS.md）。
 
 # ---- 一过性探针脚本与素材 ------------------------------------------------
 # 取证用的 icli probe JS（probe*.js）用完即弃；结论请写进 docs/cases/ 或记忆。
