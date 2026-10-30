@@ -1,6 +1,6 @@
 ---
 name: injected-tweak-restart-app
-description: 注入型插件（tweak）装好或改完后先别注销桌面：把目标 App 后台划掉再打开（或 icli app kill + app launch）就完成注入立即生效；只有插件本身注入 SpringBoard 时才需要注销，且注销要走通知+5秒+对话协调。绝不为「等注销」挂起任务。任何工程、任何对话都适用。
+description: 注入型插件（tweak）装好或改完后先别注销桌面：把目标 App 后台划掉再打开（或 sh scripts/device.sh kill + launch <bid>，不弹批准卡）就完成注入立即生效；只有插件本身注入 SpringBoard 时才需要注销，且注销要走通知+5秒+对话协调。绝不为「等注销」挂起任务。任何工程、任何对话都适用。
 ---
 
 # 注入型插件：灭掉 App 重开就生效，不必注销桌面
@@ -25,15 +25,15 @@ description: 注入型插件（tweak）装好或改完后先别注销桌面：�
 
 | 目标进程 | 怎么生效 | 注销参与吗 |
 | --- | --- | --- |
-| 某个 App（Sileo、微信、备忘录、设置面板…） | **立刻** `icli app kill <bid> --force` + `icli app launch <bid>`，当场读诊断 | **完全不参与** |
+| 某个 App（Sileo、微信、备忘录、设置面板…） | **立刻** `sh scripts/device.sh kill <bid>` + `sh scripts/device.sh launch <bid>`（或上划重开），当场读诊断 | **完全不参与** |
 | SpringBoard 本身（桌面图标、灵动岛胶囊 HUD、控制中心…） | 只能注销（SpringBoard 没有「划掉后台」这个东西） | 走协调 + 通知 + 5 秒 |
 
 判断做完再动手：**App 类当场验；SpringBoard 类才排队注销**。
 
 ## 实例：SileoWallpaper 0.1.9（正面案例，2026-10-30 23:1x）
 
-`com.sileowallpaper.tweak` 0.1.9（已并入 SileoFix）装好后**没有注销**：`icli app kill com.sileo --force`
-→ `icli app launch com.sileo` → 读 SileoFix 日志首行 `loaded v0.1.9` + 内页搜索框可点、键盘弹出 →
+`com.sileowallpaper.tweak` 0.1.9（已并入 SileoFix）装好后**没有注销**：`sh scripts/device.sh kill org.coolstar.SileoStore`
+→ `sh scripts/device.sh launch org.coolstar.SileoStore` → 读 SileoFix 日志首行 `loaded v0.1.9` + 内页搜索框可点、键盘弹出 →
 用户 23:18 亲口确认「正常了」。全过程几十秒，屏幕没黑、没打扰任何对话。**这就是这类插件的标准验收流程。**
 
 ## 反面案例：同一时段仍为两个 SpringBoard 插件排了一次注销

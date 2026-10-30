@@ -59,9 +59,26 @@ fi
 ts=$(date '+%H:%M')
 LOG="$FLEET_DIR/watchdog.log"
 stamp=$(date '+%Y-%m-%d %H:%M:%S')
+WAKE_FILE="$FLEET_DIR/wake-needed.tsv"
 
-# 有 stalled（应该干活却停了）且活线 ≤ 1 → 告警
+# 清空上次的唤醒清单（每次运行重建）
+: > "$WAKE_FILE"
+
+# 有 stalled（应该干活却停了）→ 写唤醒清单 + 按严重程度告警
 if [ -n "$STALLED" ]; then
+  # 写唤醒清单：每行 <agent>\t<project>\t<task>\t<step>\t<minutes>\t<session_id_hint>
+  # 协调群下次收到消息时读这个文件批量唤醒
+  while IFS="$TAB" read -r ag proj st tk sp dev upd; do
+    [ -n "${ag:-}" ] || continue
+    case "$st" in
+      done|idle|handoff|waiting-user|waiting-approval) continue ;;
+    esac
+    age_min=$(( (NOW - ${upd:-0}) / 60 ))
+    if [ "$age_min" -ge "$THRESHOLD" ]; then
+      printf '%s\t%s\t%s\t%s\t%sm\n' "$ag" "${proj:-?}" "${tk:-?}" "${sp:-?}" "$age_min" >> "$WAKE_FILE"
+    fi
+  done < "$BOARD"
+
   if [ "$ALIVE" -eq 0 ]; then
     # 全员停摆
     printf '%s|8|!⚠全队停摆 %s\n' "$NOW" "$ts" > "$HUD"
@@ -72,6 +89,10 @@ if [ -n "$STALLED" ]; then
     printf '%s|8|!⚠只剩一条活线 %s\n' "$NOW" "$ts" > "$HUD"
     printf '%s THIN alive=1/%d inactive=%d stalled=%s\n' \
       "$stamp" "$TOTAL" "$INACTIVE" "$STALLED" >> "$LOG"
+  else
+    # 有个体睡死但还有 ≥2 条活线：写唤醒清单让协调群处理，不弹 HUD（避免打扰）
+    printf '%s STALLED alive=%d/%d inactive=%d stalled=%s (wake-needed.tsv written)\n' \
+      "$stamp" "$ALIVE" "$TOTAL" "$INACTIVE" "$STALLED" >> "$LOG"
   fi
 fi
 
