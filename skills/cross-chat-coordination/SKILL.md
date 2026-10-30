@@ -545,6 +545,35 @@ Apelin 后台服务重启后，先前「running 卡死」的 6 条全部落成 `
 2. 回合结束前：`apelin_conversation_list`，对 `state=open` 且 stale ≥15 分钟的队友发一句「【fleet-wake】…」
 3. 再把环上的棒传给下一家（§十九）
 
+### 第四种叫不醒：模型线没额度（2026-10-31 实测，最隐蔽）
+
+`apelin_conversation_send` 返回 `done=sent`、`state` 也是 `open`，但对方**什么都没干** ——
+不是没叫醒，是**模型跑不动**。判据只看会话事件流尾部：
+
+```sh
+tail -n 8 ~/Documents/wiki.qaq.apelin/sessions/<sid>/events.jsonl
+```
+
+- 尾部 `{"finished":{"reason":"failed"}}` 且带 `"code":14018` / `Credits exhausted`（codebuddy.ai）= 这条线**额度耗尽**
+- 尾部大量 `{"reconnecting":{}}`（一晚上百次）= 这条线在反复重连，同样跑不动
+- 真在干活的样子：`mtime` 每秒在动 + `"tokens":N` 递增 + 零 error
+
+**修法（本机实测，改完立即生效）**：
+
+```sh
+cp session.json session.json.bak-model
+sed -i 's/"model":"[^"]*"/"model":"deepseek-flash"/' session.json
+```
+
+Apelin 每回合重读 `session.json`，不会被内存写回。默认模型在 root 侧偏好（`Settings/` 下只有 `git.json`），
+agent 读不到也改不了，**只能按会话改文件**。
+
+**必须逐个发、别群发**：同时唤醒会撞上游限流（`retry in 59s`），挂了就等 60 秒再发一条最小探活
+（「只回一句『收到，我在』，不要调任何工具」）。
+
+**别拿「发过消息」当叫醒成功**：`done=sent` 只证明消息进了队列。叫醒成功的判据是
+`mtime` 在动 + `tokens` 在涨；三条都不满足就该怀疑额度，而不是继续发消息。
+
 ### 与环 / 看护的关系
 
 - **环是第一道**：环上的对话互相传棒，不断就不睡（**自跳做不到**：Apelin 拒绝对话给自己发消息）
