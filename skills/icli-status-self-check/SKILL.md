@@ -28,34 +28,14 @@ description: 用户 2026-10-30 16:30 授权「icli 状态以后你自己查，�
   （本机没有 curl/python3，用 `apelin_web_fetch` 或 `icli probe`+`NSData`）。
 - **本机环境**：路径、jbroot 哈希、可用工具、磁盘、偏好域内容——先查再说话，不凭记忆断言。
 
-## 零、免批准卡片：日常操作用 `scripts/device.sh`，别用 icli（2026-10-31）
-
-用户 2026-10-31 01:34 原话：「我每个对话框内都要点批准！不点它们就不继续工作了！」
-
-- 卡片来自 Apelin 设置里的「使用屏幕前先询问」（`asksBeforeScreen`）。它开着时，
-  `apelin_screen_read_tree`、`apelin_screen_interact` 与**每一条 icli 命令**都弹一张批准卡，
-  权限模式 Full 也照弹；开关在 root 侧宿主偏好里，mobile 读不到，**只能用户自己在设置里关**。
-- 在它开着期间，能用系统命令做的就别用 icli。本机等价命令（已封装成 `scripts/device.sh`）：
-
-  | 要做的事 | 不弹卡 | 只有 icli 能做（弹一张卡） |
-  | --- | --- | --- |
-  | 读偏好 / 读诊断 | `sh scripts/device.sh read <域> [键]`（Cephei 版 `defaults read`，走 cfprefsd，活值） | `icli prefs read` |
-  | 写偏好 / 清键（回滚） | `device.sh write <域> <键> <值>` / `device.sh clear <域> <键>`（写空串＝未设置） | `icli prefs write/delete` |
-  | 列进程 / 找 pid | `launchctl list`（`UIKitApplication:<bid>[…]` 行首即 pid） | `icli app list` |
-  | 杀 App / 起 App | `device.sh kill <bid>`（`kill -9`）/ `device.sh launch <bid>`（`uiopen --bundleid`） | `icli app kill --force` / `app launch` |
-  | 注销桌面 | `sbreload`（`scripts/respring-guard.sh` 已用它） | `icli sb respring` |
-  | 前台 App / 界面树 / 点 / 打字 / 截图 | —（无替代） | `icli app frontmost` / `ui tree` / `ui tap` / `input` / `screen shot` |
-
-- 只有 icli 能做的那几样，**合并成一次问清**，别一句一停；截图仍要先取得用户当次同意。
-
 ## 全权限不等于免仪式（不变的三条）
 
-1. **装包**（`irisin-cli install`）、**注销**（`sbreload`；icli 写法 `icli sb respring` 会多弹一张卡）、
-   **重启目标进程**（`sh scripts/device.sh kill <bid>` + `launch <bid>`，后备 `icli app kill … --force`）之前：
-   先 `apelin_notification_send`（短标题＋一两句：装了什么 / 为什么注销 / 下一步），聊天正文写明
-   「5 秒后执行」，再 `sh scripts/respring-guard.sh 5 <标签>` 真等 5 秒，然后才动手。
+1. **装包**（`irisin-cli install`）、**注销**（`icli sb respring`）、**重启目标进程**
+   （`icli app kill … --force`）之前：先 `apelin_notification_send`（短标题＋一两句：装了什么 /
+   为什么注销 / 下一步），聊天正文写明「5 秒后执行」，再 `sh scripts/respring-guard.sh 5 <标签>`
+   真等 5 秒，然后才动手。
 2. **离开 Apelin 取证**（桌面 / 插件设置内 / 别的 App）单次硬上限 60 秒，目标 15~30 秒，
-   出去前一句预告、回来一句交代秒数，`trap` 里强制 `uiopen --bundleid wiki.qaq.apelin`。
+   出去前一句预告、回来一句交代秒数，`trap` 里强制 `icli app launch wiki.qaq.apelin`。
 3. **截图**每次都要用户当次明确同意（会连他屏幕上的其他内容一起截走）。
 
 ## 边界

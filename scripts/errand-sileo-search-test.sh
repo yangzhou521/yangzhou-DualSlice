@@ -11,9 +11,9 @@ LOG=/var/mobile/Library/Caches/sileofix.log
 START=$(date +%s)
 
 back() {
-  icli app launch "$APELIN" >/dev/null 2>&1
+  uiopen --bundleid "$APELIN" >/dev/null 2>&1
   sleep 2
-  F=$(icli app frontmost --human 2>&1 | head -2)
+  F=$(icli app frontmost --human 2>&1 | head -2)   # 前台只有 icli 能问（弹一张批准卡）
   END=$(date +%s)
   echo "—— 回到 Apelin: $F （外出 $((END - START)) 秒）"
 }
@@ -25,7 +25,7 @@ show() { # show <标签> <grep 正则>
 }
 
 echo "== 1. 拉起 Sileo =="
-icli app launch "$SILEO" >/dev/null 2>&1
+uiopen --bundleid "$SILEO" >/dev/null 2>&1
 sleep 4
 echo "frontmost: $(icli app frontmost --human 2>&1 | head -2)"
 
