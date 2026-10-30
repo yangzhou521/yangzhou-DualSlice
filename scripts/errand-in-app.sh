@@ -8,26 +8,28 @@
 # 而不是写在最后一行。
 #
 # 用法：
-#   sh scripts/errand-in-app.sh <bundle-id> [最长时间秒，默认 60]
-#   sh scripts/errand-in-app.sh com.apple.Preferences 45     # 进设置看一眼再回来
+#   sh scripts/errand-in-app.sh <bundle-id> [最长时间秒，默认 60] [要点的元素文字]
+#   sh scripts/errand-in-app.sh com.apple.Preferences 60                    # 只看一眼
+#   sh scripts/errand-in-app.sh com.apple.Preferences 60 "主题美化 +"        # 点进面板再看
 #
-# 输出：
-#   - 目标 App 的截图路径（默认落在 /tmp，需要给用户看时再 cp 进工程）
-#   - 目标 App 的界面结构（icli screen describe）
-#   - 最后一行永远是回程结果：`回到 Apelin: <前台 bundle-id>`
+# 输出（一次调用就把证据带回来）：
+#   - 目标 App 的截图路径（落在 /tmp，要给你看时再 cp 进工程用 file_show）
+#   - `icli ui tree` 的界面元素树（这是本机唯一可用的读树手段：
+#     `icli screen describe` 与 `icli screen ocr` 在这台机器上恒失败）
+#   - 最后一行永远是回程结果：`回到 Apelin: <前台 bundle-id>（外出 N 秒）`
 #
-# 注意：本机 icli 在 PATH 上；Apelin 自身的界面**不能**被遥距点击（宿主一律拒绝），
-# 所以本脚本只负责「进入目标 App」和「必定回程」，目标 App 里的具体点击用
-# `icli screen tap <x> <y>` 自己补。
+# 为什么点元素而不是点坐标：`icli ui tap "<文字>"` 按 label/identifier 匹配，
+# 不受列表滚动位置影响（坐标点击已经跑偏过一次）。
 
 set -u
 
 TARGET=${1:-}
 LIMIT=${2:-60}
+LABEL=${3:-}
 APELIN_BID=wiki.qaq.apelin
 
 if [ -z "$TARGET" ]; then
-    echo "用法: sh scripts/errand-in-app.sh <bundle-id> [最长时间秒]" >&2
+    echo "用法: sh scripts/errand-in-app.sh <bundle-id> [最长时间秒] [要点的元素文字]" >&2
     exit 2
 fi
 
@@ -57,7 +59,7 @@ back_to_apelin() {
     fi
     echo "回到 Apelin: ${now:-未知}（外出 $(( $(date +%s) - START )) 秒）"
     if [ "${now:-}" != "$APELIN_BID" ]; then
-        echo "警告: 前台不是 Apelin —— 用户可能看不到聊天，请手动切回" >&2
+        echo "警告: 前台不是 Apelin —— 用户看不到聊天，请手动切回" >&2
     fi
 }
 trap 'back_to_apelin' EXIT INT TERM
@@ -74,21 +76,26 @@ if over_limit; then
     exit 0
 fi
 
-if icli screen shot --output "$SHOT" >/dev/null 2>&1 && [ -s "$SHOT" ]; then
-    echo "截图: $SHOT"
-else
-    echo "截图失败（不影响回程）"
+if [ -n "$LABEL" ]; then
+    if icli ui wait "$LABEL" --timeout 5 >/dev/null 2>&1 && \
+       icli ui tap "$LABEL" >/dev/null 2>&1; then
+        sleep 2
+    else
+        echo "点击「$LABEL」失败（元素没出现或不可点，不影响回程）"
+    fi
 fi
 
 if ! over_limit; then
-    echo "--- 界面结构 ---"
-    # 本机实测 icli screen describe 恒返回 "screen capture failed"（截图可用），
-    # 所以它只是尽力而为：失败就提示改用 Apelin 的界面树工具，别让它挡住回程。
-    TREE=$(icli screen describe --human 2>&1 | head -40)
-    case "$TREE" in
-        *error*|*failed*) echo "icli screen describe 在本机不可用；界面结构请用 apelin_screen_read_tree 读，或看上面那张截图" ;;
-        *) printf '%s\n' "$TREE" ;;
-    esac
+    if icli screen shot --output "$SHOT" >/dev/null 2>&1 && [ -s "$SHOT" ]; then
+        echo "截图: $SHOT"
+    else
+        echo "截图失败（不影响回程）"
+    fi
+fi
+
+if ! over_limit; then
+    echo "--- 界面元素树 ---"
+    icli ui tree --human --max-elements 120 2>&1 | sed -n '1,90p'
 fi
 
 exit 0
