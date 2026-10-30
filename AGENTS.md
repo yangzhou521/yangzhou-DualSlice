@@ -290,6 +290,17 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   - 每个工程干完一轮：`sh "$HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh" snapshot` 把黑板快照进工程
     `fleet/board.tsv`（便于上云与换机查看），再走「硬性规定 + 技能包 + 记忆」三样同步。
   - 技能：`fleet-shared-board`（本机技能目录与仓库 `skills/` 各一份）。
+- **Fleet 协调群（群聊对话）**（用户 2026-10-31 01:56 原话：「给所有对话机器人开一个群聊一样的对话。
+  只用来专门处理同步刷新分配任务和汇报工作进展！以后每当有新任务自动建群聊对话？如用群聊对话则不用新建！」
+  **所有工程、所有对话、永久适用**）：
+  - 一个专门的协调对话，所有机器人把进展、任务请求发到这里；协调员自动转发给所有在跑的对话、跑看护 care、
+    唤醒睡死的、替卡审批的做 relay 只读。**黑板是状态文件（只写不打扰），群聊是实时消息通道（即时转发），两者互补。**
+  - **找协调群**：读 `$HOME/Documents/wiki.qaq.apelin/fleet/coordinator.txt` 拿 session ID →
+    `apelin_conversation_read` 看是否活着 → 活着就 `apelin_conversation_send` 发进展；不存在或 ended 就建新的。
+  - **自动创建**：新对话开工先查 `coordinator.txt`；不存在或 ended → `apelin_conversation_create` 建新的
+    （prompt 模板见技能 `cross-chat-coordination` §十六），把 session ID 写回文件。**已有活的就不建。**
+  - 协调员红线：不改源码/不装包/不注销/不杀进程/不 stop 别人/不改别人工程文件；只做转发、唤醒、relay 只读、分配、看护。
+  - 技能：`cross-chat-coordination` §十六、`fleet-shared-board`（本机技能目录与仓库 `skills/` 各一份）。
 - **看护与接管：一两个机器人睡死，活也得有人接着干**（用户 2026-10-31 00:14 原话：「保持、保证一二个机器人
   睡死不工作的前提下还有别的机器人能同步接收它接下来的工作！不至于任何机器都睡死过去！都不工作！智能的
   提高机器人之间共同协调解决用户任务的能力！」**所有工程、所有对话、永久适用**）：

@@ -208,7 +208,6 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
 @implementation TCPThemeChooserController {
     NSArray<NSString *> *_rows;             // 主题目录，一行一个（顶部「系统原生外观」那行已删）
     NSMutableArray<NSString *> *_selected;  // 勾选顺序 = 叠加顺序：靠后的主题覆盖靠前的
-    NSMutableDictionary<NSString *, NSDictionary *> *_materials;   // 主题目录 → 素材清点
 }
 
 - (instancetype)initWithStyle:(UITableViewStyle)style {
@@ -268,35 +267,7 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     // 只列主题本身。「系统原生外观」那一行已删（用户 2026-10-30 17:03）：
     // 想回滚就把开着的层一层层关掉（拨开关、点这一行都行），空链就是系统原生外观。
     _rows = [store availableThemePaths] ?: @[];
-    [self tcpReloadMaterials];             // 接着清点每个主题自己的素材（浅扫，见 store）
     [self.tableView reloadData];
-}
-
-// 每个主题自己带了哪几类素材：进页面时每层扫一次，之后查表 —— 只给主题行的副标题用
-//（分类开关已删，不再需要按类别汇总）。
-- (void)tcpReloadMaterials {
-    TCPThemeStore *store = [TCPThemeStore shared];
-    NSMutableDictionary<NSString *, NSDictionary *> *materials = [NSMutableDictionary dictionary];
-    for (NSString *path in _rows) {
-        NSDictionary *summary = [store materialSummaryForThemePath:path];
-        if (summary.count > 0) materials[path] = summary;
-    }
-    _materials = materials;
-}
-
-// 主题行的素材标签：只列真有的那几类，一件都没有就说清楚
-- (NSString *)tcpMaterialTagsForPath:(NSString *)path {
-    NSDictionary *summary = _materials[path];
-    NSMutableArray<NSString *> *tags = [NSMutableArray array];
-    NSUInteger icons = [summary[TCPMaterialIcons] unsignedIntegerValue];
-    NSUInteger folders = [summary[TCPMaterialFolders] unsignedIntegerValue];
-    NSUInteger badges = [summary[TCPMaterialBadges] unsignedIntegerValue];
-    NSUInteger files = [summary[TCPMaterialFiles] unsignedIntegerValue];
-    if (icons > 0) [tags addObject:[NSString stringWithFormat:@"图标 %lu", (unsigned long)icons]];
-    if (folders > 0) [tags addObject:@"文件夹底板"];
-    if (badges > 0) [tags addObject:[NSString stringWithFormat:@"角标 %lu", (unsigned long)badges]];
-    if (files > 0) [tags addObject:[NSString stringWithFormat:@"界面图 %lu", (unsigned long)files]];
-    return tags.count > 0 ? [tags componentsJoinedByString:@" · "] : @"里面没有可用素材";
 }
 
 // 一行一个主题目录（「系统原生外观」那行删掉后不再需要行号偏移）。
@@ -361,9 +332,6 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     NSString *name = path.lastPathComponent;
     if ([name hasSuffix:@".theme"]) name = [name stringByDeletingPathExtension];
     cell.textLabel.text = name;
-    // 副标题只说素材标签：用户 2026-10-30 反馈不要「第 N 层」前缀（重复且多余），
-    // 主题根来源也不写（面板扫到的根对用户没意义），只留它自己带哪些素材。
-    cell.detailTextLabel.text = [self tcpMaterialTagsForPath:path];
     // 右端：系统开关，开 = 这一层生效（与设置里「启用插件」那颗开关同款）
     NSInteger layer = [self tcpLayerForPath:path];
     cell.tcpSwitch.enabled = YES;

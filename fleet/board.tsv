@@ -1,3 +1,5 @@
-deadbeef	AxsTweakKit	assigned	查 CI 注解	只读，几分钟	none	1793375618
-f8fbdbd5	yangzhouDualSlice	working	冒烟完毕	继续写技能	none	1793375620
-ba1a3a02	yangzhouDualSlice	working	SileoWallpaper 0.1.9 复盘核实：合并包已装、源码/Release 已在 main	无待办；本机领先仓库的 skills/ 与 memory 由 f8fbdbd5 收尾，我不动	none	1793375873
+f8fbdbd5	yangzhouDualSlice	working	fleet.sh v6 + 冲突即停规则补充：补 AGENTS/技能/记忆 → sync-all → commit/push	边界已定：fleet.sh/AGENTS/skills/memory 归我；e0113233 查 ThemeCorePlus screen{ours=0}	none	1793380380
+5781b4c7	yangzhouDualSlice	working	CountdownHUD 1.3.0 云编译中（run#8，HEAD edb6c5f2）	next=出包后装包+注销验证胶囊真渲染（scene=UIWindowScene）；动设备前按规矩先协调再通知+5秒	none	1793381320
+0234b652	?	working	?	继续	none	1793381958
+ba1a3a02	yangzhouDualSlice	working	fleet 看护系统：watchdog launchd 已装+验证通过(launchctl loaded exit=0)+glob 修复已提交(1d62de67)	next=等 f8fbdbd5 补 AGENTS/skill watchdog 文档；用户如需推送再说	none	1793381970
+e0113233	yangzhouDualSlice	working	ThemeCorePlus screen{ours=0} 根因分析完成，文档 docs/cases/themecoreplus-screen-ours-zero.md	等用户确认修复方向后改源码（方案A: hook setImage: 最后一公里）	progress	1793382071

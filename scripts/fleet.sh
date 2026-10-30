@@ -87,6 +87,7 @@
 #     sh $HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh start  [agent]      # 开工一条命令：收件箱+全队+看护报告
 #     sh $HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh sweep  [分钟，默认 20]
 #     sh $HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh care   [分钟，默认 20]  # 看护报告：谁睡死了、该谁接
+#     sh $HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh relay                # 审批接力：谁卡在 icli 审批上、该谁替做
 #     sh $HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh wakeall [分钟，默认 20] # 只列「照抄即发」的唤醒整行
 #     sh $HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh brief  <短id>          # 接手包：它手上是什么 + 唤醒/接管命令
 #     sh $HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh guard  [agent] [分钟]   # 收尾自检：看护报告 + 收尾三件事
@@ -95,8 +96,16 @@
 #     sh $HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh roster [短id] [全id] [工程] [备注]
 #     sh $HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh wake   <短id|全id> [from]
 #
+# v7（2026-10-31 01:2x，用户要求「卡在审批上的对话别空等，在线对话替它做」）新增：
+#   * waiting-approval 状态：机器人调 icli 卡在 waitingForApproval 时，post 这个状态 +
+#     在 step 里写 needs-icli:<需要什么>。区别于 waiting-user（等用户决策）：这是卡在工具审批上，
+#     其他在线对话（用户在场、能批准 icli）可以替做。
+#   * relay 命令：列出所有 waiting-approval 的对话，打印「照抄即发」的 apelin_conversation_send 行 ——
+#     在线对话替它做需要 icli 的部分（查 CI、下载 deb、读诊断），结果回传，让卡住的对话继续做只读分析。
+#     care 报告 ② 也区分两种：waiting-user 提醒用户，waiting-approval 建议在线对话 relay。
+#
 # agent：对话 id 前 8 位（apelin_conversation_list 里能看到），或 FLEET_AGENT 环境变量。
-# 状态：working | assigned | blocked | waiting-user | idle | done | handoff（已被别人接管）
+# 状态：working | assigned | blocked | waiting-user | waiting-approval | idle | done | handoff（已被别人接管）
 # 动作：none | respring | install | kill | screen
 #
 # 每个 agent 只有一行：再 post 一次就覆盖自己那一行，所以不打扰别人、也不怕写乱。
@@ -121,9 +130,9 @@ usage() {
 fleet.sh —— 黑板 + 收件箱 + 唤醒器（本机所有对话共用）
   状态类  list | busy | post | hold | free | done | prune | snapshot
   派活类  assign | claim | add | inbox | take | finish | want
-  唤醒类  start | sweep | care | wakeall | brief | decision | guard | beat | takeover | roster | wake
+  唤醒类  start | sweep | care | relay | wakeall | brief | decision | guard | beat | takeover | roster | wake
   派活类 还有 handout（一键派给最合适的空闲者）
-  看护类  care | brief | wakeall | guard | beat | takeover（防睡死：谁睡死了、谁接、怎么接）
+  看护类  care | relay | brief | wakeall | guard | beat | takeover（防睡死：谁睡死了、谁接、怎么接）
   调度类  members | plan | rebalance | refresh | intake | roster-drop
           （成员实时增减 / 统一调度重排 / 叫不醒就交接 / 新机器人接入即派活 / 资源刷新）
   进展类  progress <一句话>（实时刷新自己那行的进展与时间；别的对话 list 立刻看见你到哪了）
@@ -563,7 +572,7 @@ cmd_decision() {
       continue
     fi
     case "$state" in
-      done|idle|handoff|waiting-user) continue ;;
+      done|idle|handoff|waiting-user|waiting-approval) continue ;;
     esac
     age=$(( (nowt - ${updated:-0}) / 60 ))
     if [ "$age" -lt "$lim" ]; then
@@ -682,10 +691,10 @@ cmd_sweep() {
   if [ "$idle" -eq 0 ]; then
     echo '  （没人声明空闲；用 want <agent> <工程> [能力] 声明）'
   fi
-  echo '--- 等用户点头的：'
-  case "$(awk -F"$TAB" '$3 == "waiting-user" { print $1 }' "$BOARD" 2>/dev/null)" in
+  echo '--- 等用户点头 / 卡在审批：'
+  case "$(awk -F"$TAB" '$3 == "waiting-user" || $3 == "waiting-approval" { print $1 }' "$BOARD" 2>/dev/null)" in
     '') echo '  （无）' ;;
-    *) awk -F"$TAB" '$3 == "waiting-user" { printf "  · %s：%s\n", $1, $4 }' "$BOARD" ;;
+    *) awk -F"$TAB" '$3 == "waiting-user" || $3 == "waiting-approval" { printf "  · %s（%s）：%s\n", $1, $3, $4 }' "$BOARD" ;;
   esac
   echo '--- 设备占用：'
   cmd_busy
@@ -783,6 +792,37 @@ cmd_takeover() {
   fi
 }
 
+# relay：审批接力 —— 列出卡在 waiting-approval 的对话，打印「照抄即发」的 relay 指令。
+# 当 Ask Before Using the Screen 开着时，机器人调 icli 会卡在 waitingForApproval；
+# 其他在线对话（用户在场、能批准）替它做需要 icli 的部分，结果回传，让卡住的对话继续做只读分析。
+cmd_relay() {
+  me=$(agent_of "")
+  nowt=$(now)
+  printf '=== 审批接力（%s，看护人 %s）===\n' "$(date '+%H:%M:%S')" "$me"
+  n=0
+  if [ -s "$BOARD" ]; then
+    while IFS="$TAB" read -r agent project state task step device updated; do
+      [ -n "${agent:-}" ] || continue
+      [ "$state" = "waiting-approval" ] || continue
+      [ "$agent" = "$me" ] && continue
+      age=$(( (nowt - ${updated:-0}) / 60 ))
+      printf '  · %s（%s，%sm）卡在 icli 审批：%s\n' "$agent" "$project" "$age" "${step:-?}"
+      full=$(awk -F"$TAB" -v k="$agent" '$1 == k { print $3; exit }' "$ROSTER") || full=""
+      if [ -n "${full:-}" ]; then
+        printf '    → apelin_conversation_send(session_id: "%s", text: "【relay】我替你做了 icli 部分：<结果>。你继续做不需要审批的分析。收到后 sh \\"$F\\" free %s %s \\"%s\\" \\"继续分析\\"")\n' \
+          "$full" "$agent" "$project" "$task"
+      else
+        printf '    → 先 roster %s <全id> 再 relay\n' "$agent"
+      fi
+      n=$((n + 1))
+    done < "$BOARD"
+  fi
+  if [ "$n" -eq 0 ]; then
+    echo '  （没有卡在审批上的对话）'
+  fi
+  echo '--- 规矩：relay 只替做需要 icli 的查询/下载/读诊断；改源码/装包/注销/杀进程不替做。'
+}
+
 # 看护报告：谁睡死了、该谁接、谁在等用户、谁空闲、设备谁占着、全队还有几条活线。
 cmd_care() {
   limit=${1:-20}
@@ -807,7 +847,7 @@ cmd_care() {
     while IFS="$TAB" read -r agent project state task step device updated; do
       [ -n "${agent:-}" ] || continue
       case "$state" in
-        done|idle|handoff|waiting-user) continue ;;
+        done|idle|handoff|waiting-user|waiting-approval) continue ;;
       esac
       age=$(( (nowt - ${updated:-0}) / 60 ))
       [ "$age" -lt "$limit" ] && continue
@@ -823,13 +863,14 @@ cmd_care() {
   fi
   if [ "$stale" -eq 0 ]; then echo '  （没有：每个活着的 agent 都还在更新）'; fi
 
-  echo '--- ② 等用户点头（这不是睡死，是等审批；看护人负责提醒用户）：'
-  n2=$(awk -F"$TAB" '$3 == "waiting-user" { print $1 }' "$BOARD" 2>/dev/null | wc -l | tr -d ' ')
+  echo '--- ② 等用户点头 / 卡在审批（都不是睡死）：'
+  n2=$(awk -F"$TAB" '$3 == "waiting-user" || $3 == "waiting-approval" { print $1 }' "$BOARD" 2>/dev/null | wc -l | tr -d ' ')
   if [ "${n2:-0}" -eq 0 ]; then
     echo '  （无）'
   else
-    awk -F"$TAB" '$3 == "waiting-user" { printf "  · %s（%s）：%s\n", $1, $6, $4 }' "$BOARD"
-    echo '    → 看护人做：apelin_notification_send 提醒用户 + sh scripts/hud-notify.sh 8 "!等你点一下"'
+    awk -F"$TAB" '$3 == "waiting-user" || $3 == "waiting-approval" { printf "  · %s（%s，%s）：%s\n", $1, $3, $6, $4 }' "$BOARD"
+    echo '    → waiting-user：apelin_notification_send 提醒用户 + sh scripts/hud-notify.sh 8 "!等你点一下"'
+    echo '    → waiting-approval：在线对话替它做需要 icli 的部分（sh "$F" relay 看详情），结果用 apelin_conversation_send 回传'
   fi
 
   echo '--- ③ 空闲 / 可派（直接 assign，别发消息问）：'
@@ -893,7 +934,7 @@ wake_send_line() {
 
 # handout：一条命令把「小任务」派给最合适的空闲者（v4）。
 # 挑人：① 空闲（idle，或 step 里声明了「可接:X」）；② 指定能力时必须声明包含它；
-#       ③ 心跳最新的优先、一样新就挑收件箱最少的；④ done / handoff / waiting-user 一律不派。
+#       ③ 心跳最新的优先、一样新就挑收件箱最少的；④ done / handoff / waiting-user / waiting-approval 一律不派。
 # 一件事分三步做完：投进它的收件箱、把它那行改成 assigned、打印照抄就能发的唤醒指令。
 cmd_handout() {
   want=${1:-any}
@@ -985,8 +1026,9 @@ cmd_brief() {
     handoff)
       echo '  ⚠ 它已被别人接管（handoff）：先 list 看是谁接的，别两头同改一份文件。'
       return 0 ;;
-    waiting-user)
-      echo '  ⚠ 它在等用户点头，不算睡死：别接管，用通知 + 胶囊提醒用户即可。'
+    waiting-user|waiting-approval)
+      echo '  ⚠ 它在等用户点头 / 卡在 icli 审批，不算睡死：waiting-user 用通知提醒用户；'
+      echo '    waiting-approval 在线对话替它做 icli 部分（sh "$F" relay 看详情）。'
       return 0 ;;
     done|idle)
       echo '  ⚠ 它没有在手的长活（done/idle）：有活就直接 assign / handout 给它。'
@@ -1010,7 +1052,7 @@ cmd_wakeall() {
   if [ -s "$BOARD" ]; then
     while IFS="$TAB" read -r agent project state task step device updated; do
       [ -n "${agent:-}" ] || continue
-      case "$state" in done|handoff|idle|waiting-user) continue ;; esac
+      case "$state" in done|handoff|idle|waiting-user|waiting-approval) continue ;; esac
       [ "$agent" = "$me" ] && continue
       age=$(( (nowt - ${updated:-0}) / 60 ))
       [ "$age" -lt "$limit" ] && continue
@@ -1033,7 +1075,7 @@ cmd_wakeall() {
     done < "$ROSTER"
   fi
   if [ "$n" -eq 0 ]; then
-    echo '  （没有要唤醒的：每个人都在更新黑板，或被标了 done/handoff/idle/waiting-user）'
+    echo '  （没有要唤醒的：每个人都在更新黑板，或被标了 done/handoff/idle/waiting-user/waiting-approval）'
   fi
   echo '  发的时候一次最多两条（别把别人信箱刷屏）；发完 60 秒仍无动静就 brief <短id> → takeover。'
 }
@@ -1056,7 +1098,7 @@ cmd_wake_do() {
   if [ -s "$BOARD" ]; then
     while IFS="$TAB" read -r agent project state task step device updated; do
       [ -n "${agent:-}" ] || continue
-      case "$state" in done|handoff|idle|waiting-user) continue ;; esac
+      case "$state" in done|handoff|idle|waiting-user|waiting-approval) continue ;; esac
       [ "$agent" = "$me" ] && continue
       age=$(( (nowt - ${updated:-0}) / 60 ))
       [ "$age" -lt "$limit" ] && continue
@@ -1092,7 +1134,7 @@ cmd_wake_do() {
     done < "$BOARD"
   fi
   if [ "$n" -eq 0 ]; then
-    echo '# （没有需要唤醒的：每个人都在更新黑板，或被标了 done/handoff/idle/waiting-user）'
+    echo '# （没有需要唤醒的：每个人都在更新黑板，或被标了 done/handoff/idle/waiting-user/waiting-approval）'
   else
     printf '\n# ⚠ 以上 %s 条必须立刻调 apelin_conversation_send 真发出去——不能只打印不动手！\n' "$n"
   fi
@@ -1309,7 +1351,7 @@ cmd_rebalance() {
   if [ -s "$BOARD" ]; then
     while IFS="$TAB" read -r agent project state task step device updated; do
       [ -n "${agent:-}" ] || continue
-      case "$state" in done|idle|handoff|waiting-user) continue ;; esac
+      case "$state" in done|idle|handoff|waiting-user|waiting-approval) continue ;; esac
       age=$(( (nowt - ${updated:-0}) / 60 ))
       [ "$age" -lt "$limit" ] && continue
       stale=$((stale + 1))
@@ -1536,6 +1578,7 @@ case "$CMD" in
   plan)     cmd_plan "$@" ;;
   refresh)  cmd_refresh "$@" ;;
   roster-drop) cmd_roster_drop "$@" ;;
+  relay)    cmd_relay "$@" ;;
   care)     cmd_care "$@" ;;
   beat)     cmd_beat "$@" ;;
   takeover) cmd_takeover "$@" ;;
@@ -1544,6 +1587,7 @@ case "$CMD" in
   roster)   cmd_roster "$@" ;;
   wake)     cmd_wake "$@" ;;
   wakeall)  cmd_wakeall "$@" ;;
+  wake-do)  cmd_wake_do "$@" ;;
   guard)    cmd_guard "$@" ;;
   help|-h|--help) usage ;;
   *) echo "fleet: 不认识的命令 '$CMD'（用 help 看用法）" >&2; exit 2 ;;
