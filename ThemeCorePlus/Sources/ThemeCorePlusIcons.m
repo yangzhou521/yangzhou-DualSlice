@@ -416,7 +416,7 @@ static void TCPCensusInspectView(UIView *view, NSUInteger depth) {
     if (contents != nil) {
         sCensusLayerTotal++;
         if (TCPDisplayIsCGImage(contents)) {
-            if ([[TCPThemeStore shared] isRenderedCGImage:(__bridge CGImageRef)contents]) {
+            if ([[TCPThemeStore shared] isRenderedCGImagePointer:(__bridge const void *)contents]) {
                 sCensusLayerOurs++;
             } else {
                 sCensusLayerStock++;
@@ -445,8 +445,17 @@ void TCPRunScreenCensus(void) {
     sCensusSamples = [NSMutableArray array];
 
     NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
-    for (UIWindow *window in [UIApplication sharedApplication].windows) {
-        [windows addObject:window];
+    // 用 windowScene 拿窗口（UIApplication.windows 在 iOS 15+ 已废弃）。
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            [windows addObject:window];
+        }
+    }
+    if (windows.count == 0) {
+        for (UIWindow *window in [UIApplication sharedApplication].windows) {
+            [windows addObject:window];
+        }
     }
     for (UIWindow *window in windows) {
         for (UIView *sub in window.subviews) {

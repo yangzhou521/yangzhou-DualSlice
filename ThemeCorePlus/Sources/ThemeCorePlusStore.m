@@ -972,10 +972,14 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
 
 // 这个 CGImage 是不是我们合成的（屏幕上 layer.contents 里放的就是 CGImage）。
 - (BOOL)isRenderedCGImage:(CGImageRef)cg {
-    if (cg == NULL) return NO;
+    return [self isRenderedCGImagePointer:(const void *)cg];
+}
+
+// 按裸指针判（layer.contents 是 id，直接比指针，不需要桥接）。
+- (BOOL)isRenderedCGImagePointer:(const void *)ptr {
+    if (ptr == NULL) return NO;
     @synchronized (self) {
-        return [self.renderedCGPointers containsObject:
-                [NSValue valueWithPointer:(const void *)cg]];
+        return [self.renderedCGPointers containsObject:[NSValue valueWithPointer:ptr]];
     }
 }
 

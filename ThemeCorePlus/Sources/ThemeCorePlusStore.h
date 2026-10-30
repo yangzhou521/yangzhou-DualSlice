@@ -50,6 +50,8 @@
 - (BOOL)isRenderedImage:(UIImage *)image;
 // 这个 CGImage 是不是本插件合成的（屏幕上 layer.contents 里放的就是 CGImage）。
 - (BOOL)isRenderedCGImage:(CGImageRef)cg;
+// 同一个判断，按裸指针来（layer.contents 在视图树里是 id，直接比指针即可）。
+- (BOOL)isRenderedCGImagePointer:(const void *)ptr;
 
 // —— 查询：角标 / 文件夹底板 / 任意点名素材 ——
 - (UIImage *)badgeBackgroundImageForScale:(CGFloat)scale;
