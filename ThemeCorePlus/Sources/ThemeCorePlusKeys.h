@@ -20,11 +20,8 @@ static NSString * const TCPKeyThemePaths = @"ThemePaths";
 // 最多叠几层：每层都要整目录扫一遍，层数太多拖慢重载，也没法排查是哪层出的问题。
 // 面板勾到第 9 层会直接拒绝并说明，store 侧也按这个数截断（两边同一个常量）。
 static const NSUInteger TCPMaxThemeLayers = 8;
-// 功能独立开关，各自默认开。
-static NSString * const TCPKeyIconsEnabled = @"IconsEnabled";
-static NSString * const TCPKeyFoldersEnabled = @"FoldersEnabled";
-static NSString * const TCPKeyBadgesEnabled = @"BadgesEnabled";
-static NSString * const TCPKeyFilesEnabled = @"FilesEnabled";
+// 分类素材开关已删（用户 2026-10-30 16:59）：IconsEnabled / FoldersEnabled / BadgesEnabled /
+// FilesEnabled 四个键不再使用 —— 四类素材一律全换，没有分类开关，所以键也从这里去掉。
 // 图标圆角遮罩（没有作者遮罩素材时的兜底）。默认关：先保证不动原图。
 static NSString * const TCPKeyIconCornerMask = @"IconCornerMask";
 // 作者素材：主题目录下的相对路径。缺省时按内置候选名去找。

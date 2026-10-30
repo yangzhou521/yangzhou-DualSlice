@@ -35,9 +35,9 @@
 
 改完源码 push 到 `main`：只有 `ThemeCorePlus/**`、`Prefs/**`、`Support/ThemeCorePlus*`、
 `scripts/build-themecoreplus.sh`、工作流自身变动才会触发（paths 过滤），以免白白重建已经验过的包。
-同一次运行里发 Release（静态 tag `themecoreplus-v0.7.0`，每次运行都重建资产，sha256/体积会变）。
+同一次运行里发 Release（静态 tag `themecoreplus-v0.9.2`，每次运行都重建资产，sha256/体积会变）。
 Release 资产地址：
-`https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.7.0/com.yangzhou.themecoreplus_0.7.0_iphoneos-arm64e.deb`
+`https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.9.2/com.yangzhou.themecoreplus_0.9.2_iphoneos-arm64e.deb`
 
 可读的验证信息都写成 check-run annotation（`::notice/::error title=…`）：job 日志要登录才能看，
 公开仓库的 annotations 匿名可读（`/repos/{owner}/{repo}/check-runs/{id}/annotations`）。
@@ -233,6 +233,8 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   0.6.0 的崩溃根因写在提交 `ef781ae1`：`TCPIconImageInfo` 多写 `reserved[5]` 把 4 个 double 的 HFA
   撑成 8 个 → 编译器改成从 x2 取结构体指针，而系统调用方不设 x2 → `tcpIconHook6+0x20` 崩；
   现在结构体与系统一致，并加了 `_Static_assert(sizeof(...)==32)`。
+- **ThemeCorePlus 0.9.2 待装（2026-10-30 17:0x 改）**：面板只剩「主题」——「素材开关」四行删干净、
+  「系统原生外观」那行删掉、主题行副标题带素材清单；四类素材一律全换。
 - 装机用的 0.6.0 包：Release `themecoreplus-v0.6.0` 资产（run 40983356266 编译），
   100720 B，sha256 `beba61e58738a7b268e46f1482ac604d1a048dce7c6df15fe7662d55d61f98b7`。
   **装包不会 reload 已跑的 SpringBoard**，改 dylib 必须重启进程才算数。
@@ -265,6 +267,31 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 - shell 手写叠加链（写数组要用 `--type json`，`--notify` 能让 SpringBoard 立刻重读，不用注销）：
   `icli prefs write com.yangzhou.themecoreplus ThemePaths '["/Library/ThemeCore/角标：透明玻璃","/Library/ThemeCore/液态玻璃.theme"]' --type json --notify com.yangzhou.themecoreplus.preferences-changed`；
   清空用 `icli prefs delete com.yangzhou.themecoreplus ThemePaths`。
+
+### 面板版式与「选择主题」页（用户 2026-10-30 14:37 → 17:03 的定稿）
+
+根页三组（照 ThemeCore 0.5.1 的样子，**不写功能说明**）：
+
+| 组 | 内容 |
+| --- | --- |
+| 通用 | `启用插件`（`TCPKeyEnabled`，默认开） |
+| 主题 | `选择主题`（右侧灰字写当前状态：`系统原生外观` 或 `主题名（N 层）`）＋ `刷新图标` |
+| 底部 | 作者行：`作者：yangzhou · v<版本>` ＋ 一行状态；其下 `运行日志`（`TCP_PANEL_LOG_ENTRY`＝0 时整段消失） |
+
+**「选择主题」页（`TCPThemeChooserController`，纯 UIKit 的 UITableViewController，只有一段）**：
+
+- **只列主题**，一行一个：标题＝主题名，副标题＝`第 N 层 · 图标 84 · 角标 3 · 界面图 7`
+  （没勾时副标题开头写主题所在的根目录名；一类素材都没有就写「里面没有可用素材」）。
+- **勾选 = 叠加**：勾选顺序就是叠加顺序，靠后的盖住靠前的（同一张素材谁在上层用谁的）；
+  再点一次取消这一层；到 `TCPMaxThemeLayers`（8）弹窗明说，不静默丢勾。页脚写着这套语义。
+- **`系统原生外观` 那行已删**（用户 17:03）：全部取消勾选就是系统原生外观，回滚不再占一行，
+  面板里也没有单独的「清空 / 恢复」按钮（`-tcpRestoreNativeAppearance` 只留给别的入口用）。
+- **分类素材开关（`素材开关` 一段四行）已整组删掉**（用户 16:59 / 17:00）：四类素材一律全换；
+  `IconsEnabled / FoldersEnabled / BadgesEnabled / FilesEnabled` 四个键不再读、不再写
+  （`TCPThemeStore` 里 flags 直接全开），老偏好里留着什么都不理会。
+- 历史包袱别踩：这一页原先用 `PSListController` + `PSLinkCell`，进页面就崩（Preferences 给
+  specifier 备元数据那步）；现在是纯 UIKit，并且把 Preferences 塞进来的
+  `specifier / parentController / rootController` 全部实现成空操作。
 
 ### 面板空白：成因与修法（已修，2026-10-30）
 

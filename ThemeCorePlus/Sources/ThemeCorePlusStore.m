@@ -306,13 +306,10 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     BOOL enabled = TCPBoolValue(values, TCPKeyEnabled, YES);
     NSArray<NSString *> *paths = enabled ? [self resolveThemePathsWithValues:values] : @[];
 
-    // 总开关默认开；四个功能开关默认关（用户 2026-10-30 15:33：默认不许全开，必须自己勾）。
-    // 是否真生效 = 「选了主题素材」＋「这个功能开关是开的」，两者缺一不做。
-    NSUInteger flags = 0;
-    if (TCPBoolValue(values, TCPKeyIconsEnabled, NO)) flags |= TCPFeatureIcons;
-    if (TCPBoolValue(values, TCPKeyFoldersEnabled, NO)) flags |= TCPFeatureFolders;
-    if (TCPBoolValue(values, TCPKeyBadgesEnabled, NO)) flags |= TCPFeatureBadges;
-    if (TCPBoolValue(values, TCPKeyFilesEnabled, NO)) flags |= TCPFeatureFiles;
+    // 四类素材一律全换（用户 2026-10-30 16:59 / 17:00：面板上「素材开关」那四行整组删掉，
+    // 全部功能默认开启）。IconsEnabled / FoldersEnabled / BadgesEnabled / FilesEnabled 这四个键
+    // 不再读也不再写：老的偏好文件里留着什么值都不理会 —— 装了主题，四类素材一起换。
+    NSUInteger flags = TCPFeatureIcons | TCPFeatureFolders | TCPFeatureBadges | TCPFeatureFiles;
 
     // 多层叠加：扫描器是「先到先得」的（见 indexDirectory / scanIconDirectory 里的 if (!entry[key])），
     // 所以**从最后一层往前扫**：靠后的主题先落表、也就覆盖掉了靠前的。单个主题内部的行为

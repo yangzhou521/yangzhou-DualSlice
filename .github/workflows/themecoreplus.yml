@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.1
+  VERSION: 0.9.2
 
 jobs:
   build:
@@ -132,7 +132,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.1)
+    name: Release (themecoreplus-v0.9.2)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -149,20 +149,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.1
-          name: ThemeCorePlus v0.9.1
+          tag_name: themecoreplus-v0.9.2
+          name: ThemeCorePlus v0.9.2
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.1 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.2 —— MarkTheme 式的主题引擎，作者 yangzhou。
 
-            v0.9.1：
+            v0.9.2：
 
-            1. **功能开关默认关**：通用里的「应用图标 / 文件夹 / 角标 / 系统界面图」默认全部关闭，
-               要哪个自己勾（总开关「启用插件」仍默认开）。是否真生效＝「选了主题素材」＋「开关开着」，
-               两者缺一不做 —— 不再默认全开。
-            2. **诊断里新增 `gen{}/pix{}`**：插件自己数像素，回答「图标没换」到底是
-               ①我们合成的图本身被抹透明了，还是②屏幕上挂的压根不是我们那张图。
-               配着「刷新图标」用，一眼能分清合成问题还是显示层问题。
-            3. **挂不上图标对象的兜底**：视图自己还没绑图标模型时往上找父视图，减少 `noicon` 空转。
+            1. **面板只剩「主题」**：「选择主题」页里原来的「素材开关」四行（应用图标 / 文件夹 /
+               角标 / 系统界面图）整组删掉 —— 四类素材一律全换，面板上不留分类开关。
+               `IconsEnabled / FoldersEnabled / BadgesEnabled / FilesEnabled` 四个键不再读取、
+               不再写入（老偏好里留着什么都不理会）。
+            2. **主题行自己带素材清单**：每个主题那一行的副标题写「第 N 层 · 图标 84 · 角标 3 ·
+               界面图 7」，一类都没有就写「里面没有可用素材」—— 有没有素材一眼看见，不用猜。
+            3. **「系统原生外观」那行删掉**：这一页只剩主题。勾几个叠几层，再点一次 = 取消这一层；
+               全部取消就是系统原生外观（回滚不再占一行）。多选语义写在页脚。
             4. 「运行日志」入口保留（开发期），右上角「分享」可直接发出来。
 
             - 读 SnowBoard / IconBundles 主题**原素材**并现场合成：主屏与文件夹图标、文件夹底板、
@@ -179,7 +180,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.1/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.2/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'
