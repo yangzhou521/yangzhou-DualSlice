@@ -1066,10 +1066,24 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
 - (NSString *)overridePathForBundleID:(NSString *)bundleID fileName:(NSString *)fileName {
     if (fileName.length == 0) return nil;
     NSString *name = [fileName lastPathComponent].lowercaseString;
-    // 不带扩展名时按 png 再试一次（imageNamed: 常常不带后缀）。
-    NSArray<NSString *> *candidates = [name.pathExtension length] > 0
-        ? @[ name ]
-        : @[ name, [name stringByAppendingPathExtension:@"png"] ];
+    // 候选名：不带扩展名时按 png 再试一次（imageNamed: 常常不带后缀）；
+    // 再按尺度变体各试一遍 —— 系统问名字时是「ClockIconBackgroundSquare」（不带 @3x），
+    // 而 ThemeCore 主题里这类命名素材往往存成 `Bundles/ClockIconBackgroundSquare@3x.png`，
+    // 只按原样查永远查不到（本机 file{look=52,hit=0} 就是这么来的）。
+    NSString *stem = [name stringByDeletingPathExtension];
+    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+    if (name.pathExtension.length > 0) {
+        [candidates addObject:name];
+    } else {
+        [candidates addObject:name];
+        [candidates addObject:[name stringByAppendingPathExtension:@"png"]];
+    }
+    for (NSString *scale in @[ @"@3x", @"@2x", @"" ]) {
+        NSString *variant = [stem stringByAppendingString:scale];
+        if (variant.length == 0) continue;
+        [candidates addObject:variant];
+        [candidates addObject:[variant stringByAppendingPathExtension:@"png"]];
+    }
 
     @synchronized (self) {
         self.fileLookups = self.fileLookups + 1;
