@@ -19,7 +19,11 @@
 | `Support/ThemeCorePlusPreferenceLoader.plist` | 设置里那一行的入口（bundle + 图标 + 控制器类） |
 | `Support/ThemeCorePlusIcon@2x/@3x.png` | 面板图标（MarkTheme16 的 App 图标，180×180） |
 | `scripts/build-themecoreplus.sh` | ThemeCorePlus 的构建脚本（**只在 CI 上跑**） |
-| `scripts/respring-guard.sh` | **唯一注销入口**：打印 5 秒倒计时再 `icli sb respring`（通知由会话先发） |
+| `scripts/respring-guard.sh` | **唯一注销入口**：先写 HUD 请求（装了 CountdownHUD 就出胶囊）再终端倒计时 5 秒，最后 `icli sb respring`（通知由会话先发） |
+| `CountdownHUD/Sources/CountdownHUD.m` | 自绘倒计时胶囊（SpringBoard 顶层窗口，「N 秒后注销」），**不依赖通知** |
+| `Support/CountdownHUD.plist` | HUD 的注入过滤器（只进 `com.apple.springboard`） |
+| `scripts/build-countdownhud.sh` | HUD 的构建脚本（**只在 CI 上跑**，不链接 substrate） |
+| `.github/workflows/countdownhud.yml` | HUD 的云编译 + 发 Release（tag `countdownhud-v1.0.0`） |
 | `scripts/errand-in-app.sh` | 外出取证：进目标 App → 点元素 → 截图/界面树 → **trap 里强制回 Apelin** |
 | `scripts/sync-skills.sh` | 本地技能目录 ↔ 仓库 `skills/` 双向同步（默认 push） |
 | `skills/` | 技能包副本（`apelin_skill_read` 读的是 `~/Documents/wiki.qaq.apelin/skills/`，这里只是版本化并上 GitHub） |
@@ -61,6 +65,26 @@ icli prefs delete com.yangzhou.themecoreplus ThemePath     # 回滚 = 清 ThemeP
 ```
 改完设置面板会广播 Darwin 通知 `com.yangzhou.themecoreplus.preferences-changed`，
 SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会触发，要自己 respring。
+
+## CountdownHUD：屏幕上的倒计时（不靠通知）
+
+通知这条路在本机废了（见下面硬规矩里的 11:36 实测）。所以倒计时改成自己画：
+
+- 插件 `CountdownHUD.m` 注入 **SpringBoard**，起一个 0.5 秒的 `dispatch_source` 轮询
+  `/var/mobile/Library/Preferences/.countdownhud-request`（系统原路径；SpringBoard 本来就在这个目录
+  读写它自己的 `com.apple.springboard.plist`，权限没问题）。
+- 文件内容 `<epoch>|<秒数>|<标签>`，例如 `1761794460|5|注销`；**内容变了才触发**，同名不重复触发；
+  插件刚加载时已存在的旧内容只记下不触发。
+- 触发后弹一个顶层窗口（`windowLevel = 10000000`，`hitTest` 返回 nil 不吃触摸），顶部胶囊显示
+  「5 秒后注销」，最后 3 秒橙色、最后 2 秒红色，到 0 显示「现在注销」再淡出。
+- 从 shell 写这个文件必须加真根前缀：`/rootfs/var/mobile/Library/Preferences/.countdownhud-request`
+  （脚本已包好，见 `scripts/respring-guard.sh`）。
+- 验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`
+  → `v1.0.0;shows=N;last=5s;label=注销`；日志 `icli log syslog --subsystem com.yangzhou.countdownhud`。
+- 卸载：`irisin-cli remove com.yangzhou.countdownhud`；不装它时脚本照样终端倒计时，只是屏幕上没有胶囊。
+
+**规矩：以后装包 / 注销 / 杀进程前，一律 `sh scripts/respring-guard.sh 5 <标签>`**（标签写清动作，
+如「注销」「装包」），让屏幕和聊天正文同时有 5 秒。
 
 ## 硬规矩
 

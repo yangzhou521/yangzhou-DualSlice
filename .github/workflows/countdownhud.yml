@@ -1,0 +1,155 @@
+# CountdownHUD —— 自绘倒计时胶囊的云编译与发布。
+#
+# 为什么必须云编译：开发机 iPhone10,1（A11）缺 FEAT_LRCPC，装不了 Command Line Tools。
+# macOS runner 上 clang 直编 arm64 + arm64e，ldid 签名，dpkg-deb 打包，并在同一次运行里发 Release。
+#
+# 可读的验证信息写成 check-run annotation（::notice title=…::），公开仓库匿名可读：
+#   /repos/{owner}/{repo}/check-runs/{id}/annotations
+
+name: Build CountdownHUD
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'CountdownHUD/**'
+      - 'Support/CountdownHUD*'
+      - 'scripts/build-countdownhud.sh'
+      - '.github/workflows/countdownhud.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: countdownhud-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+  THEOS: ${{ github.workspace }}/theos
+  SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
+  APELIN_PACKAGE_DIR: packages
+
+jobs:
+  build:
+    name: Build (roothide)
+    runs-on: macos-14
+    steps:
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.4'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 只是为了拿 SDK；本插件不链接 substrate，不需要 theos 的 vendor/lib。
+      - name: Checkout Theos (for the iPhoneOS SDK)
+        uses: actions/checkout@v4
+        with:
+          repository: roothide/theos
+          path: theos
+          submodules: recursive
+
+      - name: Install iOS SDK (iPhoneOS16.5, headerless)
+        run: |
+          set -euo pipefail
+          mkdir -p "$THEOS/sdks"
+          if [ -d "$THEOS/sdks/iPhoneOS16.5.sdk" ]; then
+            echo "iPhoneOS16.5.sdk already present"
+            exit 0
+          fi
+          SDK_STAGE="$(mktemp -d)"
+          trap 'rm -rf "$SDK_STAGE"' EXIT
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git "$SDK_STAGE/sdks"
+          git -C "$SDK_STAGE/sdks" sparse-checkout set iPhoneOS16.5.sdk
+          cp -R "$SDK_STAGE/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
+          ls -1 "$THEOS/sdks"
+
+      - name: Install build tools
+        run: brew install ldid dpkg
+
+      - name: Build package
+        run: |
+          set -o pipefail
+          echo "commit: $(git rev-parse HEAD)"
+          echo "source sha256: $(shasum -a 256 CountdownHUD/Sources/*.m)"
+          if sh scripts/build-countdownhud.sh roothide 2>&1 | tee /tmp/ch-build.log; then
+            echo "=== .deb files ==="
+            find ./packages -name "*.deb" -type f
+          else
+            grep -E "error:|error |not found|undefined|ld: |clang: |fatal|No such file|missing" /tmp/ch-build.log \
+              | head -n 8 > /tmp/ch-errs.txt || true
+            tail -n 12 /tmp/ch-build.log >> /tmp/ch-errs.txt
+            while IFS= read -r line; do
+              echo "::error title=build-countdownhud::$line"
+            done < /tmp/ch-errs.txt
+            exit 1
+          fi
+
+      - name: Verify and report
+        run: |
+          set -euo pipefail
+          DY=build/countdownhud/out/CountdownHUD.dylib
+          echo "::notice title=commit::$(git rev-parse HEAD)"
+          echo "::notice title=slices::$(lipo -info "$DY")"
+          otool -L "$DY" | tail -n +2 | awk '{print $1}' | while read -r lib; do
+            echo "::notice title=link::$lib"
+          done
+          # 不该有 substrate 依赖：本插件不 hook，链接它只会多一个加载期失败点。
+          if otool -L "$DY" | tail -n +2 | grep -qi substrate; then
+            echo "::error title=link::unexpected substrate dependency"
+            exit 1
+          fi
+          DEB=$(ls packages/*.deb | head -n 1)
+          echo "::notice title=deb::$(basename "$DEB") sha256=$(shasum -a 256 "$DEB" | awk '{print $1}')"
+          dpkg-deb -c "$DEB"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: countdownhud-roothide
+          path: packages/*.deb
+          if-no-files-found: error
+
+  release:
+    name: Release (countdownhud-v1.0.0)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Publish release
+        id: publish
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ github.token }}
+          tag_name: countdownhud-v1.0.0
+          name: CountdownHUD v1.0.0
+          body: |
+            SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            为什么不靠通知：Apelin 的本地通知在发送瞬间会把 App 拉回前台，横幅被它自己的
+            UNUserNotificationCenterDelegate 吞掉，既看不到、也进不了灵动岛。这个插件不碰通知，
+            直接在 SpringBoard 顶层窗口画。
+
+            触发：脚本把 `<epoch>|<秒数>|<标签>` 写进
+            `/var/mobile/Library/Preferences/.countdownhud-request`，插件每 0.5 秒轮询一次。
+            验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`。
+          files: release/*.deb
+
+      - name: Report release URL
+        if: steps.publish.outcome == 'success'
+        run: |
+          set -euo pipefail
+          DEB=$(ls release/*.deb | head -n 1)
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.0.0/$(basename "$DEB")"
