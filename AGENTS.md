@@ -26,7 +26,10 @@
 | `.github/workflows/countdownhud.yml` | HUD 的云编译 + 发 Release（tag `countdownhud-v1.1.1`） |
 | `scripts/errand-in-app.sh` | 外出取证：进目标 App → 点元素 → 截图/界面树 → **trap 里强制回 Apelin** |
 | `scripts/sync-skills.sh` | 本地技能目录 ↔ 仓库 `skills/` 双向同步（默认 push） |
+| `scripts/sync-memory.sh` | 本地记忆 ↔ 仓库 `memory/memories.json` 双向同步（默认 push；`pull` 会覆盖本机，先看 diff） |
+| `scripts/sync-all.sh` | **一把同步三样**：硬性规定（AGENTS.md）+ 技能包 + 记忆；`diff` 只比差异 |
 | `skills/` | 技能包副本（`apelin_skill_read` 读的是 `~/Documents/wiki.qaq.apelin/skills/`，这里只是版本化并上 GitHub） |
+| `memory/memories.json` | 记忆副本（Apelin 真正读的是 `~/Documents/wiki.qaq.apelin/memories.json`） |
 | `.github/workflows/themecoreplus.yml` | ThemeCorePlus 的云编译 + 发 Release |
 | `Sources/`、`Support/AxsDualSliceTweak.plist`、`scripts/build-dualslice.sh`、`.github/workflows/dual-slice.yml` | 原来的双切片模板（AxsDualSlice），**别动** |
 | `Attachments/`、`probe1-3.js` | 素材与临时探针脚本 |
@@ -128,9 +131,20 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   动手写新的东西之前先看仓库里已有的同类实现，不另起一套。
   本机没有 curl/wget/python3，读云端用 `apelin_web_fetch`，或 `icli probe` + `NSData`
   （`raw.githubusercontent.com` / `api.github.com`）。
-- **云端同步**：本机技能目录 `~/Documents/wiki.qaq.apelin/skills/` 改动后，用 `sh scripts/sync-skills.sh`
-  推回仓库 `skills/`，再 commit + push 到 `main` —— 本机那份是 Apelin 真正读的，仓库那份是版本化与
-  云端备份，两边必须一致。
+- **云端同步（硬性规定 + 技能包 + 记忆，三样一起）** —— 用户 2026-10-30 17:19 原话：
+  「本机上硬性规定、技能包和记忆以后同步上传云端 以后同步修改」。**所有工程、所有对话适用。**
+  改完任何一样就 `sh scripts/sync-all.sh`（＝ AGENTS.md 核对 + 技能 push + 记忆 push），
+  然后用 Apelin 的 git 工具 `git_commit(all: true)` → `git_push` 到 `main`，**一次提交里三样一起走**，
+  不留「本机改了、云端还是旧版」的半截状态。三样各自的位置：
+
+  | 什么 | 本机（Apelin 真正读的） | 云端（仓库里） | 同步 |
+  | --- | --- | --- | --- |
+  | 硬性规定 | 本工程 `AGENTS.md`（技能里的同类条文在 `skills/*/SKILL.md`） | 仓库根 `AGENTS.md` | 就是仓库文件，push 即上传 |
+  | 技能包 | `~/Documents/wiki.qaq.apelin/skills/` | `skills/` | `sh scripts/sync-skills.sh [push\|pull]` |
+  | 记忆 | `~/Documents/wiki.qaq.apelin/memories.json` | `memory/memories.json` | `sh scripts/sync-memory.sh [push\|pull\|diff]` |
+
+  本机那份是 Apelin 真正读的，仓库那份是版本化与云端备份，**两边必须一致**；换机或别的会话改过仓库时
+  才用 `pull`（`sync-memory.sh pull` 会覆盖本机记忆，先看它打印的 diff 再确认）。
 
 ## 设备状态自己查（全权限）
 
