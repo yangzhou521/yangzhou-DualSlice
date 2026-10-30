@@ -204,9 +204,15 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 @property (nonatomic, strong) NSCache<NSString *, UIImage *> *assetCache;   // path+size -> UIImage
 @property (nonatomic, strong) NSHashTable<UIImage *> *renderedImages;       // 我们合成的图（弱引用）
 @property (nonatomic, strong) NSMutableArray<NSString *> *missSamples;
+// 反过来：实际被换成主题图的 bundle id。诊断里能看出「换了哪几个 App」，不用靠肉眼。
+@property (nonatomic, strong) NSMutableArray<NSString *> *hitSamples;
 
 // 计数（诊断用）
 @property (nonatomic) NSUInteger iconLookups, iconHits, badgeLookups, badgeHits, fileLookups, fileHits;
+
+// 采样用的私有方法（定义在查询实现里，这里先声明，免得编译器报 instance method not found）。
+- (void)noteMiss:(NSString *)sample;
+- (void)noteHit:(NSString *)sample;
 @end
 
 enum {
@@ -241,6 +247,7 @@ enum {
         _assetCache.countLimit = 200;
         _renderedImages = [NSHashTable weakObjectsHashTable];
         _missSamples = [NSMutableArray array];
+        _hitSamples = [NSMutableArray array];
         _featureFlags = TCPFeatureIcons | TCPFeatureFolders | TCPFeatureBadges | TCPFeatureFiles;
         [self reload];
     }
@@ -321,6 +328,7 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         self.generation = self.generation + 1;
         self.iconLookups = self.iconHits = self.badgeLookups = self.badgeHits = self.fileLookups = self.fileHits = 0;
         [self.missSamples removeAllObjects];
+        [self.hitSamples removeAllObjects];
         [self.renderedCache removeAllObjects];
         [self.assetCache removeAllObjects];
         [self.renderedImages removeAllObjects];
@@ -634,10 +642,17 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         }
         if (path) {
             self.iconHits = self.iconHits + 1;
+            [self noteHit:bundleID];
         } else {
             [self noteMiss:bundleID];
         }
         return path;
+    }
+}
+
+- (void)noteHit:(NSString *)sample {
+    if (sample.length > 0 && self.hitSamples.count < 24 && ![self.hitSamples containsObject:sample]) {
+        [self.hitSamples addObject:sample];
     }
 }
 
@@ -782,8 +797,10 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     @synchronized (self) {
         NSString *samples = self.missSamples.count > 0 ? [self.missSamples componentsJoinedByString:@","] : @"-";
         if (samples.length > 240) samples = [samples substringToIndex:240];
+        NSString *hits = self.hitSamples.count > 0 ? [self.hitSamples componentsJoinedByString:@","] : @"-";
+        if (hits.length > 240) hits = [hits substringToIndex:240];
         return [NSString stringWithFormat:
-                @"v%@;active=%d;theme=%@;gen=%lu;icon{look=%lu,hit=%lu};badge{look=%lu,hit=%lu};file{look=%lu,hit=%lu};named=%lu;mask=%d;base=%d;overlay=%d;folder=%d;miss=[%@]",
+                @"v%@;active=%d;theme=%@;gen=%lu;icon{look=%lu,hit=%lu};badge{look=%lu,hit=%lu};file{look=%lu,hit=%lu};named=%lu;mask=%d;base=%d;overlay=%d;folder=%d;hit=[%@];miss=[%@]",
                 TCP_VERSION,
                 self.active ? 1 : 0,
                 self.themeName ?: @"-",
@@ -796,6 +813,7 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
                 self.basePath ? 1 : 0,
                 self.overlayPath ? 1 : 0,
                 self.folderPath ? 1 : 0,
+                hits,
                 samples];
     }
 }

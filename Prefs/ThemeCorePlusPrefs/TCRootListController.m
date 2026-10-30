@@ -87,6 +87,110 @@ static NSString *TCPDiagnosticsText(void) {
     return text;
 }
 
+#pragma mark - 二级页：生效主题（行由我们自己造）
+
+// 为什么不再用 cell=PSLinkListCell + setValues:titles:：0.6.0 装机版点「生效主题」推入的那一页
+// 设备上是 0 段 0 行（同一份 specifier 在离线探针里却有 6 行），框架内部怎么取值我们验不到。
+// 这里只依赖一个必然成立的事实：PSListController 会为 detail 类 push 一页；那一页有什么行，
+// 由 -specifiers 自己说了算。
+@interface TCPThemeListController : PSListController
+@end
+
+@implementation TCPThemeListController {
+    NSArray *_specifiers;
+    BOOL _tcpApplyingSpecifiers;
+}
+
+- (NSString *)title {
+    return @"生效主题";
+}
+
+- (NSArray *)tcpBuildChoices {
+    TCPThemeStore *store = [TCPThemeStore shared];
+    [store reload];   // 进来就重扫：新加的主题立刻能选
+
+    NSString *current = store.themePath;
+    if (![current isKindOfClass:[NSString class]]) {
+        current = @"";
+    }
+
+    NSMutableArray *specs = [NSMutableArray array];
+    PSSpecifier *head = [PSSpecifier groupSpecifierWithName:@"选中即生效"];
+    // footer 里写扫盘结果：这一行就是「设置进程到底看见几个主题」的证据。
+    [head setProperty:[NSString stringWithFormat:@"%@\n扫到 %lu 个主题（另有「系统原生外观」）",
+                       TCPCurrentStatusLine(), (unsigned long)[store availableThemePaths].count]
+              forKey:@"footerText"];
+    [specs addObject:head];
+
+    NSMutableArray<NSString *> *paths = [NSMutableArray arrayWithObject:@""];
+    [paths addObjectsFromArray:[store availableThemePaths]];
+    for (NSString *path in paths) {
+        NSString *name = path.length > 0 ? path.lastPathComponent : @"系统原生外观";
+        PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:name
+                                                          target:self
+                                                             set:@selector(tcpChooseTheme:)
+                                                             get:nil
+                                                          detail:nil
+                                                            cell:TCPPSLinkCell
+                                                            edit:nil];
+        [spec setProperty:path forKey:@"tcpThemePath"];
+        if ([path isEqualToString:current]) {
+            [spec setProperty:@YES forKey:@"checked"];
+        }
+        [specs addObject:spec];
+    }
+    return specs;
+}
+
+// 点一行：写 ThemePath、通知 SpringBoard、退回上一页。
+- (void)tcpChooseTheme:(PSSpecifier *)specifier {
+    id path = [specifier propertyForKey:@"tcpThemePath"];
+    if (![path isKindOfClass:[NSString class]]) {
+        path = @"";
+    }
+
+    if ([path length] > 0) {
+        TCPWritePreference(TCPKeyThemePath, path);
+    } else {
+        TCPWritePreference(TCPKeyThemePath, nil);   // 「系统原生外观」= 清掉
+    }
+    TCPWritePreference(TCPKeyThemeName, nil);
+    TCPPostPreferencesChanged();
+
+    [self.navigationController popViewControllerAnimated:YES];
+}
+
+- (NSArray *)specifiers {
+    if (_specifiers == nil) {
+        _specifiers = [self tcpBuildChoices];
+    }
+    return _specifiers;
+}
+
+- (void)reloadSpecifiers {
+    _specifiers = [self tcpBuildChoices];
+
+    if (_tcpApplyingSpecifiers) {
+        [super reloadSpecifiers];
+        return;
+    }
+
+    [super reloadSpecifiers];
+    // 同根面板：段落缓存只在父类 setSpecifiers: 入口里重建，改完数组必须再走一次它。
+    _tcpApplyingSpecifiers = YES;
+    [self setSpecifiers:_specifiers];
+    _tcpApplyingSpecifiers = NO;
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    if (self.isViewLoaded) {
+        [self reloadSpecifiers];
+    }
+}
+
+@end
+
 #pragma mark - 面板
 
 // 基类是 PSListController（它的真身由设置 App 在加载期提供，所以只声明、不实现）。
@@ -131,25 +235,18 @@ static NSString *TCPDiagnosticsText(void) {
     return spec;
 }
 
-// 主题选择：写的是 ThemePath（绝对路径，最不容易有歧义），第一个选项是「系统原生外观」。
+// 主题选择：写的是 ThemePath（绝对路径，最不容易有歧义）。这一行只负责 push 二级页
+// （TCPThemeListController，行由它自己造）；它自己不写任何偏好，所以 set 留空。
 - (PSSpecifier *)tcpThemePicker {
-    NSMutableArray<NSString *> *values = [NSMutableArray arrayWithObject:@""];
-    NSMutableArray<NSString *> *titles = [NSMutableArray arrayWithObject:@"系统原生外观"];
-    for (NSString *path in [[TCPThemeStore shared] availableThemePaths]) {
-        [values addObject:path];
-        [titles addObject:path.lastPathComponent];
-    }
-
     PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:@"生效主题"
                                                       target:self
-                                                         set:@selector(setPreferenceValue:specifier:)
+                                                         set:nil
                                                          get:@selector(readPreferenceValue:)
-                                                      detail:nil
-                                                        cell:TCPPSLinkListCell
+                                                      detail:[TCPThemeListController class]
+                                                        cell:TCPPSLinkCell
                                                         edit:nil];
     [spec setProperty:TCPPreferencesDomain forKey:@"defaults"];
     [spec setProperty:TCPKeyThemePath forKey:@"key"];
-    [spec setValues:values titles:titles];
     return spec;
 }
 
