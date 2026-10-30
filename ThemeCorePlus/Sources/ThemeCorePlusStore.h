@@ -48,6 +48,8 @@
 - (NSString *)iconPathForBundleID:(NSString *)bundleID scale:(CGFloat)scale;
 // 这张图是不是本插件合成的（供视图级兜底钩子避免二次套用）。
 - (BOOL)isRenderedImage:(UIImage *)image;
+// 这个 CGImage 是不是本插件合成的（屏幕上 layer.contents 里放的就是 CGImage）。
+- (BOOL)isRenderedCGImage:(CGImageRef)cg;
 
 // —— 查询：角标 / 文件夹底板 / 任意点名素材 ——
 - (UIImage *)badgeBackgroundImageForScale:(CGFloat)scale;

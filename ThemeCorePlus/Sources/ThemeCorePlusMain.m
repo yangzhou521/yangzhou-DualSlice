@@ -62,9 +62,10 @@ static void TCPWriteDiagnostics(void) {
 
     // 像素自检（gen{}/pix{}）原来写好了却没接进来，诊断里一直看不到 —— 2026-10-30 15:4x 接上：
     // 「图标没换」到底是①我们合成把图抹透明了、还是②屏幕上挂的压根不是我们那张图，靠这组数区分。
-    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
                       [store diagnostics], TCPDisplayProbeReport(), TCPRefreshProbeReport(),
                       TCPIconProbeReport(), TCPBadgeProbeReport(), TCPIconPixelProbeReport(),
+                      TCPScreenCensusReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
                       TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText];
     TCPWriteProcessPreference(TCPKeyDiagnostics, text);
@@ -125,6 +126,11 @@ static void TCPWriteDiagnostics(void) {
                                                                 2500));
 }
 
+// 立刻把诊断重写一遍（供「晚一拍」的体检结束后调用）。
+void TCPWriteDiagnosticsNow(void) {
+    TCPWriteDiagnostics();
+}
+
 // 让桌面把图标重新取一遍图。取不到就当没有这一步（有的版本没有这个方法）。
 static void TCPRelayoutIcons(void) {
     Class controllerClass = objc_getClass("SBIconController");
@@ -177,6 +183,19 @@ static void TCPReload(BOOL refreshImages) {
     TCPWriteDiagnostics();
 }
 
+// 屏幕归属普查 + 把结果写进诊断。0.9.8：普查独立于「刷新图标」——
+// 启动时故意不刷视图（0.6.0 崩过），所以过去的 pix{} 永远是 0，看着像体检没跑。
+// 这里在主线程、桌面图标已经建出来之后跑普查，只读不重画，不碰视图状态。
+static void TCPRunCensusAndWrite(void) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ TCPRunCensusAndWrite(); });
+        return;
+    }
+    TCPRunScreenCensus();
+    TCPWriteDiagnostics();
+    os_log(TCPLogHandle(), "TCPS_CENSUS %{public}@", TCPScreenCensusReport());
+}
+
 static void TCPPreferencesChanged(CFNotificationCenterRef center,
                                   void *observer,
                                   CFNotificationName name,
@@ -219,6 +238,15 @@ __attribute__((constructor)) static void TCPInitialize(void) {
                                          (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 TCPReload(NO);
+            });
+        }
+
+        // 屏幕归属普查（0.9.8）：跑在「图标已经建出来」之后的几秒，只读不重画。
+        for (NSNumber *delay in @[ @1.5, @4.0, @10.0 ]) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                         (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                TCPRunCensusAndWrite();
             });
         }
     }

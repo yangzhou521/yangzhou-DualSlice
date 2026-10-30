@@ -357,6 +357,142 @@ static void TCPInspectIconView(id view) {
     }
 }
 
+// 屏幕归属普查（0.9.8）：主动把当前屏幕上真正画着的图过一遍，数出
+//   ours  = 屏幕上挂着的图是我们合成的（主题真的上屏了）
+//   stock = 屏幕上挂着的图不是我们的（显示层白干，用户看到的是原图）
+//   layer = layer.contents 里放的是 CGImage —— 显示层走的就是这条路，
+//           所以必须单独看它，只看 UIImageView.image 会漏掉一半。
+// 之前 pix{} 只在「刷新」路径上跑，而启动时不刷（0.6.0 崩过），于是诊断里 pix{n=0}，
+// 看上去像「体检根本没执行」。现在普查独立于刷新，主线程定时跑，结果写进诊断。
+static NSInteger sCensusRan = 0;          // 普查跑过几次
+static NSInteger sCensusViews = 0;        // 数过的图标视图
+static NSInteger sCensusOurs = 0;         // 屏幕上是我们合成的图
+static NSInteger sCensusStock = 0;        // 屏幕上不是我们的图
+static NSInteger sCensusLayerOurs = 0;    // layer.contents 是我们合成的 CGImage
+static NSInteger sCensusLayerStock = 0;   // layer.contents 是别的 CGImage
+static NSInteger sCensusLayerTotal = 0;
+static NSInteger sCensusDisplayedOurs = 0; // displayedImage 交出来的是我们的
+static NSInteger sCensusDisplayedTotal = 0;
+static NSMutableArray<NSString *> *sCensusSamples = nil;
+static BOOL sCensusRunning = NO;
+
+// 定义在文件后面的显示层小工具，这里先声明。
+static BOOL TCPDisplayIsCGImage(id object);
+
+static void TCPCensusClassifyUIImage(UIImage *image) {
+    if (image == nil) return;
+    if ([[TCPThemeStore shared] isRenderedImage:image]) {
+        sCensusOurs++;
+    } else {
+        sCensusStock++;
+    }
+}
+
+// 普查一个视图（一个图标视图）。只读，不触发任何重画。
+static void TCPCensusInspectView(UIView *view, NSUInteger depth) {
+    if (view == nil || depth > 6) return;
+    if (sCensusViews > 4000) return;
+
+    NSString *className = NSStringFromClass([view class]);
+
+    // ① UIImageView.image —— 图层视图
+    if ([view isKindOfClass:[UIImageView class]]) {
+        sCensusViews++;
+        UIImage *image = ((UIImageView *)view).image;
+        TCPCensusClassifyUIImage(image);
+        if (image && sCensusSamples.count < 8) {
+            BOOL ours = [[TCPThemeStore shared] isRenderedImage:image];
+            if (sCensusSamples == nil) sCensusSamples = [NSMutableArray array];
+            [sCensusSamples addObject:
+                [NSString stringWithFormat:@"%@|%@|%.0fx%.0f|%@",
+                 className, ours ? @"ours" : @"stock",
+                 image.size.width, image.size.height,
+                 TCPDisplayViewIcon(view) ? @"icon" : @"-"]];
+        }
+    }
+
+    // ② layer.contents —— 显示层真正画进屏幕的那张（可能是 CGImage，也可能是 UIImage）
+    id contents = view.layer.contents;
+    if (contents != nil) {
+        sCensusLayerTotal++;
+        if (TCPDisplayIsCGImage(contents)) {
+            if ([[TCPThemeStore shared] isRenderedCGImage:(__bridge CGImageRef)contents]) {
+                sCensusLayerOurs++;
+            } else {
+                sCensusLayerStock++;
+            }
+        } else if ([contents isKindOfClass:[UIImage class]]) {
+            TCPCensusClassifyUIImage((UIImage *)contents);
+        }
+    }
+
+    for (UIView *sub in view.subviews) {
+        TCPCensusInspectView(sub, depth + 1);
+    }
+}
+
+void TCPRunScreenCensus(void) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ TCPRunScreenCensus(); });
+        return;
+    }
+    if (sCensusRunning) return;
+    sCensusRunning = YES;
+
+    sCensusViews = 0; sCensusOurs = 0; sCensusStock = 0;
+    sCensusLayerOurs = 0; sCensusLayerStock = 0; sCensusLayerTotal = 0;
+    sCensusDisplayedOurs = 0; sCensusDisplayedTotal = 0;
+    sCensusSamples = [NSMutableArray array];
+
+    NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
+    for (UIWindow *window in [UIApplication sharedApplication].windows) {
+        [windows addObject:window];
+    }
+    for (UIWindow *window in windows) {
+        for (UIView *sub in window.subviews) {
+            TCPCensusInspectView(sub, 0);
+        }
+    }
+
+    // displayedImage：视图交出去的那张图是谁的（静默打点，别把自己的询问算进 look/hit）
+    SEL displayed = NSSelectorFromString(@"displayedImage");
+    Class iconImageView = objc_getClass("SBIconImageView");
+    if (iconImageView != Nil) {
+        for (UIWindow *window in windows) {
+            NSMutableArray *stack = [NSMutableArray arrayWithArray:window.subviews];
+            NSUInteger guard = 0;
+            while (stack.count > 0 && guard++ < 3000) {
+                UIView *view = stack.lastObject;
+                [stack removeLastObject];
+                if ([view isKindOfClass:iconImageView] && [view respondsToSelector:displayed]) {
+                    sPixelQuietDisplayCounters = YES;
+                    id value = ((id (*)(id, SEL))objc_msgSend)(view, displayed);
+                    sPixelQuietDisplayCounters = NO;
+                    if ([value isKindOfClass:[UIImage class]]) {
+                        sCensusDisplayedTotal++;
+                        if ([[TCPThemeStore shared] isRenderedImage:(UIImage *)value]) {
+                            sCensusDisplayedOurs++;
+                        }
+                    }
+                }
+                [stack addObjectsFromArray:view.subviews];
+            }
+        }
+    }
+
+    sCensusRan++;
+    sCensusRunning = NO;
+}
+
+NSString *TCPScreenCensusReport(void) {
+    return [NSString stringWithFormat:
+            @"census{ran=%ld,views=%ld,ours=%ld,stock=%ld,layer{total=%ld,ours=%ld,stock=%ld},disp{total=%ld,ours=%ld},s=[%@]}",
+            (long)sCensusRan, (long)sCensusViews, (long)sCensusOurs, (long)sCensusStock,
+            (long)sCensusLayerTotal, (long)sCensusLayerOurs, (long)sCensusLayerStock,
+            (long)sCensusDisplayedTotal, (long)sCensusDisplayedOurs,
+            sCensusSamples.count > 0 ? [sCensusSamples componentsJoinedByString:@";"] : @"-"];
+}
+
 NSString *TCPIconPixelProbeReport(void) {
     return [NSString stringWithFormat:
             @"gen{n=%ld,clear=%ld,minCov=%.2f,lum=%.2f,last=%@};"
@@ -371,6 +507,7 @@ NSString *TCPIconPixelProbeReport(void) {
             sPixelBlankSamples.count > 0 ? [sPixelBlankSamples componentsJoinedByString:@","] : @"-",
             sPixelLayerSamples.count > 0 ? [sPixelLayerSamples componentsJoinedByString:@";"] : @"-"];
 }
+
 
 // 让屏幕当场换图，不注销。2026-10-30 第二版：
 //   上一版只清缓存 → 屏幕上纹丝不动（清了缓存没人重新问，视图手里还攥着旧图）。

@@ -257,7 +257,9 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 @property (nonatomic) NSUInteger featureFlags;
 @property (nonatomic, strong) NSCache<NSString *, UIImage *> *renderedCache;
 @property (nonatomic, strong) NSCache<NSString *, UIImage *> *assetCache;   // path+size -> UIImage
-@property (nonatomic, strong) NSHashTable<UIImage *> *renderedImages;       // 我们合成的图（弱引用）
+@property (nonatomic, strong) NSMutableArray<UIImage *> *renderedImages;   // 我们合成的图（强引用，限量）
+@property (nonatomic, strong) NSMutableSet<NSValue *> *renderedImagePointers; // 合成图指针（O(1) 身份索引）
+@property (nonatomic, strong) NSMutableSet<NSValue *> *renderedCGPointers; // 合成图背后的 CGImage 指针
 @property (nonatomic, strong) NSMutableArray<NSString *> *missSamples;
 // 反过来：实际被换成主题图的 bundle id。诊断里能看出「换了哪几个 App」，不用靠肉眼。
 @property (nonatomic, strong) NSMutableArray<NSString *> *hitSamples;
@@ -300,7 +302,9 @@ enum {
         _renderedCache.countLimit = 600;
         _assetCache = [[NSCache alloc] init];
         _assetCache.countLimit = 200;
-        _renderedImages = [NSHashTable weakObjectsHashTable];
+        _renderedImages = [NSMutableArray array];
+        _renderedImagePointers = [NSMutableSet set];
+        _renderedCGPointers = [NSMutableSet set];
         _missSamples = [NSMutableArray array];
         _hitSamples = [NSMutableArray array];
         _featureFlags = TCPFeatureIcons | TCPFeatureFolders | TCPFeatureBadges | TCPFeatureFiles;
@@ -392,6 +396,8 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         [self.renderedCache removeAllObjects];
         [self.assetCache removeAllObjects];
         [self.renderedImages removeAllObjects];
+        [self.renderedImagePointers removeAllObjects];
+        [self.renderedCGPointers removeAllObjects];
         // 遮罩体检（0.9.4，修「图标空白」）：把遮罩的 alpha 覆盖量一遍 —— 玻璃 / 细环那类遮罩
         // 几乎全透明，拿去裁图标只会把主体裁没。低于门槛的**不使用**，让图标保持素材原样。
         CGFloat coverage = 1.0;
@@ -921,16 +927,55 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
         UIImage *rendered = TCPRenderIcon(icon, base, mask, overlay, size, scale, cornerRadius, roundCorners);
         if (rendered) {
             [self.renderedCache setObject:rendered forKey:cacheKey];
-            [self.renderedImages addObject:rendered];
+            // 0.9.8：合成图的身份记录改成**强引用**（原来弱引用 + NSCache 淘汰 →
+            // 图早就没了 → isRenderedImage 认不出屏幕上那张图 → 误判成「不是我们的图」）。
+            // 同时记下它背后的 CGImage 指针：显示层站走的是 CGImage 路径，
+            // 屏幕上 layer.contents 里放的就是这个指针，不记它就分不出 ours/stock。
+            if (self.renderedImages.count < 400) {
+                [self.renderedImages addObject:rendered];
+            } else {
+                UIImage *old = self.renderedImages.firstObject;
+                [self.renderedImagePointers removeObject:
+                    [NSValue valueWithPointer:(__bridge const void *)old]];
+                [self.renderedImages removeObjectAtIndex:0];
+                [self.renderedImages addObject:rendered];
+            }
+            [self.renderedImagePointers addObject:
+                [NSValue valueWithPointer:(__bridge const void *)rendered]];
+            if (rendered.CGImage) {
+                // 限量：指针集只增不减会慢慢涨，800 张足够覆盖一屏图标 + 几轮重画。
+                if (self.renderedCGPointers.count < 800) {
+                    [self.renderedCGPointers addObject:
+                        [NSValue valueWithPointer:(__bridge const void *)rendered.CGImage]];
+                }
+            }
         }
         return rendered;
     }
 }
 
+// 这张图是不是本插件合成的：认 UIImage 本身，也认它背后的 CGImage。
 - (BOOL)isRenderedImage:(UIImage *)image {
     if (!image) return NO;
     @synchronized (self) {
-        return [self.renderedImages containsObject:image];
+        if ([self.renderedImagePointers containsObject:
+                [NSValue valueWithPointer:(__bridge const void *)image]]) {
+            return YES;
+        }
+        if (image.CGImage && [self.renderedCGPointers containsObject:
+                [NSValue valueWithPointer:(__bridge const void *)image.CGImage]]) {
+            return YES;
+        }
+        return NO;
+    }
+}
+
+// 这个 CGImage 是不是我们合成的（屏幕上 layer.contents 里放的就是 CGImage）。
+- (BOOL)isRenderedCGImage:(CGImageRef)cg {
+    if (cg == NULL) return NO;
+    @synchronized (self) {
+        return [self.renderedCGPointers containsObject:
+                [NSValue valueWithPointer:(__bridge const void *)cg]];
     }
 }
 

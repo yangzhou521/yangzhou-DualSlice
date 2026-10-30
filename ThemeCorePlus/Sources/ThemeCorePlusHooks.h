@@ -145,6 +145,12 @@ NSString *TCPIconPixelProbeReport(void);
 // 晚一拍的体检结束后要能立刻把结果落进诊断（否则读到的还是刷新那一刻的快照）。
 void TCPWriteDiagnosticsNow(void);
 
+// 屏幕归属普查（0.9.8，实现在 ThemeCorePlusIcons.m）：主动把屏幕上真正画着的图过一遍，
+// 分出「我们的」与「系统的」，并单独看 layer.contents（显示层走 CGImage 那条路）。
+// 独立于「刷新图标」，启动后主线程定时跑，结果写进诊断的 census{...}。
+void TCPRunScreenCensus(void);
+NSString *TCPScreenCensusReport(void);
+
 // 即时生效：不注销，把桌面上已建好的图标视图的图缓存清掉、按当前 info 重取一遍。
 // 改完设置（面板广播、或 shell 手写偏好后 respring）由 ThemeCorePlusMain.m 调。
 void TCPRefreshIconImages(void);
