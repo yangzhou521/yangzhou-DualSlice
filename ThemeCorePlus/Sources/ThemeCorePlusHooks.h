@@ -140,6 +140,9 @@ NSString *TCPLayoutDiagnostics(void);
 // 站点打点：记下「图标类 : 解析出的 bundle id」，用来判断时钟/日历是没被问还是没认出 id。
 void TCPNoteIconSiteClass(NSString *className);
 NSString *TCPIconIdentifierOf(id icon);
+// 动态图标分支的两个计数：站点摸到动态图标几次（seen）、系统那张图不是 UIImage 几次（noimg）。
+void TCPNoteDynamicSeen(void);
+void TCPNoteDynamicNotImage(void);
 // 图标站打点：被问过几次、参数不可信跳过几次、没素材几次、换成几张。写进诊断。
 NSString *TCPIconProbeReport(void);
 // 显示层站：original 是视图正要画的那张图（UIImage 或 CGImage），view 是 SBIconImageView。
