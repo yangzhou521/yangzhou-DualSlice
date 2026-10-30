@@ -127,7 +127,12 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   - `yangzhou521/yangzhou-DualSlice`（`main`，**就是本工程**）= 实际产品与脚本：ThemeCorePlus
     （主题引擎 + 设置面板）、CountdownHUD（倒计时胶囊）、`scripts/*.sh`、`skills/` 副本、各条 CI 工作流。
   - **只认这两个越狱插件相关的仓库**：`AxsTweakKit` 与 `yangzhou-DualSlice`。账号下别的仓库
-    （如 BPB-Worker-Panel、edgetunnel 这类 fork）**不写、不动、不碰**，也不引用。
+    （如 BPB-Worker-Panel、edgetunnel 这类 fork，**与越狱插件无关**）**永久不写、不动、不碰**，也不引用。
+  - **云端的一切「修改」只针对这两个越狱插件项目**（用户 2026-10-30 17:2x 再次强调，并要求这条
+    与记忆、技能包一起同步到本机与云端）：提交、push、建仓库、改工作流、开 issue —— 只落在
+    `AxsTweakKit`（`master`）与 `yangzhou-DualSlice`（`main`）里；账号下其它仓库**不提交、不推送、
+    不新建、不改设置、不提 issue、也不当参照系**，读都不读。要开新仓库、要发 issue 这类动作，
+    即便在允许的仓库上，也得用户明确同意（见 `apelin-git-create-repository` / `apelin-git-create-issue` 的分寸）。
   动手写新的东西之前先看仓库里已有的同类实现，不另起一套。
   本机没有 curl/wget/python3，读云端用 `apelin_web_fetch`，或 `icli probe` + `NSData`
   （`raw.githubusercontent.com` / `api.github.com`）。
@@ -207,6 +212,15 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
     `UITableViewCellAccessoryDetailButton` 之类冒充选择态的配件。
   - 多选列表照样用开关：**打开的顺序就是生效顺序**，关掉 = 取消这一项；点整行应与拨开关等价。
   - 本工程落点：`Prefs/ThemeCorePlusPrefs/TCRootListController.m` 里的 `TCPThemeSwitchCell`（0.9.3 起）。
+- **云端的一切「修改」只针对越狱插件项目，非越狱插件项目永久不碰**（用户 2026-10-30 17:2x 原话：
+  「云端修改只针对越狱插件项目！这也是硬性规定和记忆、技能包现在一起同步本机和云端」
+  「我云端的非越狱插件项目永久不要动！这也是硬性规定和记忆、技能包现在一起同步本机和云端！」）：
+  只有 `yangzhou521/AxsTweakKit`（`master`）与 `yangzhou521/yangzhou-DualSlice`（`main`）这两个
+  越狱插件仓库能提交 / 推送 / 改工作流 / 建仓库 / 开 issue；**账号下其它仓库（非越狱插件项目）一律
+  永久不提交、不推送、不新建、不提 issue、不改设置、不删、不当参照系，读都不读**——「永久」是指
+  以后每一次、每一个对话、每一个工程都算，不需要用户再说一遍。就是在允许的仓库上，新建仓库、
+  发 issue 也要用户明确同意才做。这一条同时写进技能 `load-all-skills-memory-repos` 与全局记忆，
+  三样（硬性规定 + 技能包 + 记忆）一起同步本机与云端。
 - **不许 `-undefined dynamic_lookup` / `-undefined suppress`。** 缺符号就逐个写
   `-Wl,-U,_符号名`（面板的 `PSListController`/`PSSpecifier` 就是这么处理的）。
 - **不许给私有类写消息发送。** 代码里出现 `[SBIconController sharedInstance]` 就会多出一个
