@@ -81,7 +81,7 @@ FRAMEWORKS="-framework Foundation -framework UIKit -framework QuartzCore -framew
 BUILD=build/sileowallpaper
 DY="$BUILD/out/$FIX.dylib"
 
-echo "build-sileowallpaper.sh: $PACKAGE_ID $VERSION（含 $FIX $FIX_VERSION）kind=$KIND archs=$ARCHS"
+echo "build-sileowallpaper.sh: $PACKAGE_ID ${VERSION}（含 $FIX ${FIX_VERSION}）kind=$KIND archs=$ARCHS"
 echo "build-sileowallpaper.sh: $(uname -s) $(uname -m)"
 echo "build-sileowallpaper.sh: SDKROOT=$SDKROOT"
 
@@ -137,7 +137,7 @@ if [ "$SUBSTRATE_ENTRY" != "$WANTED_SUBSTRATE" ]; then
   exit 5
 fi
 
-echo "build-sileowallpaper.sh: --- otool -L $ORIG（原样带过去，不改）---"
+echo "build-sileowallpaper.sh: --- otool -L ${ORIG}（原样带过去，不改）---"
 otool -L "OriginalPlugin/$ORIG.dylib"
 
 # 没签名的 dylib 不加载（修复合集是新编的，签一次）。
