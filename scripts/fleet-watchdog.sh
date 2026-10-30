@@ -24,7 +24,8 @@ done
 BOARD="$FLEET_DIR/board.tsv"
 [ -s "$BOARD" ] || exit 0   # 空黑板 = 没人在跑，不报
 
-# 2. 算活线（state 非 done/idle/handoff/waiting-user 且近 THRESHOLD 分钟内更新过）
+# 2. 算活线（state 非 done/idle/handoff/waiting-user/waiting-approval 且近 THRESHOLD 分钟内更新过）
+#    注意：waiting-approval（v7 审批接力）是等 icli 审批，不是睡死，必须跳过。
 NOW=$(date +%s)
 TAB="$(printf '\t')"
 ALIVE=0
@@ -36,7 +37,8 @@ while IFS="$TAB" read -r agent project state task step device updated; do
   [ -n "${agent:-}" ] || continue
   TOTAL=$((TOTAL + 1))
   case "$state" in
-    done|idle|handoff|waiting-user) INACTIVE=$((INACTIVE + 1)); continue ;;
+    done|idle|handoff|waiting-user|waiting-approval)
+      INACTIVE=$((INACTIVE + 1)); continue ;;
   esac
   age=$(( (NOW - ${updated:-0}) / 60 ))
   if [ "$age" -lt "$THRESHOLD" ]; then
@@ -72,5 +74,9 @@ if [ -n "$STALLED" ]; then
       "$stamp" "$TOTAL" "$INACTIVE" "$STALLED" >> "$LOG"
   fi
 fi
+
+# 4. 心跳：每次运行都覆盖（含没告警的那些次），用来验证 launchd 守护还活着
+#    查：读 watchdog-last-run 的 epoch 与当前时间差 < 600 秒即正常。
+date +%s > "$FLEET_DIR/watchdog-last-run"
 
 exit 0
