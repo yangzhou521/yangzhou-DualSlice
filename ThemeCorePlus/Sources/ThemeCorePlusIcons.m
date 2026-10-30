@@ -51,22 +51,32 @@ static NSString *TCPIconBundleIdentifier(id icon) {
 // 定义在下面「图标像素自检」那节：把合成的图量一遍像素（C 要求先声明后使用）。
 static void TCPNoteComposedImage(UIImage *image, NSString *bundleID);
 
+// 时钟 / 日历是系统动态图标（实时指针 / 当天日期）。0.9.5 曾对这两个 bundle ID 一刀切跳过，
+// 结果是主题里明明带了整幅素材也永远不加载（用户 2026-10-31 04:08「还是不能正常加载」）。
+// 0.9.11 改成「看素材」：
+//   · 时钟 —— 主题表盘（ClockIconBackgroundSquare）由 Store 登记成 mobiletimer 的图标底图，
+//     我们只交表盘、不画指针，系统的 SBHClockApplicationIconImageView 自己在上面画实时指针；
+//   · 日历 —— 只认 IconBundles 里的整幅图标（-large），
+//     Bundles/<bid>/icon.png 那种小图（常常是空白或纯色）依旧不用，免得又变回「图标不显示」。
+static BOOL TCPThemeHasFullSizeIcon(TCPThemeStore *store, NSString *bundleID, CGFloat scale) {
+    NSString *path = [store iconPathForBundleID:bundleID scale:scale];
+    if (path.length == 0) return NO;
+    NSString *name = [path lastPathComponent].lowercaseString;
+    return [name containsString:@"-large"];
+}
+
 UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info) {
     if (icon == nil || info.size.width <= 0 || info.size.height <= 0) return nil;
     NSString *bundleID = TCPIconBundleIdentifier(icon);
     if (bundleID.length == 0) return nil;
 
-    // 时钟与日历是系统动态图标（实时指针 / 日期翻动），不要用主题里的静态图替换 ——
-    // 主题素材里常带 com.apple.mobiletimer / com.apple.mobilecal 的 icon.png，
-    // 替换了就变成一张死图（没有指针、没有当天日期），用户看到的就是「不显示」。
-    // 这两个 bundle ID 一律跳过，让系统的动态生成原样跑。
-    if ([bundleID isEqualToString:@"com.apple.mobiletimer"] ||
-        [bundleID isEqualToString:@"com.apple.mobilecal"]) {
-        return nil;
-    }
-
     TCPThemeStore *store = [TCPThemeStore shared];
     if (!store.active) return nil;
+
+    if ([bundleID isEqualToString:@"com.apple.mobilecal"] &&
+        !TCPThemeHasFullSizeIcon(store, bundleID, info.scale)) {
+        return nil;
+    }
 
     // 遮罩：优先用主题自带的作者遮罩（store 自己会套）；IconCornerMask 只是没有素材时的兜底。
     CGFloat radius = [store cornerMaskEnabled] ? info.cornerRadius : 0;

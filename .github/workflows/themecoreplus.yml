@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.10
+  VERSION: 0.9.11
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.10)
+    name: Release (themecoreplus-v0.9.11)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,10 +185,26 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.10
-          name: ThemeCorePlus v0.9.10
+          tag_name: themecoreplus-v0.9.11
+          name: ThemeCorePlus v0.9.11
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.10 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.11 —— MarkTheme 式的主题引擎，作者 yangzhou。
+
+            v0.9.11：
+
+            1. **角标只剩一层**：本机（iOS 16.7）的角标只有「成图站」一条路
+               （`+[SBIconBadgeView _checkoutImageForText:font:highlighted:]`，底板那两站的方法
+               在这台系统上根本不存在，诊断里一直是 `bg{look=0}`），于是交出去的整图自带主题底板，
+               而角标视图自己还会再画一层系统底板 —— 屏幕上就是「系统底板 + 主题底板」两层。
+               现在成图站一旦真的换了图，角标视图在布局 / 配置数字 / 上屏三个回调里把
+               **不属于我们**的子视图与子层藏掉；树里一张我们的图都没有时先不动，
+               宁可多留一层也绝不把角标藏成空白。诊断新增 `sys{look,hid,wait,tree}` 与 `v{lay,cfg,mv}`。
+
+            2. **时钟与日历图标重新跟着主题走**：0.9.5 曾对 `com.apple.mobiletimer` /
+               `com.apple.mobilecal` 一刀切跳过，主题里明明带了素材也永远不加载。
+               现在时钟用主题表盘（`ClockIconBackgroundSquare`）当底图、**不画指针** ——
+               系统的时钟图标视图自己在表盘上画实时指针；日历只认 `IconBundles` 里的整幅图标
+               （`-large`），`Bundles/<id>/icon.png` 那种小图依旧不用，免得又变回「图标不显示」。
 
             v0.9.10：
 
@@ -277,7 +293,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.10/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.11/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'

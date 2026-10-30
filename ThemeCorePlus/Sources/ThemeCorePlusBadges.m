@@ -45,10 +45,132 @@ static NSInteger sBadgeBackLook = 0, sBadgeBackHit = 0;
 static NSInteger sBadgeTupleLook = 0, sBadgeTupleHit = 0;
 static NSInteger sBadgeTextLook = 0, sBadgeTextHit = 0;
 
+// —— 0.9.11：单层化，把「系统自己画的那层底板」清掉 ——
+// 本机实测（诊断串，2026-10-31 04:2x）：
+//   bg{look=0,hit=0};tup{look=0,hit=0};txt{look=6,hit=6};gate=composed
+// 也就是 iOS 16.7.16 的角标只有「成图站」一条路（+[SBIconBadgeView
+// _checkoutImageForText:font:highlighted:]），底板那两站的方法在这台系统上根本不存在。
+// 于是我们交出去的整图里自带主题底板，而角标视图自己还会再画一层系统底板 ——
+// 屏幕上就是「系统底板 + 主题底板」两层（用户 2026-10-31 04:07 原话：
+// 「一层是原系统角标没有被隐藏！二层又同时加载第三方角标素材了！」）。
+//
+// icli probe 把角标视图摊开（2026-10-31，SpringBoardHome）：
+//   SBIconBadgeView (backgroundColor = nil)
+//     └ backgroundView = SBDarkeningImageView  frame (1 1; 24 24)
+//                        backgroundColor = 系统红 (1, 0.231, 0.188, 1)   ← 这就是「没被隐藏的那层」
+//         └ UIImageView  image = 系统给这段文字准备的图（数字）        ← 我们的整图换的就是它
+// 关键：**我们的图就画在 backgroundView 里面**。所以不能像藏普通子视图那样把
+// backgroundView 藏掉 —— 那会连我们自己的图一起藏没。只清它的底色（和它自己那张
+// 非我们的底图），屏幕上就只剩主题那一层。
+static BOOL sBadgeComposedServed = NO;
+static BOOL sBadgeHiding = NO;
+static NSMutableArray<UIImage *> *sBadgeRenderedImages = nil;
+static NSInteger sBadgeSysLook = 0, sBadgeSysHidden = 0, sBadgeSysWait = 0;
+static NSInteger sBadgeLayoutCalls = 0, sBadgeConfigCalls = 0, sBadgeMoveCalls = 0;
+static NSString *sBadgeSysTree = nil;
+
+// 我们合成过的角标图（底板、整图、纯数字三种都记）。角标站拿到的 self 是**类对象**
+// （成图站是类方法），碰不到视图，所以「哪张图是我们的」只能靠这张表自己认。
+static void TCPBadgeRememberImage(UIImage *image) {
+    if (image == nil) return;
+    if (sBadgeRenderedImages == nil) sBadgeRenderedImages = [NSMutableArray array];
+    if (sBadgeRenderedImages.count >= 64) [sBadgeRenderedImages removeObjectAtIndex:0];
+    [sBadgeRenderedImages addObject:image];
+}
+
+static BOOL TCPBadgeImageIsOurs(UIImage *image) {
+    if (image == nil) return NO;
+    for (UIImage *ours in sBadgeRenderedImages) {
+        if (ours == image) return YES;
+        if (ours.CGImage != NULL && ours.CGImage == image.CGImage) return YES;
+    }
+    return NO;
+}
+
+static BOOL TCPBadgeLayerIsOurs(CALayer *layer) {
+    id contents = layer.contents;
+    if (contents == nil) return NO;
+    if ([contents isKindOfClass:[UIImage class]]) return TCPBadgeImageIsOurs((UIImage *)contents);
+    if (CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
+        CGImageRef cg = (__bridge CGImageRef)contents;
+        for (UIImage *ours in sBadgeRenderedImages) {
+            if (ours.CGImage != NULL && ours.CGImage == cg) return YES;
+        }
+    }
+    return NO;
+}
+
+// 把一个角标视图收拾成一层：留下握着我们那张图的子视图/子层，其余（系统底板、系统数字标签）藏掉。
+// 判据很硬：**树里一张我们的图都没有就什么都不做** —— 宁可多留一层，也绝不把角标藏成空白。
+static void TCPBadgeHideSystemBackground(UIView *view) {
+    if (view == nil || !sBadgeComposedServed || sBadgeHiding) return;
+    if (![view isKindOfClass:[UIView class]]) return;
+    sBadgeHiding = YES;
+    sBadgeSysLook++;
+
+    NSMutableArray<UIView *> *all = [NSMutableArray array];
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithArray:view.subviews];
+    NSUInteger guard = 0;
+    while (queue.count > 0 && guard++ < 16) {
+        UIView *sub = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        [all addObject:sub];
+        if (sub.subviews.count > 0) [queue addObjectsFromArray:sub.subviews];
+    }
+
+    BOOL sawOurs = TCPBadgeLayerIsOurs(view.layer);
+    for (UIView *sub in all) {
+        if ([sub isKindOfClass:[UIImageView class]] &&
+            TCPBadgeImageIsOurs(((UIImageView *)sub).image)) { sawOurs = YES; break; }
+        if (TCPBadgeLayerIsOurs(sub.layer)) { sawOurs = YES; break; }
+    }
+    if (!sawOurs) {
+        sBadgeSysWait++;   // 图还没换上来（或这一格没主题素材），先不动
+        sBadgeHiding = NO;
+        return;
+    }
+
+    NSUInteger hidden = 0;
+    for (UIView *sub in all) {
+        BOOL ours = ([sub isKindOfClass:[UIImageView class]] &&
+                     TCPBadgeImageIsOurs(((UIImageView *)sub).image)) ||
+                    TCPBadgeLayerIsOurs(sub.layer);
+        if (ours) continue;
+        if (!sub.hidden) { sub.hidden = YES; hidden++; }
+    }
+    for (CALayer *layer in view.layer.sublayers) {
+        if (TCPBadgeLayerIsOurs(layer)) continue;
+        if (!layer.hidden) { layer.hidden = YES; hidden++; }
+    }
+    // 视图自己涂的那层底色（有的版本底板就是 backgroundColor）
+    if (view.backgroundColor != nil && CGColorGetAlpha(view.backgroundColor.CGColor) > 0.01) {
+        view.backgroundColor = [UIColor clearColor];
+        hidden++;
+    }
+    if (hidden > 0) sBadgeSysHidden += (NSInteger)hidden;
+
+    // 取证：这一格到底叠了哪些类，装完机不用看屏幕就知道藏对了没有。
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (UIView *sub in all) {
+        if (names.count >= 6) break;
+        [names addObject:[NSString stringWithFormat:@"%@%@",
+                          NSStringFromClass([sub class]), sub.hidden ? @"*" : @""]];
+    }
+    sBadgeSysTree = names.count > 0 ? [names componentsJoinedByString:@","] : @"-";
+
+    sBadgeHiding = NO;
+}
+
 void TCPBadgeResetStations(void) {
     sBadgeBackLook = sBadgeBackHit = 0;
     sBadgeTupleLook = sBadgeTupleHit = 0;
     sBadgeTextLook = sBadgeTextHit = 0;
+    sBadgeComposedServed = NO;
+}
+
+// 成图站（Hooks.m）在「交出去的是底板 + 数字整图」时叫一声，视图侧才知道该收掉系统底板。
+void TCPBadgeNoteComposedServed(void) {
+    sBadgeComposedServed = YES;
 }
 
 void TCPBadgeNoteStation(TCPSiteKind kind, BOOL replaced) {
@@ -66,12 +188,16 @@ BOOL TCPBadgeBackgroundServed(void) {
 
 NSString *TCPBadgeProbeReport(void) {
     return [NSString stringWithFormat:
-            @"%@;bg{look=%ld,hit=%ld};tup{look=%ld,hit=%ld};txt{look=%ld,hit=%ld};gate=%@",
+            @"%@;bg{look=%ld,hit=%ld};tup{look=%ld,hit=%ld};txt{look=%ld,hit=%ld};gate=%@;"
+            @"sys{look=%ld,hid=%ld,wait=%ld,tree=%@};v{lay=%ld,cfg=%ld,mv=%ld}",
             sBadgeProbe ?: @"badge=-",
             (long)sBadgeBackLook, (long)sBadgeBackHit,
             (long)sBadgeTupleLook, (long)sBadgeTupleHit,
             (long)sBadgeTextLook, (long)sBadgeTextHit,
-            TCPBadgeBackgroundServed() ? @"text-only" : @"composed"];
+            TCPBadgeBackgroundServed() ? @"text-only" : @"composed",
+            (long)sBadgeSysLook, (long)sBadgeSysHidden, (long)sBadgeSysWait,
+            sBadgeSysTree ?: @"-",
+            (long)sBadgeLayoutCalls, (long)sBadgeConfigCalls, (long)sBadgeMoveCalls];
 }
 
 // 圆头拉伸时两头要留多宽：按素材自己的尺寸算，素材两头是什么形状（圆弧、尖角、异形）都原样保留。
@@ -107,6 +233,7 @@ UIImage *TCPThemedBadgeBackgroundInBox(CGFloat scale, CGSize box) {
     }
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
+    TCPBadgeRememberImage(image);
     return image ?: asset;
 }
 
@@ -181,6 +308,7 @@ UIImage *TCPThemedBadgeTextImage(NSString *text, UIFont *font, CGFloat scale, CG
     UIGraphicsEndImageContext();
     sBadgeProbe = [NSString stringWithFormat:@"badge=%@;asset=%.0fx%.0f;canvas=%.0fx%.0f;fit=%.2f",
                    text, asset.size.width, asset.size.height, width, side, factor];
+    TCPBadgeRememberImage(image);
     return image;
 }
 
@@ -237,7 +365,56 @@ UIImage *TCPThemedBadgeTextOnlyImage(NSString *text, UIFont *font, CGFloat scale
     UIGraphicsEndImageContext();
     sBadgeProbe = [NSString stringWithFormat:@"badge=%@;asset=%.0fx%.0f;canvas=%.0fx%.0f;fit=%.2f;only=1",
                    text, asset.size.width, asset.size.height, width, side, factor];
+    TCPBadgeRememberImage(image);
     return image;
+}
+
+// —— 0.9.11 视图侧：把系统自己画的那层底板藏掉 ——
+// 成图站是**类方法**（诊断里写作 +SBIconBadgeView:_checkoutImageForText:font:highlighted:），
+// self 是类对象，碰不到视图，所以「藏底板」只能挂在视图自己的回调上。
+// 三处入口都挂，哪个先来用哪个：-layoutSubviews（布局）、
+// -_configureAnimatedForText:highlighted:animator:（配置数字）、-didMoveToWindow（上屏）。
+// 铁律 R2：只有类「自己声明」了才挂 —— layoutSubviews / didMoveToWindow 是 UIView 的实现，
+// 直接 MSHook 到父类那一份会把全系统的视图都拖进来。
+static IMP sBadgeLayoutOrig = NULL;
+static IMP sBadgeConfigOrig = NULL;
+static IMP sBadgeMoveOrig = NULL;
+
+static void TCPBadgeLayoutHook(id self, SEL _cmd) {
+    if (sBadgeLayoutOrig) ((void (*)(id, SEL))sBadgeLayoutOrig)(self, _cmd);
+    sBadgeLayoutCalls++;
+    TCPBadgeHideSystemBackground(self);
+}
+
+static void TCPBadgeConfigHook(id self, SEL _cmd, NSString *text, BOOL highlighted, id animator) {
+    if (sBadgeConfigOrig) {
+        ((void (*)(id, SEL, NSString *, BOOL, id))sBadgeConfigOrig)(self, _cmd, text, highlighted, animator);
+    }
+    sBadgeConfigCalls++;
+    TCPBadgeHideSystemBackground(self);
+}
+
+static void TCPBadgeMoveHook(id self, SEL _cmd) {
+    if (sBadgeMoveOrig) ((void (*)(id, SEL))sBadgeMoveOrig)(self, _cmd);
+    sBadgeMoveCalls++;
+    TCPBadgeHideSystemBackground(self);
+}
+
+static void TCPInstallBadgeViewSites(void) {
+    Class cls = objc_getClass("SBIconBadgeView");
+    if (cls == Nil) return;
+    SEL layout = NSSelectorFromString(@"layoutSubviews");
+    if (sBadgeLayoutOrig == NULL && TCPClassDeclaresMethod(cls, layout)) {
+        MSHookMessageEx(cls, layout, (IMP)TCPBadgeLayoutHook, (IMP *)&sBadgeLayoutOrig);
+    }
+    SEL config = NSSelectorFromString(@"_configureAnimatedForText:highlighted:animator:");
+    if (sBadgeConfigOrig == NULL && TCPClassDeclaresMethod(cls, config)) {
+        MSHookMessageEx(cls, config, (IMP)TCPBadgeConfigHook, (IMP *)&sBadgeConfigOrig);
+    }
+    SEL move = NSSelectorFromString(@"didMoveToWindow");
+    if (sBadgeMoveOrig == NULL && TCPClassDeclaresMethod(cls, move)) {
+        MSHookMessageEx(cls, move, (IMP)TCPBadgeMoveHook, (IMP *)&sBadgeMoveOrig);
+    }
 }
 
 void TCPInstallBadgeSites(void) {
@@ -271,4 +448,7 @@ void TCPInstallBadgeSites(void) {
         }
         TCPInstallSitesForClassSubstrings(@[ @"Badge" ], excluding, @[ selectorName ], kind);
     }
+
+    // 0.9.11：单层化的视图侧入口（见上面 TCPInstallBadgeViewSites 的注释）。
+    TCPInstallBadgeViewSites();
 }

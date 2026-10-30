@@ -168,6 +168,9 @@ NSString *TCPBadgeProbeReport(void);
 void TCPBadgeResetStations(void);
 void TCPBadgeNoteStation(TCPSiteKind kind, BOOL replaced);
 BOOL TCPBadgeBackgroundServed(void);
+// 0.9.11：成图站交出去的是「主题底板 + 数字」整图时叫一声 —— 角标视图侧据此把系统那层底板藏掉，
+// 屏幕上只留一层（用户 2026-10-31 04:07 反馈的「原系统角标没隐藏、又叠了第三方角标」）。
+void TCPBadgeNoteComposedServed(void);
 UIImage *TCPThemedBadgeTextOnlyImage(NSString *text, UIFont *font, CGFloat scale, CGSize systemBox);
 
 // 类型安全替换（实现在 ThemeCorePlusHooks.m）：原返回什么类型就还什么类型，只把里面的图

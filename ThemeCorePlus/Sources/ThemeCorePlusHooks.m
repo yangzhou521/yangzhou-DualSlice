@@ -247,9 +247,14 @@ static id TCPBadgeTextHandle(IMP *slot, id self, SEL _cmd, NSString *text, UIFon
     CGSize box = TCPBadgeSystemBoxSize(result);
     // 单层闸门（0.9.4）：底板站这一轮已经换过底板了，这里就只交数字（透明底）——
     // 两站都画底板的话屏幕上就是同一张底板叠两层（用户说的「二个图层」）。
-    UIImage *themed = TCPBadgeBackgroundServed()
+    BOOL backgroundServed = TCPBadgeBackgroundServed();
+    UIImage *themed = backgroundServed
         ? TCPThemedBadgeTextOnlyImage(text, font, TCPUIScale(), box)
         : TCPThemedBadgeTextImage(text, font, TCPUIScale(), box);
+    // 0.9.11：交出去的是「底板 + 数字」整图时，角标视图侧要把系统自己那层底板藏掉，
+    // 否则屏幕上就是「系统底板 + 主题底板」两层（本机 iOS 16.7 底板站根本不存在，
+    // 永远是这条路：诊断 gate=composed）。
+    if (!backgroundServed && themed != nil) TCPBadgeNoteComposedServed();
     TCPBadgeNoteStation(TCPSiteKindBadgeTextImage, themed != nil);
     return TCPThemedImageReplacement(result, themed);
 }

@@ -627,6 +627,24 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     if (!*folderPath) {
         *folderPath = [self namedAssetPathInMap:named names:@[ @"anemfoldericonbg", @"foldericonbg" ]];
     }
+
+    // 7) 时钟表盘（0.9.11）：主题里的 ClockIconBackgroundSquare 当 com.apple.mobiletimer 的图标底图。
+    //    只登记**表盘**、不画指针 —— 系统的时钟图标视图（SBHClockApplicationIconImageView）
+    //    会自己在表盘上画实时指针，所以主题的时钟既「加载了主题素材」，指针又还是活的
+    //    （0.9.5 之前用 Bundles/com.apple.mobiletimer/icon.png 那种小图顶替，
+    //    指针和当天时间全没了，看起来就是「时钟图标不显示」）。
+    //    顺序同其它素材：靠后的主题已经给了图标就不覆盖。
+    if (!icons[@"com.apple.mobiletimer"]) {
+        NSMutableDictionary *clockEntry = [NSMutableDictionary dictionary];
+        NSDictionary *faceInIcons = icons[@"clockiconbackgroundsquare"];
+        if (faceInIcons.count > 0) [clockEntry addEntriesFromDictionary:faceInIcons];
+        NSDictionary *faceInNamed = named[@"clockiconbackgroundsquare"];
+        for (NSString *key in faceInNamed) {
+            NSString *dst = TCPScaleKey(key.integerValue, YES);
+            if (!clockEntry[dst]) clockEntry[dst] = faceInNamed[key];
+        }
+        if (clockEntry.count > 0) icons[@"com.apple.mobiletimer"] = clockEntry;
+    }
 }
 
 - (void)scanIconDirectory:(NSString *)dir into:(NSMutableDictionary *)icons {
@@ -948,6 +966,48 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
                     [self.renderedCGPointers addObject:
                         [NSValue valueWithPointer:(const void *)rendered.CGImage]];
                 }
+            }
+        }
+        return rendered;
+    }
+}
+
+- (UIImage *)composedClockFaceForSize:(CGSize)size
+                                scale:(CGFloat)scale
+                         cornerRadius:(CGFloat)cornerRadius {
+    if (size.width <= 0 || size.height <= 0) return nil;
+    if (scale <= 0) scale = 2.0;
+
+    // 只认分层底图。主题若只给了整张带指针的静态图（IconBundles/com.apple.mobiletimer-large.png），
+    // 这里返回 nil、保持系统原样 —— 拿那张图顶上去就是把活钟拍死（0.9.6 踩过）。
+    UIImage *face = [self imageForNamedAsset:@"ClockIconBackgroundSquare" scale:scale];
+    if (!face) return nil;
+
+    BOOL maskUsable = (self.maskPath.length > 0 && !self.maskSkipped);
+    BOOL roundCorners = cornerRadius > 0;
+    if (self.maskSkipped && size.width > 0) {
+        cornerRadius = size.width * 0.2237;
+        roundCorners = YES;
+    }
+    CGFloat cacheRadius = maskUsable ? 0 : (roundCorners ? cornerRadius : 0);
+    NSString *cacheKey = [NSString stringWithFormat:@"%lu|clockface|%.0fx%.0f|%.2f|%.2f",
+                          (unsigned long)self.generation, size.width, size.height, scale, cacheRadius];
+    UIImage *cached = [self.renderedCache objectForKey:cacheKey];
+    if (cached) return cached;
+
+    @synchronized (self) {
+        UIImage *mask = maskUsable ? [self cachedImageAtPath:self.maskPath size:CGSizeZero] : nil;
+        UIImage *rendered = TCPRenderIcon(face, nil, mask, nil, size, scale, cornerRadius, roundCorners);
+        if (rendered) {
+            [self.renderedCache setObject:rendered forKey:cacheKey];
+            if (self.renderedImages.count < 400) {
+                [self.renderedImages addObject:rendered];
+            }
+            [self.renderedImagePointers addObject:
+                [NSValue valueWithPointer:(__bridge const void *)rendered]];
+            if (rendered.CGImage && self.renderedCGPointers.count < 800) {
+                [self.renderedCGPointers addObject:
+                    [NSValue valueWithPointer:(const void *)rendered.CGImage]];
             }
         }
         return rendered;
