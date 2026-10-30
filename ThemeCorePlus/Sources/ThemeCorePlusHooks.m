@@ -214,6 +214,29 @@ TCP_SLOT_INDEX_LIST(TCP_DEFINE_FOLDERBACK_SLOT)
 static IMP *const kFolderBackSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_FOLDERBACK) };
 static const IMP kFolderBackHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_FOLDERBACK) };
 
+#pragma mark - 显示层站：无参、出显示图（UIImage / CGImage）
+
+// 包装函数只做两件事：跑原实现拿到真正的返回对象，再交给 TCPThemedDisplayReplacement
+// 按类型严丝合缝地换。绝不把 UIImage 硬塞给一个要 CGImage 的调用方。
+static id TCPDisplayHandle(IMP *slot, id self, SEL _cmd) {
+    IMP original = *slot;
+    if (original == NULL) return nil;
+    id result = ((id (*)(id, SEL))original)(self, _cmd);
+    return TCPThemedDisplayReplacement(result, self);
+}
+
+#define TCP_DEFINE_DISPLAY_SLOT(n)                                            \
+    static IMP tcpDisplayOrig##n = NULL;                                      \
+    static id tcpDisplayHook##n(id self, SEL _cmd) {                          \
+        return TCPDisplayHandle(&tcpDisplayOrig##n, self, _cmd);              \
+    }
+TCP_SLOT_INDEX_LIST(TCP_DEFINE_DISPLAY_SLOT)
+
+#define TCP_SLOT_PTR_DISPLAY(n) &tcpDisplayOrig##n,
+#define TCP_FN_PTR_DISPLAY(n) (IMP)tcpDisplayHook##n,
+static IMP *const kDisplaySlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_DISPLAY) };
+static const IMP kDisplayHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_DISPLAY) };
+
 #pragma mark - 槽位表
 
 typedef struct {
@@ -227,6 +250,7 @@ static const TCPSlotGroup kSlotGroups[TCPSiteKindCount] = {
     { kBadgeTupleSlotStorage,  kBadgeTupleHookFns },  // TCPSiteKindBadgeTuple
     { kBadgeTextSlotStorage,   kBadgeTextHookFns },   // TCPSiteKindBadgeTextImage
     { kFolderBackSlotStorage,  kFolderBackHookFns },  // TCPSiteKindFolderBackground
+    { kDisplaySlotStorage,     kDisplayHookFns },     // TCPSiteKindDisplayImage
 };
 
 #pragma mark - 挂站

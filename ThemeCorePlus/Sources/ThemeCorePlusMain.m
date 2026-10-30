@@ -30,6 +30,7 @@ static void TCPWriteProcessPreference(NSString *key, id value) {
 static NSArray<NSString *> *TCPCensusClassNames(void) {
     return @[ @"SBIconBadgeView", @"SBIconAccessoryImage", @"SBIconImageView",
               @"SBFolderIconImageView", @"SBFolderBackgroundView", @"SBFolderIconImageCache",
+              @"SBHIconImageCache", @"SBIconImageCrossfadeView", @"SBHClockApplicationIconImageView",
               @"SBIcon", @"SBHIconAccessoryCountedMapImageTuple" ];
 }
 
@@ -55,8 +56,9 @@ static void TCPWriteDiagnostics(void) {
     }
     NSString *themeText = themeNames.count > 0 ? [themeNames componentsJoinedByString:@"|"] : @"-";
 
-    NSString *text = [NSString stringWithFormat:@"%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
-                      [store diagnostics], (unsigned long)TCPTotalSiteCount(), siteList, roots,
+    NSString *text = [NSString stringWithFormat:@"%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+                      [store diagnostics], TCPDisplayProbeReport(),
+                      (unsigned long)TCPTotalSiteCount(), siteList, roots,
                       TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText];
     TCPWriteProcessPreference(TCPKeyDiagnostics, text);
 
@@ -81,6 +83,7 @@ static void TCPRelayoutIcons(void) {
 static void TCPReload(void) {
     [[TCPThemeStore shared] reload];
     TCPInstallIconSites();
+    TCPInstallDisplaySites();
     TCPInstallBadgeSites();
     TCPInstallFolderSites();
     TCPInstallFileSites();

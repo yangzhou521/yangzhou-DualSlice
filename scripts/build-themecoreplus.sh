@@ -210,9 +210,21 @@ plutil -lint "$STAGE/Library/PreferenceLoader/Preferences/$PRODUCT.plist"
 
 cp "$PREFS_BIN" "$PREFS_STAGE/$PREFS_BUNDLE"
 cp "$PREFS_SRC/Info.plist" "$PREFS_SRC/Root.plist" "$PREFS_STAGE/"
-# 设置里那一行的小图标：MarkTheme16 的 App 图标（180×180）。图标放在 bundle 里，
-# PreferenceLoader 的 icon 键写的是不带倍率后缀的裸名。
-cp "Support/ThemeCorePlusIcon@2x.png" "Support/ThemeCorePlusIcon@3x.png" "$PREFS_STAGE/"
+# 设置里那一行的小图标：MarkTheme16 的 App 图标（源图 180×180）。
+# 原样拷进包会按 90pt 显示 = 明显比别人大一圈；PreferenceLoader 的列表图标要的是 29pt，
+# 也就是 29/58/87 三档（本机其它插件实测量到的就是这个）。本机没有缩放工具，
+# CI 的 macOS runner 有 sips，所以缩放在这里做，仓库里的源图不动。
+for icon_size in 29 58 87; do
+  case "$icon_size" in
+    29) icon_name="${PRODUCT}Icon.png" ;;
+    *)  icon_name="${PRODUCT}Icon@$((icon_size / 29))x.png" ;;
+  esac
+  sips -z "$icon_size" "$icon_size" "Support/${PRODUCT}Icon@3x.png" \
+       --out "$PREFS_STAGE/$icon_name" >/dev/null
+done
+for staged_icon in "$PREFS_STAGE"/"$PRODUCT"Icon*.png; do
+  echo "build-themecoreplus.sh: $(basename "$staged_icon") $(sips -g pixelWidth -g pixelHeight "$staged_icon" | tr -d ' \n')"
+done
 # 版本只有一处来源：拷进包之后按 VERSION 改写 Info.plist，防止两处漂移。
 plutil -replace CFBundleShortVersionString -string "$VERSION" "$PREFS_STAGE/Info.plist"
 plutil -lint "$PREFS_STAGE/Info.plist"

@@ -52,6 +52,13 @@ typedef NS_ENUM(NSUInteger, TCPSiteKind) {
     TCPSiteKindBadgeTextImage,
     // 文件夹底板：无参、出 UIImage
     TCPSiteKindFolderBackground,
+    // 图标显示层：SBIconImageView 的 displayedImage / contentsImage / squareContentsImage，
+    // 无参、出「屏幕上那张图」（UIImage 或 CGImage）。
+    // 为什么要有这一站：iOS 16 起 SBIcon 的 -iconImageWithInfo: 在 SpringBoard 里没有调用者
+    // （实测 look=0，站点挂了但一次没被问过），图由 IconServices 生成、经缓存直接交给视图显示。
+    // 实证：ThemeCore 0.5.1 注入的类里同样有 SBIconImageView / SBIconView，
+    // MarkTheme16 0.2.0 则整套 MTIcon*SnapshotModule 挂在 IconServices 的图集管线上。
+    TCPSiteKindDisplayImage,
     TCPSiteKindCount
 };
 
@@ -75,6 +82,11 @@ NSString *TCPCensusForClasses(NSArray<NSString *> *classNames, NSUInteger limit)
 // —— 站点拿到机会时问模块要替换素材；模块拿不出就返回 nil / 原对象，包装函数照原样转发 ——
 // 由 ThemeCorePlusIcons.m / ThemeCorePlusBadges.m / ThemeCorePlusFolders.m 实现。
 UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info);
+// 显示层站：original 是视图正要画的那张图（UIImage 或 CGImage），view 是 SBIconImageView。
+// 换不了（没素材、尺寸未知）就原样返回 original。
+id TCPThemedDisplayReplacement(id original, id view);
+// 显示层打点：look/hit/未换原因，写进诊断。
+NSString *TCPDisplayProbeReport(void);
 UIImage *TCPThemedBadgeBackground(CGFloat scale);
 UIImage *TCPThemedBadgeTextImage(NSString *text, UIFont *font, CGFloat scale);
 UIImage *TCPThemedFolderBackground(CGFloat scale);
