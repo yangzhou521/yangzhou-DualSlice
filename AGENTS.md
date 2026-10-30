@@ -86,12 +86,23 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 ## 外出取证：去别的 App，必须回到 Apelin
 
-用户在聊天里看不到屏幕：进设置（或任何别的 App）取证时，屏幕离开 Apelin 就是黑箱，
-所以单次外出**有时限、且收尾必定回到 Apelin**。默认上限 60 秒（典型 30–40 秒），
-汇报里要写清这次外出了多少秒；不要停在设置里汇报，也不要把验证推回给用户。
+用户在聊天里看不到屏幕：进设置（或任何别的 App）取证时，屏幕离开 Apelin 就是黑箱，所以单次
+外出**有时限、且收尾必定回到 Apelin**。用户 2026-10-30 明确要求「不要再让我手动回来」：
+他自己切回来会打断「设置屏上的面板是否正常」的现场判断，也不方便他随时回来看我们干活。规矩：
 
-机制：`sh scripts/errand-in-app.sh <bundle-id> [秒]` —— 回程写在 `trap EXIT/INT/TERM` 里
-（报错、超时、Ctrl-C 都会回），末尾一行 `回到 Apelin: <前景 bundle-id>` 用
-`icli app frontmost` 校验。本机实测（2026-10-30）：外出 8 秒，回来前台 = `wiki.qaq.apelin`。
-`icli screen shot` 可用，但 `icli screen describe` 在本机恒返回 `screen capture failed`，
-界面结构要用 Apelin 的 `apelin_screen_read_tree`，或把截图 `cp` 进工程用 `file_show` 给用户看。
+- 默认上限 **60 秒**（实测一次完整往返 14 秒），汇报里写清这次外出了多少秒。
+- 不需要看屏幕的长步骤（云编译、下载、装包）**不占屏幕**，屏幕留在 Apelin，
+  只有真要动屏幕的那十几秒才外出。
+- 不要停在设置里汇报，也不要把验证推回给用户。
+
+机制：`sh scripts/errand-in-app.sh <bundle-id> [秒] [要点的元素文字]` —— **一次调用就把证据带回来**：
+进目标 App → `icli ui tap "<文字>"` 按 label 点元素 → 截图 → `icli ui tree` 界面元素树 → 回程。
+回程写在 `trap EXIT/INT/TERM` 里（报错、超时、Ctrl-C 都会回），末尾用 `icli app frontmost` 校验并打印
+`回到 Apelin: <前景 bundle-id>（外出 N 秒）`。本机实测（2026-10-30）：完整往返 14 秒，
+回程后前台 = `wiki.qaq.apelin`。
+
+读界面结构：`icli ui tree [--human] [--clickable-only]`（本机 `icli screen describe` /
+`icli screen ocr` 恒返回 `screen capture failed`）；Apelin 的 `apelin_screen_read_tree` 只在
+前台就是目标 App 时才有意义。`icli screen shot` 可用，要给用户看时 `cp` 进工程再 `file_show`。
+点元素别用坐标（`icli screen tap x y` 在列表里跑偏过），用 `icli ui tap "<文字>"`。
+
