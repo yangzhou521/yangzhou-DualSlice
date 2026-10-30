@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.1.0)
+    name: Release (countdownhud-v1.1.1)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,14 +133,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.1.0
-          name: CountdownHUD v1.1.0
+          tag_name: countdownhud-v1.1.1
+          name: CountdownHUD v1.1.1
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
 
             为什么不靠通知：Apelin 的本地通知在发送瞬间会把 App 拉回前台，横幅被它自己的
             UNUserNotificationCenterDelegate 吞掉，既看不到、也进不了灵动岛。这个插件不碰通知，
             直接在 SpringBoard 顶层窗口画。
+
+            v1.1.1：胶囊上的文字压到原来的 2/3（高度 ÷ 3，本机 125×37 的岛上约 12.3pt），
+            并改成等宽数字 + Medium 字重（数字每秒跳动不再左右抖）。
 
             v1.1.0：胶囊不再写死 190×44，改为在 SpringBoard 自己的窗口里找灵动岛容器
             （优先 SystemAperture 窗口），按它的 frame 摆放 —— 尺寸与位置和岛一致，
@@ -157,4 +160,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.1.0/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.1.1/$(basename "$DEB")"

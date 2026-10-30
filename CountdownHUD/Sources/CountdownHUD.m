@@ -1,6 +1,8 @@
 //
 // CountdownHUD.m —— SpringBoard 侧的自绘倒计时胶囊（「倒计时上岛」）
 //
+// v1.1.1：文字压到原来的 2/3（位置系数「高度 × 0.5」→「高度 ÷ 3」，本机 125×37 的岛上
+//   约 12.3pt），并换成等宽数字 + Medium 字重 —— 用户 2026-10-30 反馈「字体太大、不够精致」。
 // v1.1.0：胶囊不再用写死的 190×44，而是**量着岛画**。
 //   本机的「灵动岛」不是硬件自带的（iPhone10,1 = iPhone 8），是 DynamicX 用系统那套
 //   SBSystemAperture* 造出来的假岛；外观还被 IslandGlass 换肤、位置由 VisibleIsland 的
@@ -11,7 +13,7 @@
 //
 //   量到了什么，写在诊断里：
 //     icli prefs read com.apple.springboard CountdownHUDDiagnostics
-//     → v1.1.0;shows=N;last=5s;label=注销;island=<类名>|x,y,w,h;src=aperture;cand=N
+//     → v1.1.1;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N
 //   候选清单另写一条 CountdownHUDIslandCandidates（最多 8 行：`A|<类名>|x,y,w,h`，
 //   前缀 A = 该候选在 SystemAperture 窗口里），量错了好回头核对。
 //
@@ -35,7 +37,7 @@
 #import <math.h>
 #import <os/log.h>
 
-static NSString *const CHVersion = @"1.1.0";
+static NSString *const CHVersion = @"1.1.1";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static const NSTimeInterval CHPollInterval = 0.5;
 
@@ -85,6 +87,7 @@ static BOOL gFollowIsland = YES;          // 量到岛就跟着岛走
 static NSString *gIslandDetail = @"-";    // 诊断串：<类名>|x,y,w,h
 static NSString *gIslandSource = @"none"; // aperture / classname / none
 static NSUInteger gIslandCandidates = 0;
+static CGFloat gFontSize = 12.5;         // v1.1.1：诊断串里报出来，省得靠眼睛量字号
 
 static UIWindowScene *CHActiveScene(void) {
     UIApplication *app = [UIApplication sharedApplication];
@@ -334,9 +337,10 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
 }
 
 static void CHWriteDiagnostics(void) {
-    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;island=%@;src=%@;cand=%lu",
+    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu",
                          CHVersion, gShows, gLastSeconds,
                          gLabelText.length ? gLabelText : @"-",
+                         gFontSize,
                          gIslandDetail, gIslandSource,
                          (unsigned long)gIslandCandidates];
     CFPreferencesSetAppValue(CFSTR("CountdownHUDDiagnostics"),
@@ -352,9 +356,12 @@ static void CHApplyPillRect(CGRect rect) {
     gPill.frame = rect;
     gPill.layer.cornerRadius = MIN(rect.size.height, rect.size.width) / 2.0;
     gLabel.frame = gPill.bounds;
-    CGFloat size = rect.size.height * 0.5;
-    size = MAX(11.0, MIN(size, 19.0));
-    gLabel.font = [UIFont systemFontOfSize:size weight:UIFontWeightSemibold];
+    // v1.1.1：原先取高度的一半（125×37 的岛＝18.5pt），用户嫌大；压到 2/3 → 高度 ÷ 3。
+    CGFloat size = rect.size.height / 3.0;
+    size = MAX(9.0, MIN(size, 16.0));
+    // 等宽数字：每秒跳动的数字不会左右抖；Medium 比 Semibold 细一号，更像系统岛的观感。
+    gFontSize = size;
+    gLabel.font = [UIFont monospacedDigitSystemFontOfSize:size weight:UIFontWeightMedium];
 }
 
 static void CHLayOut(void) {
@@ -398,7 +405,7 @@ static void CHBuildIfNeeded(void) {
     gLabel = [[UILabel alloc] initWithFrame:gPill.bounds];
     gLabel.textAlignment = NSTextAlignmentCenter;
     gLabel.textColor = [UIColor whiteColor];
-    gLabel.font = [UIFont systemFontOfSize:19.0 weight:UIFontWeightSemibold];
+    gLabel.font = [UIFont monospacedDigitSystemFontOfSize:12.5 weight:UIFontWeightMedium];
     gLabel.adjustsFontSizeToFitWidth = YES;
     gLabel.minimumScaleFactor = 0.55;
     gLabel.userInteractionEnabled = NO;
