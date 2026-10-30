@@ -100,8 +100,8 @@ static NSString *TCPDiagnosticsText(void) {
 @end
 
 @implementation TCPThemeChooserController {
-    NSArray<NSString *> *_themePaths;   // 第 0 项固定为空串 = 系统原生外观
-    NSString *_currentPath;
+    NSArray<NSString *> *_rows;             // 第 0 项固定为空串 = 系统原生外观
+    NSMutableArray<NSString *> *_selected;  // 勾选顺序 = 叠加顺序：靠后的主题覆盖靠前的
 }
 
 - (instancetype)initWithStyle:(UITableViewStyle)style {
@@ -136,43 +136,68 @@ static NSString *TCPDiagnosticsText(void) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.tableView.rowHeight = 56.0;
+    // 多选页勾完不自动返回（要继续勾别的），所以给一个明确的出口；Preferences 的返回按钮同样能回去。
+    self.navigationItem.rightBarButtonItem =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonItemStyleDone
+                                                      target:self
+                                                      action:@selector(tcpFinish)];
     [self tcpReloadThemes];
+}
+
+- (void)tcpFinish {
+    [self.navigationController popViewControllerAnimated:YES];
 }
 
 - (void)tcpReloadThemes {
     TCPThemeStore *store = [TCPThemeStore shared];
     [store reload];                       // 进来就重扫：新加的主题立刻能选
-    NSString *current = store.themePath;
-    _currentPath = [current isKindOfClass:[NSString class]] ? current : @"";
-    NSMutableArray<NSString *> *paths = [NSMutableArray arrayWithObject:@""];
-    [paths addObjectsFromArray:[store availableThemePaths]];
-    _themePaths = paths;
+    // 已经生效的叠加链（store 只给确实存在的目录，顺序就是叠加顺序）。
+    _selected = [NSMutableArray array];
+    for (NSString *path in store.themePaths) {
+        if ([path isKindOfClass:[NSString class]] && path.length > 0) [_selected addObject:path];
+    }
+    NSMutableArray<NSString *> *rows = [NSMutableArray arrayWithObject:@""];
+    [rows addObjectsFromArray:[store availableThemePaths]];
+    _rows = rows;
     [self.tableView reloadData];
 }
 
+// 第 0 段只有一行（系统原生外观）；第 1 段从 _rows[1] 开始，所以行号要 +1。
 - (NSString *)tcpPathAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger row = indexPath.section == 0 ? 0 : indexPath.row + 1;
-    if (row < 0 || row >= (NSInteger)_themePaths.count) return @"";
-    return _themePaths[(NSUInteger)row];
+    if (row < 0 || row >= (NSInteger)_rows.count) return @"";
+    return _rows[(NSUInteger)row];
+}
+
+// 这个主题排在叠加链第几层（1 起）；0 = 没勾。
+- (NSInteger)tcpLayerForPath:(NSString *)path {
+    NSUInteger index = [_selected indexOfObject:path];
+    return index == NSNotFound ? 0 : (NSInteger)index + 1;
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return _themePaths.count > 0 ? 2 : 1;
+    return _rows.count > 0 ? 2 : 1;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 0) return 1;
-    return (NSInteger)_themePaths.count - 1;
+    return (NSInteger)_rows.count - 1;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     if (section == 0) return nil;
-    return [NSString stringWithFormat:@"主题（%lu 个）", (unsigned long)(_themePaths.count - 1)];
+    return [NSString stringWithFormat:@"主题（%lu 个）", (unsigned long)(_rows.count - 1)];
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    if (section != 1) return nil;
-    return @"选中即生效，不用注销：桌面图标会自己重取一遍图。";
+    if (section == 0) {
+        return @"可以多选：勾几个就叠几层，副标题里的「第 N 层」就是叠加顺序 —— 数字大的盖住数字小的（同一张素材谁在上层就用谁的）。"
+               @"「图标包 ＋ 角标包」这种各管一块的组合随便勾；重叠的部分后勾的那个说了算。再点一次 = 取消这一层。";
+    }
+    if (section == 1) {
+        return @"勾完点右上角「完成」（或左上角返回）。选中立刻生效，不用注销：桌面图标会自己重取一遍图。";
+    }
+    return nil;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -186,17 +211,25 @@ static NSString *TCPDiagnosticsText(void) {
     NSString *path = [self tcpPathAtIndexPath:indexPath];
     if (path.length == 0) {
         cell.textLabel.text = @"系统原生外观";
-        cell.detailTextLabel.text = @"不套任何主题素材";
-    } else {
-        NSString *name = path.lastPathComponent;
-        if ([name hasSuffix:@".theme"]) name = [name stringByDeletingPathExtension];
-        cell.textLabel.text = name;
-        // 副标题写它所在的根目录名：面板扫到的主题可能来自 /Library/ThemeCore，也可能来自 /Library/Themes
-        NSString *root = [path stringByDeletingLastPathComponent].lastPathComponent;
-        cell.detailTextLabel.text = root.length > 0 ? root : path;
+        cell.detailTextLabel.text = _selected.count > 0
+            ? @"点它 = 清空全部主题"
+            : @"不套任何主题素材";
+        cell.accessoryType = _selected.count == 0 ? UITableViewCellAccessoryCheckmark
+                                                  : UITableViewCellAccessoryNone;
+        return cell;
     }
-    cell.accessoryType = [path isEqualToString:_currentPath] ? UITableViewCellAccessoryCheckmark
-                                                             : UITableViewCellAccessoryNone;
+
+    NSString *name = path.lastPathComponent;
+    if ([name hasSuffix:@".theme"]) name = [name stringByDeletingPathExtension];
+    cell.textLabel.text = name;
+    // 副标题写它所在的根目录名：面板扫到的主题可能来自 /Library/ThemeCore，也可能来自 /Library/Themes
+    NSString *root = [path stringByDeletingLastPathComponent].lastPathComponent;
+    if (root.length == 0) root = path;
+    NSInteger layer = [self tcpLayerForPath:path];
+    cell.detailTextLabel.text = layer > 0
+        ? [NSString stringWithFormat:@"叠加第 %ld 层 · %@", (long)layer, root]
+        : root;
+    cell.accessoryType = layer > 0 ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
     return cell;
 }
 
@@ -204,17 +237,34 @@ static NSString *TCPDiagnosticsText(void) {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 
     NSString *path = [self tcpPathAtIndexPath:indexPath];
-    if (path.length > 0) {
-        TCPWritePreference(TCPKeyThemePath, path);
+    if (path.length == 0) {
+        [_selected removeAllObjects];                       // 系统原生外观 = 清空整条链
     } else {
-        TCPWritePreference(TCPKeyThemePath, nil);   // 「系统原生外观」= 清掉
+        NSInteger layer = [self tcpLayerForPath:path];
+        if (layer > 0) {
+            [_selected removeObjectAtIndex:(NSUInteger)(layer - 1)];   // 再点一次 = 去掉这一层
+        } else if (_selected.count >= TCPMaxThemeLayers) {
+            // 到上限就明说，别静默丢掉用户这一勾（诊断里也只会显示前 8 层）。
+            UIAlertController *alert =
+                [UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"最多叠 %lu 层", (unsigned long)TCPMaxThemeLayers]
+                                                    message:@"每多一层都要把整个主题目录重扫一遍，叠太多既卡又没法排查是哪层出的问题。先取消一层再勾。"
+                                             preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:alert animated:YES completion:nil];
+            return;
+        } else {
+            [_selected addObject:path];                                // 后勾的 = 更上层（覆盖先勾的）
+        }
     }
-    TCPWritePreference(TCPKeyThemeName, nil);       // 两个键只留一个，免得互相打架
-    TCPPostPreferencesChanged();                    // SpringBoard 收到立刻重读 + 重取图标图
+    // 只留 ThemePaths 一个键：旧的两个键是单主题时代的写法，留着只会跟叠加链打架。
+    // 空数组 = 删键 = 系统原生外观（传 nil 给 CFPreferencesSetAppValue 就是删）。
+    NSArray<NSString *> *chain = _selected.count > 0 ? [_selected copy] : nil;
+    TCPWritePreference(TCPKeyThemePaths, chain);
+    TCPWritePreference(TCPKeyThemePath, nil);
+    TCPWritePreference(TCPKeyThemeName, nil);
+    TCPPostPreferencesChanged();                            // SpringBoard 收到立刻重读 + 重取图标图
 
-    _currentPath = path;
-    [tableView reloadData];
-    [self.navigationController popViewControllerAnimated:YES];
+    [tableView reloadData];                                 // 停在原地继续勾，不自动返回
 }
 
 @end
@@ -267,15 +317,18 @@ static NSString *TCPDiagnosticsText(void) {
 // detail 类交给 Preferences push —— 但那一页是纯 UIKit，没有 specifier 流程，见文件上半部分。
 - (PSSpecifier *)tcpThemeEntryRow {
     TCPThemeStore *store = [TCPThemeStore shared];
+    NSArray<NSString *> *active = store.themePaths;
     NSString *current = store.themeName;
-    if (![current isKindOfClass:[NSString class]] || current.length == 0) {
-        NSString *name = store.themePath.lastPathComponent;   // 「液态玻璃.theme」→「液态玻璃」
-        if ([name hasSuffix:@".theme"]) name = [name stringByDeletingPathExtension];
-        current = name;
+    if (current.length == 0 && active.count > 0) {
+        current = active.lastObject.lastPathComponent;   // 「液态玻璃.theme」→「液态玻璃」
+        if ([current hasSuffix:@".theme"]) current = [current stringByDeletingPathExtension];
     }
-    NSString *title = current.length > 0
-        ? [NSString stringWithFormat:@"生效主题：%@", current]
-        : @"生效主题：系统原生外观";
+    NSString *title = @"生效主题：系统原生外观";
+    if (current.length > 0) {
+        title = active.count > 1
+            ? [NSString stringWithFormat:@"生效主题：%@（%lu 层叠加）", current, (unsigned long)active.count]
+            : [NSString stringWithFormat:@"生效主题：%@", current];
+    }
 
     return [PSSpecifier preferenceSpecifierNamed:title
                                           target:self
@@ -311,7 +364,7 @@ static NSString *TCPDiagnosticsText(void) {
     TCPThemeStore *store = [TCPThemeStore shared];
     [specs addObject:[self tcpGroupWithHeader:@"主题"
                                        footer:[NSString stringWithFormat:
-                                               @"v%@ · %@\n点「生效主题」从 %lu 个主题里挑一个：选中立刻生效，不用注销。",
+                                               @"v%@ · %@\n点「生效主题」从 %lu 个主题里挑：可以多选（叠加），靠后的覆盖靠前的。",
                                                TCP_VERSION, TCPCurrentStatusLine(),
                                                (unsigned long)[store availableThemePaths].count]]];
     [specs addObject:[self tcpSwitchNamed:@"启用主题美化" key:TCPKeyEnabled]];
@@ -373,6 +426,10 @@ static NSString *TCPDiagnosticsText(void) {
 - (id)readPreferenceValue:(id)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
 
+    if ([key isEqualToString:TCPKeyThemePaths]) {
+        // 以实际生效的叠加链为准（也可能来自旧的 ThemePath / ThemeName，或 shell 手写的路径）。
+        return [TCPThemeStore shared].themePaths ?: @[];
+    }
     if ([key isEqualToString:TCPKeyThemePath]) {
         // 以实际生效的主题为准（也可能来自 ThemeName，或 shell 手写的路径）。
         NSString *active = [TCPThemeStore shared].themePath;
@@ -394,6 +451,8 @@ static NSString *TCPDiagnosticsText(void) {
         NSString *chosen = [value isKindOfClass:[NSString class]] ? value : @"";
         // ThemePath 和 ThemeName 留两个只会互相打架：这里只用 ThemePath。
         TCPWritePreference(TCPKeyThemeName, nil);
+        // 一旦有谁写单主题键，叠加链就退位：两个键不共存，免得规则说不清。
+        TCPWritePreference(TCPKeyThemePaths, nil);
         if (chosen.length == 0) {
             TCPWritePreference(TCPKeyThemePath, nil);   // 「系统原生外观」
         }
@@ -406,7 +465,8 @@ static NSString *TCPDiagnosticsText(void) {
 #pragma mark 按钮动作
 
 - (void)tcpRestoreNativeAppearance {
-    TCPWritePreference(TCPKeyThemePath, nil);
+    TCPWritePreference(TCPKeyThemePaths, nil);   // 叠加链
+    TCPWritePreference(TCPKeyThemePath, nil);    // 旧的两个单主题键一并清掉
     TCPWritePreference(TCPKeyThemeName, nil);
     TCPPostPreferencesChanged();
     [self reloadSpecifiers];

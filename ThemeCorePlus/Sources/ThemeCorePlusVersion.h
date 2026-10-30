@@ -6,4 +6,4 @@
 //
 #pragma once
 
-#define TCP_VERSION @"0.6.1"
+#define TCP_VERSION @"0.7.0"

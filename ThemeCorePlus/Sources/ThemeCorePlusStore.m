@@ -188,6 +188,7 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 @property (atomic) BOOL active;
 @property (atomic, copy) NSString *themeName;
 @property (atomic, copy) NSString *themePath;
+@property (atomic, copy) NSArray<NSString *> *themePaths;   // 叠加链，靠后的优先
 @property (atomic, copy) NSDictionary<NSString *, id> *badgeSettings;
 @property (atomic) BOOL cornerMaskOn;
 
@@ -287,11 +288,7 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     __block NSString *maskPath = nil, *basePath = nil, *overlayPath = nil, *folderPath = nil;
 
     BOOL enabled = TCPBoolValue(values, TCPKeyEnabled, YES);
-    NSString *themePath = nil;
-    NSString *themeName = nil;
-    if (enabled) {
-        themePath = [self resolveThemePathWithValues:values outName:&themeName];
-    }
+    NSArray<NSString *> *paths = enabled ? [self resolveThemePathsWithValues:values] : @[];
 
     NSUInteger flags = 0;
     if (TCPBoolValue(values, TCPKeyIconsEnabled, YES)) flags |= TCPFeatureIcons;
@@ -299,8 +296,11 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     if (TCPBoolValue(values, TCPKeyBadgesEnabled, YES)) flags |= TCPFeatureBadges;
     if (TCPBoolValue(values, TCPKeyFilesEnabled, YES)) flags |= TCPFeatureFiles;
 
-    if (themePath) {
-        [self scanThemeAtPath:themePath
+    // 多层叠加：扫描器是「先到先得」的（见 indexDirectory / scanIconDirectory 里的 if (!entry[key])），
+    // 所以**从最后一层往前扫**：靠后的主题先落表、也就覆盖掉了靠前的。单个主题内部的行为
+    //（同名素材按文件名序取第一个）与只支持单主题时一字不差。
+    for (NSString *theme in [paths reverseObjectEnumerator]) {
+        [self scanThemeAtPath:theme
                         icons:icons
                     namedMap:named
                   globalFiles:globalFiles
@@ -321,9 +321,16 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         self.basePath = basePath;
         self.overlayPath = overlayPath;
         self.folderPath = folderPath;
-        self.themePath = themePath;
-        self.themeName = themeName ?: (themePath ? [themePath lastPathComponent] : nil);
-        self.active = (themePath != nil);
+        self.themePaths = paths;
+        self.themePath = paths.lastObject;   // 最上层那个
+        NSMutableArray<NSString *> *names = [NSMutableArray array];
+        for (NSString *path in paths) {
+            NSString *name = path.lastPathComponent;
+            if ([name hasSuffix:@".theme"]) name = [name stringByDeletingPathExtension];
+            if (name.length > 0) [names addObject:name];
+        }
+        self.themeName = names.count > 0 ? [names componentsJoinedByString:@" + "] : nil;
+        self.active = (paths.count > 0);
         self.featureFlags = flags;
         self.generation = self.generation + 1;
         self.iconLookups = self.iconHits = self.badgeLookups = self.badgeHits = self.fileLookups = self.fileHits = 0;
@@ -364,7 +371,32 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     return [size isKindOfClass:[NSNumber class]] ? size.doubleValue : 0;
 }
 
-// 主题目录：ThemePath（绝对路径）优先，其次在主题根目录里找 ThemeName，
+// 生效叠加链：ThemePaths（有序数组，靠后的优先）优先；没有才退回旧的单主题键。
+// 只保留**确实存在**的目录，顺序保持配置里的顺序 —— 面板与诊断都按这个顺序说事。
+- (NSArray<NSString *> *)resolveThemePathsWithValues:(NSDictionary *)values {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL isDir = NO;
+    NSMutableArray<NSString *> *paths = [NSMutableArray array];
+
+    id raw = values[TCPKeyThemePaths];
+    if ([raw isKindOfClass:[NSArray class]]) {
+        for (id entry in (NSArray *)raw) {
+            if (paths.count >= TCPMaxThemeLayers) break;   // 见 Keys.h：层数上限，面板同一口径
+            if (![entry isKindOfClass:[NSString class]] || [entry length] == 0) continue;
+            NSString *path = (NSString *)entry;
+            if ([paths containsObject:path]) continue;   // 同一层只叠一次
+            if ([fm fileExistsAtPath:path isDirectory:&isDir] && isDir) {
+                [paths addObject:path];
+            }
+        }
+    }
+    if (paths.count > 0) return paths;
+
+    NSString *single = [self resolveThemePathWithValues:values outName:NULL];
+    return single ? @[ single ] : @[];
+}
+
+// 单主题（旧写法）：ThemePath（绝对路径）优先，其次在主题根目录里找 ThemeName，
 // 都没给就不挂主题 —— 这就是「回滚到原生外观」的实现。
 - (NSString *)resolveThemePathWithValues:(NSDictionary *)values outName:(NSString **)outName {
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -493,25 +525,35 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     }
 
     // 6) 作者素材：配置里的相对路径 → 素材规范名 → 内置候选相对路径。
-    *maskPath = [self resolveAssetForValues:values
-                                       key:TCPKeyAuthorMask
-                                     theme:theme
-                                  namedMap:named
-                                     names:@[ @"appiconmask", @"iconmask" ]
-                                candidates:@[ @"AppIconMask@2x.png", @"AppIconMask@3x.png", @"AppIconMask.png" ]];
-    *basePath = [self resolveAssetForValues:values
-                                        key:TCPKeyBaseImage
-                                      theme:theme
-                                   namedMap:named
-                                      names:@[ @"iconbase", @"appiconbase" ]
-                                 candidates:@[ @"IconBase@2x.png", @"IconBase@3x.png", @"IconBase.png" ]];
-    *overlayPath = [self resolveAssetForValues:values
-                                           key:TCPKeyIconOverlay
+    //    多层叠加时**表里已有的不受影响**：只有上面几层都没给这一样素材，才轮到下面这层来补。
+    //    与「从最后一层往前扫」合起来，就是「靠后的主题优先，缺的由靠前的补」。
+    if (!*maskPath) {
+        *maskPath = [self resolveAssetForValues:values
+                                           key:TCPKeyAuthorMask
                                          theme:theme
                                       namedMap:named
-                                         names:@[ @"iphoneoverlay", @"iconoverlay" ]
-                                    candidates:@[ @"iPhoneOverlay@3x.png", @"IconOverlay@2x.png", @"IconOverlay@3x.png" ]];
-    *folderPath = [self namedAssetPathInMap:named names:@[ @"anemfoldericonbg", @"foldericonbg" ]];
+                                         names:@[ @"appiconmask", @"iconmask" ]
+                                    candidates:@[ @"AppIconMask@2x.png", @"AppIconMask@3x.png", @"AppIconMask.png" ]];
+    }
+    if (!*basePath) {
+        *basePath = [self resolveAssetForValues:values
+                                            key:TCPKeyBaseImage
+                                          theme:theme
+                                       namedMap:named
+                                          names:@[ @"iconbase", @"appiconbase" ]
+                                     candidates:@[ @"IconBase@2x.png", @"IconBase@3x.png", @"IconBase.png" ]];
+    }
+    if (!*overlayPath) {
+        *overlayPath = [self resolveAssetForValues:values
+                                               key:TCPKeyIconOverlay
+                                             theme:theme
+                                          namedMap:named
+                                             names:@[ @"iphoneoverlay", @"iconoverlay" ]
+                                        candidates:@[ @"iPhoneOverlay@3x.png", @"IconOverlay@2x.png", @"IconOverlay@3x.png" ]];
+    }
+    if (!*folderPath) {
+        *folderPath = [self namedAssetPathInMap:named names:@[ @"anemfoldericonbg", @"foldericonbg" ]];
+    }
 }
 
 - (void)scanIconDirectory:(NSString *)dir into:(NSMutableDictionary *)icons {
@@ -799,11 +841,20 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         if (samples.length > 240) samples = [samples substringToIndex:240];
         NSString *hits = self.hitSamples.count > 0 ? [self.hitSamples componentsJoinedByString:@","] : @"-";
         if (hits.length > 240) hits = [hits substringToIndex:240];
+        // 叠加链：n 是层数，[...] 是从最下层到最上层的目录名（最右边那个说了算）。
+        NSMutableArray<NSString *> *chain = [NSMutableArray array];
+        for (NSString *path in self.themePaths) {
+            [chain addObject:path.lastPathComponent];
+        }
+        NSString *themes = chain.count > 0 ? [chain componentsJoinedByString:@"|"] : @"-";
+        if (themes.length > 160) themes = [themes substringToIndex:160];
         return [NSString stringWithFormat:
-                @"v%@;active=%d;theme=%@;gen=%lu;icon{look=%lu,hit=%lu};badge{look=%lu,hit=%lu};file{look=%lu,hit=%lu};named=%lu;mask=%d;base=%d;overlay=%d;folder=%d;hit=[%@];miss=[%@]",
+                @"v%@;active=%d;theme=%@;themes=%lu[%@];gen=%lu;icon{look=%lu,hit=%lu};badge{look=%lu,hit=%lu};file{look=%lu,hit=%lu};named=%lu;mask=%d;base=%d;overlay=%d;folder=%d;hit=[%@];miss=[%@]",
                 TCP_VERSION,
                 self.active ? 1 : 0,
                 self.themeName ?: @"-",
+                (unsigned long)self.themePaths.count,
+                themes,
                 (unsigned long)self.generation,
                 (unsigned long)self.iconLookups, (unsigned long)self.iconHits,
                 (unsigned long)self.badgeLookups, (unsigned long)self.badgeHits,

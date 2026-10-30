@@ -19,8 +19,11 @@
 
 // —— 生效状态（诊断用）——
 @property (atomic, readonly) BOOL active;             // 是否挂上了主题（没挂 = 系统原生外观）
+// themeName 是**所有生效主题**的名字用 " + " 连起来（按叠加顺序），单个主题时就是它自己。
 @property (atomic, copy, readonly) NSString *themeName;
+// themePath 是**最上层**那个主题（数组最后一个）；themePaths 是完整的叠加链，靠后的优先。
 @property (atomic, copy, readonly) NSString *themePath;
+@property (atomic, copy, readonly) NSArray<NSString *> *themePaths;
 @property (atomic, readonly) NSUInteger generation;   // 每次 reload +1，缓存键里带它
 
 // —— 功能独立开关（各自默认开）——

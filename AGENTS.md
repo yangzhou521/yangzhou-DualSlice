@@ -35,9 +35,9 @@
 
 改完源码 push 到 `main`：只有 `ThemeCorePlus/**`、`Prefs/**`、`Support/ThemeCorePlus*`、
 `scripts/build-themecoreplus.sh`、工作流自身变动才会触发（paths 过滤），以免白白重建已经验过的包。
-同一次运行里发 Release（静态 tag `themecoreplus-v0.6.0`，每次运行都重建资产，sha256/体积会变）。
+同一次运行里发 Release（静态 tag `themecoreplus-v0.7.0`，每次运行都重建资产，sha256/体积会变）。
 Release 资产地址：
-`https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.6.0/com.yangzhou.themecoreplus_0.6.0_iphoneos-arm64e.deb`
+`https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.7.0/com.yangzhou.themecoreplus_0.7.0_iphoneos-arm64e.deb`
 
 可读的验证信息都写成 check-run annotation（`::notice/::error title=…`）：job 日志要登录才能看，
 公开仓库的 annotations 匿名可读（`/repos/{owner}/{repo}/check-runs/{id}/annotations`）。
@@ -154,18 +154,38 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   （候选清单还有 `UIView|125,18,125,37`、`_SBSystemApertureGainMapView|125,18,125,37`、
   `UIView|115,17,145,47`）—— 也就是说 DynamicX 的岛本体就是 **125×37、居中、y=18**，
   胶囊现在按这个矩形画（屏幕上的观感以用户确认为准）。
-- ThemeCorePlus 0.6.0 **已装机验证（2026-10-30）**：面板「主题美化 +」原先推入后空白（0 段 0 行）已修，
-  用户在屏幕上确认能正常进入。复核脚本 `probe-prefs-check.js`（在 icli 进程里 load 面板 bundle、
-  走真实生命周期）：`view()+viewWillAppear:` → **5 段 8 行 / 13 个单元**，重复进入与连续 reload 稳定。
-- 装机用的包：Release `themecoreplus-v0.6.0` 资产（GitHub Actions run 40983356266 编译），
-  100720 B，sha256 `beba61e58738a7b268e46f1482ac604d1a048dce7c6df15fe7662d55d61f98b7`，
-  装机副本 `/rootfs/var/mobile/Documents/themecoreplus-f351970.deb`。二进制里核对过新代码标记
-  `_tcpApplyingSpecifiers`（旧包没有）。**装包不会 reload 已跑的 SpringBoard**，改 dylib 必须重启进程才算数。
-- dylib 在 SpringBoard 里活着：`icli prefs read com.apple.springboard ThemeCorePlusDiagnostics`
-  = `v0.6.0;active=0;theme=-;gen=7;…;sites=10[-SBIcon:iconImageWithInfo:,…];roots=[…]`，
-  `ThemeCorePlusCensus` 里 SBIconBadgeView / SBIconImageView / SBFolderIconImageView 都有。
+- ThemeCorePlus **0.6.1 已装机（2026-10-30 12:05 起）**，SpringBoard 稳定、脱离安全模式：
+  `icli prefs read com.apple.springboard ThemeCorePlusDiagnostics` =
+  `v0.6.1;active=1;…;disp{look=125,hit=111};icon{look=12,skip=0,miss=8,hit=4}`（图标站在真干活）。
+  0.6.0 的崩溃根因写在提交 `ef781ae1`：`TCPIconImageInfo` 多写 `reserved[5]` 把 4 个 double 的 HFA
+  撑成 8 个 → 编译器改成从 x2 取结构体指针，而系统调用方不设 x2 → `tcpIconHook6+0x20` 崩；
+  现在结构体与系统一致，并加了 `_Static_assert(sizeof(...)==32)`。
+- 装机用的 0.6.0 包：Release `themecoreplus-v0.6.0` 资产（run 40983356266 编译），
+  100720 B，sha256 `beba61e58738a7b268e46f1482ac604d1a048dce7c6df15fe7662d55d61f98b7`。
+  **装包不会 reload 已跑的 SpringBoard**，改 dylib 必须重启进程才算数。
 - 未做（阶段二）：管理器 App（导入/解包 .deb、预编译不可变成品、revision 切换与回滚）、
   作者素材 `图标蒙板AnemoneEffects.zip`、只有 `IconBundles/icon.png` 的角标主题。
+
+### 多主题叠加：规则与写法（0.7.0）
+
+用户 2026-10-30 12:25 要的「通用多选」：主题不再是单选，可以叠。「图标包 ＋ 角标包」这种各管一块的
+组合同时生效，重叠的部分后勾的说了算。
+
+- **偏好键 `ThemePaths`**（有序数组，**靠后的覆盖靠前的** ＝ 靠后的是上层）。旧的 `ThemePath` /
+  `ThemeName` 仍然读得懂（单主题时老写法照常工作）；面板一旦勾选就只写 `ThemePaths`，
+  并且会把那两个旧键**删掉** —— 两个键共存规则就说不清，所以不共存。
+- **实现要点**：`-[TCPThemeStore resolveThemePathsWithValues:]` 把数组去重、去空、只留确实存在的
+  目录、上限 8 层，然后 `reload` **从最后一层往前扫**。各索引表（`iconMap`/`namedMap`/
+  `globalFileMap`/`bundleFileMap`）都是「先到先得」（`if (!entry[key])`），所以倒着扫 = 靠后的优先；
+  作者素材（蒙板/底图/overlay/文件夹底板）也按层补缺（表里有就不再动）。单个主题内部的行为
+  与只支持单主题时一字不差。
+- **面板**：`TCPThemeChooserController` 改成勾选式，勾选顺序即叠加顺序，副标题写「叠加第 N 层 ·
+  根目录名」，再点一次取消，「系统原生外观」那行点一下 = 清空整条链；勾完**不自动 pop**，
+  右上角有「完成」，Preferences 的返回键也能回去。改完立刻 `TCPPostPreferencesChanged()`。
+- **诊断**：`ThemeCorePlusDiagnostics` 里多了 `themes=N[层1|层2|…]`（从左到右 = 从下到上），
+  `theme=` 是「层1 + 层2」的合并名，`mask/base/overlay/folder` 是最终选中的四样素材。
+- shell 手写只能用单主题那条（`icli prefs write com.yangzhou.themecoreplus ThemePath "…"` 后自己
+  respring）；要叠多层就在面板里勾，或写 plist 数组后注销。
 
 ### 面板空白：成因与修法（已修，2026-10-30）
 

@@ -10,10 +10,16 @@
 
 // 总开关。键不存在时视为开（主题里没有对应素材时插件本身就是空转）。
 static NSString * const TCPKeyEnabled = @"Enabled";
-// 生效的主题：ThemePath 是绝对路径（优先），ThemeName 是在主题根目录里按名字找。
+// 生效的主题（单个，旧写法）：ThemePath 是绝对路径（优先），ThemeName 是在主题根目录里按名字找。
 // 两个都不给 = 不挂主题 = 系统原生外观（回滚就是这么做的）。
 static NSString * const TCPKeyThemePath = @"ThemePath";
 static NSString * const TCPKeyThemeName = @"ThemeName";
+// 多主题叠加：绝对路径的**有序数组**，顺序就是叠加顺序 —— **数组中靠后的覆盖靠前的**
+// （面板里「第 N 层」越大越上层）。这个键存在且非空时优先，ThemePath / ThemeName 只是兼容旧配置。
+static NSString * const TCPKeyThemePaths = @"ThemePaths";
+// 最多叠几层：每层都要整目录扫一遍，层数太多拖慢重载，也没法排查是哪层出的问题。
+// 面板勾到第 9 层会直接拒绝并说明，store 侧也按这个数截断（两边同一个常量）。
+static const NSUInteger TCPMaxThemeLayers = 8;
 // 功能独立开关，各自默认开。
 static NSString * const TCPKeyIconsEnabled = @"IconsEnabled";
 static NSString * const TCPKeyFoldersEnabled = @"FoldersEnabled";

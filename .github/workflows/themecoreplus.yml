@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.6.1
+  VERSION: 0.7.0
 
 jobs:
   build:
@@ -132,7 +132,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.6.1)
+    name: Release (themecoreplus-v0.7.0)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -149,15 +149,22 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.6.1
-          name: ThemeCorePlus v0.6.1
+          tag_name: themecoreplus-v0.7.0
+          name: ThemeCorePlus v0.7.0
           body: |
-            主题美化 +（ThemeCorePlus）v0.6.1 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.7.0 —— MarkTheme 式的主题引擎，作者 yangzhou。
+
+            v0.7.0 的新东西：**主题可以多选叠加**。设置面板里「生效主题」是勾选列表，
+            勾几个就叠几层，每行副标题写着「叠加第 N 层」——数字大的盖住数字小的：
+            桌面先按整条链建一次素材索引，上层没给的素材由下层补。
+            「液态玻璃」＋「角标：透明玻璃」这种组合终于能同时生效了（以前只能选一个）。
+            偏好键是 ThemePaths（有序数组），旧的 ThemePath / ThemeName 仍然读得懂。
 
             - 读 SnowBoard / IconBundles 主题**原素材**并现场合成：主屏与文件夹图标、文件夹底板、
               角标底图、系统图片覆盖（设置 / 电话 / 照片 / 共享 / 状态栏）。
-            - 设置 ▸ 主题美化 + 面板：选主题、四个功能开关、一键「恢复系统原生外观」。
+            - 设置 ▸ 主题美化 + 面板：勾选式多主题、四个功能开关、一键「恢复系统原生外观」。
             - 回滚只清配置，不动主题目录里的任何文件。
+            - 诊断串加了 themes=N[层1|层2]：一眼看出当前挂了哪几层。
             - arm64 + arm64e 双切片（A11 用户态是 arm64，只出 arm64e 的 dylib 不会被加载）。
             - roothide 包；rootless 需自己改脚本的第二个参数重编，未经设备验证。
 
@@ -173,7 +180,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.6.1/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.7.0/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'
