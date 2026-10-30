@@ -28,7 +28,9 @@ on:
     # 重新发布，把已经装机验证过的那份 deb 换掉——体积和 sha256 都会变。
     paths:
       - 'Sources/**'
-      - 'Support/**'
+      # 只认模板自己的注入清单：原来写 'Support/**'，别的产品往 Support/ 里加个 plist
+      # 就会连模板包一起重建并覆盖 Release 资产。
+      - 'Support/AxsDualSliceTweak.plist'
       - 'scripts/build-dualslice.sh'
       - '.github/workflows/dual-slice.yml'
 
