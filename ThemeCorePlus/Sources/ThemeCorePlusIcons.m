@@ -144,9 +144,11 @@ void TCPRefreshIconImages(void) {
     Class baseClass = objc_getClass("SBIconImageView");
     if (baseClass == Nil) return;
 
-    SEL clearInfo = NSSelectorFromString(@"clearIconImageInfo");
-    SEL infoGetter = NSSelectorFromString(@"iconImageInfo");
-    SEL infoSetter = NSSelectorFromString(@"setIconImageInfo:");
+    // 不重入：一次刷新会碰到几十个视图，谁在途中又要求刷新就往回走（2026-10-30 崩过一次）。
+    static BOOL sRefreshing = NO;
+    if (sRefreshing) return;
+    sRefreshing = YES;
+
     SEL clearCached = NSSelectorFromString(@"clearCachedImages");
 
     // 桌面上「已经建出来」的图标视图全在这棵树里：主屏、Dock、文件夹里的小格、App 库。
@@ -171,20 +173,13 @@ void TCPRefreshIconImages(void) {
     for (id view in views) {
         sRefreshViews++;
 
-        // 1) 清掉视图手里的 info（否则它认为「图没变」不会重取）
-        if ([view respondsToSelector:clearInfo]) {
-            ((void (*)(id, SEL))objc_msgSend)(view, clearInfo);
-        }
+        // 1) 原来这里 clearIconImageInfo + 原样 setIconImageInfo: 逼视图当场重取。
+        //    2026-10-30 的崩溃就出在这条路上：clearIconImageInfo 会同步走
+        //    updateImageAnimated: → contentsImage → SBHIconImageCache → 再进图标站，
+        //    与本机别的图标插件形成重入链（EXC_BAD_ACCESS at 0x1f）。改成只清缓存：
+        //    缓存清掉后视图下一次布局照样重取，代价是晚一帧，换来不崩。
 
-        // 2) 把当前 info 原样再设回去 —— 这一步会走生图管线，也就走到我们挂的站点上
-        if ([view respondsToSelector:infoGetter] && [view respondsToSelector:infoSetter]) {
-            TCPIconImageInfoShort info =
-                ((TCPIconImageInfoShort (*)(id, SEL))objc_msgSend)(view, infoGetter);
-            ((void (*)(id, SEL, TCPIconImageInfoShort))objc_msgSend)(view, infoSetter, info);
-            sRefreshModel++;
-        }
-
-        // 3) 清共用缓存（每个缓存对象只清一次）
+        // 2) 清共用缓存（每个缓存对象只清一次）
         id cache = nil;
         SEL cacheGetter = NSSelectorFromString(@"iconImageCache");
         if ([view respondsToSelector:cacheGetter]) {
@@ -205,6 +200,7 @@ void TCPRefreshIconImages(void) {
     os_log(TCPLogHandle(), "TCPS_REFRESH views=%lu model=%ld cache=%ld purge=%{public}@",
            (unsigned long)views.count, (long)sRefreshModel, (long)sRefreshCache,
            sRefreshPurgeName ?: @"-");
+    sRefreshing = NO;
 }
 
 #pragma mark - 显示层站：iOS 16 上真正决定屏幕上那张图的地方

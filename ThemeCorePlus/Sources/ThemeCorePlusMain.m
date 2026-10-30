@@ -107,7 +107,7 @@ static void TCPRelayoutIcons(void) {
     }
 }
 
-static void TCPReload(void) {
+static void TCPReload(BOOL refreshImages) {
     [[TCPThemeStore shared] reload];
     TCPInstallIconSites();
     TCPInstallDisplaySites();
@@ -115,14 +115,19 @@ static void TCPReload(void) {
     TCPInstallFolderSites();
     TCPInstallFileSites();
     TCPRelayoutIcons();
-    // 不注销就换图：先清桌面上已经建好的视图的缓存与 info，让它们按新主题重取一遍；
-    // relayoutIcons 是异步的，排出来的新视图这一轮还不存在，所以隔 0.7 秒再补一次。
-    TCPRefreshIconImages();
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
+    // refreshImages 只在「用户改了设置」时才为真。
+    // 启动时（0/0.5/2/6 秒那几轮）一律不刷：2026-10-30 的安全模式就是启动即强刷视图
+    // 与本机别的图标插件重入导致的（crash 栈 TCPReload → TCPRefreshIconImages →
+    // clearIconImageInfo → … → tcpIconHook8，consecutiveCrashCount=7）。
+    // 启动时挂好站点 + relayoutIcons 就够，下一次布局会自己按新主题取图。
+    if (refreshImages) {
         TCPRefreshIconImages();
-        TCPWriteDiagnostics();
-    });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            TCPRefreshIconImages();
+            TCPWriteDiagnostics();
+        });
+    }
     TCPWriteDiagnostics();
 }
 
@@ -132,7 +137,7 @@ static void TCPPreferencesChanged(CFNotificationCenterRef center,
                                   const void *object,
                                   CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        TCPReload();
+        TCPReload(YES);
         os_log(TCPLogHandle(), "TCPS_RELOAD site=%lu", (unsigned long)TCPTotalSiteCount());
     });
 }
@@ -158,7 +163,7 @@ __attribute__((constructor)) static void TCPInitialize(void) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
                                          (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
-                TCPReload();
+                TCPReload(NO);
             });
         }
     }

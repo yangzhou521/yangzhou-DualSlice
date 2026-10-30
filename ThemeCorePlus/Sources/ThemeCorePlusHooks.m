@@ -73,10 +73,23 @@ static CGFloat TCPUIScale(void) {
 
 typedef UIImage *(*TCPIconImageInfoFn)(id, SEL, TCPIconImageInfo);
 
+// 重入保护（2026-10-30 安全模式崩溃后加）：本机 SpringBoard 里还有别的插件用 Logos
+// 挂在同一条链上（崩溃栈里是 $SHARED_HOOKS$+SBLeafIcon$iconImageWithInfo$ 与
+// SearchUIHooks$SBIconImageView$contentsImage），我们取主题图这件事一旦绕回同一条
+// 取图链，就会自己套自己，一路重入到栈上的指针全废（EXC_BAD_ACCESS at 0x1f，
+// consecutiveCrashCount=7 → 每次都进安全模式）。所以同一线程内只要还在我们自己的
+// 取图流程里，就直接把调用交给原实现：宁可这一张图不主题化，也不能再重入。
+static __thread int tcpIconDepth = 0;
+
 static UIImage *TCPIconHandle(IMP *slot, id self, SEL _cmd, TCPIconImageInfo info) {
     IMP original = *slot;
     if (original == NULL) return nil;
+    if (tcpIconDepth > 0) {
+        return ((TCPIconImageInfoFn)original)(self, _cmd, info);
+    }
+    tcpIconDepth++;
     UIImage *themed = TCPThemedIconImage(self, info);
+    tcpIconDepth--;
     if (themed != nil) return themed;
     return ((TCPIconImageInfoFn)original)(self, _cmd, info);
 }
