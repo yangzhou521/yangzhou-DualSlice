@@ -196,6 +196,14 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
         }
     }
 
+    // 系统角标本身也不许再画（用户 2026-10-31 05:10「先隐藏系统角标，再正常加载第三方素材」）：
+    // 清掉它自己的底色与 layer.contents。我们的图是它的子视图，不受影响。
+    if (!TCPBadgeLayerIsOurs(view.layer)) {
+        if (view.layer.contents != NULL) { view.layer.contents = nil; cleared++; }
+        if (view.layer.backgroundColor != NULL) { view.layer.backgroundColor = NULL; cleared++; }
+        if (view.backgroundColor != nil) { view.backgroundColor = [UIColor clearColor]; cleared++; }
+    }
+
     if (cleared > 0) sBadgeSysHidden += (NSInteger)cleared;
 
     // 取证：底板节点是谁、清没清掉（带 * = 清过，带 ! = 被藏），装完机不看屏幕也知道做对没有。
