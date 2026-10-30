@@ -171,6 +171,9 @@ static void TCPPreferencesChanged(CFNotificationCenterRef center,
                                   CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
         TCPLogLine(@"收到面板的刷新请求（Darwin 通知）");
+        // 角标各站的计数清零（0.9.4）：诊断里的 bg/tup/txt 就从这次改动之后开始数，
+        // 「哪个站在干活、单层闸门开没开」不必看屏幕，改一次设置读一次诊断就知道。
+        TCPBadgeResetStations();
         TCPReload(YES);
         os_log(TCPLogHandle(), "TCPS_RELOAD site=%lu", (unsigned long)TCPTotalSiteCount());
     });

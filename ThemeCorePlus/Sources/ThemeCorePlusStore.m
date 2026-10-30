@@ -156,6 +156,42 @@ static CGImageRef TCPCreateAlphaMask(CGImageRef source, CGSize pixelSize) {
     return mask;
 }
 
+// 一张图的 alpha 通道「实际画了多少」：非零 alpha 像素占比（0~1）。
+// 用它在重载时把图标遮罩里「细环 / 玻璃圈」这类几乎全透明的素材认出来——
+// 那种遮罩裁完图标只剩一个圈，正是「图标空白」的来源（本机「液态玻璃」主题的
+// AppIconMask cov≈0.08，裁完主体全没了；实心圆角方的遮罩 cov≈0.78）。
+static CGFloat TCPAlphaCoverage(UIImage *image) {
+    CGImageRef cg = image.CGImage;
+    if (!cg) return 1.0;
+    CGFloat srcW = (CGFloat)CGImageGetWidth(cg);
+    CGFloat srcH = (CGFloat)CGImageGetHeight(cg);
+    if (srcW <= 0 || srcH <= 0) return 1.0;
+    // 24 点宽的降采样足够分清「实心形状」与「细环」，还快；超高图（长条素材）别把预算耗光。
+    size_t w = 24;
+    size_t h = (size_t)MAX(1, (size_t)llround(24.0 * srcH / srcW));
+    if (h > 72) h = 72;
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceGray();
+    CGContextRef ctx = CGBitmapContextCreate(NULL, w, h, 8, w, space, kCGImageAlphaOnly);
+    CGColorSpaceRelease(space);
+    if (!ctx) return 1.0;
+    CGContextSetInterpolationQuality(ctx, kCGInterpolationMedium);
+    CGContextDrawImage(ctx, CGRectMake(0, 0, (CGFloat)w, (CGFloat)h), cg);
+    unsigned char *bits = CGBitmapContextGetData(ctx);
+    size_t count = 0, total = w * h;
+    if (bits) {
+        for (size_t i = 0; i < total; i++) {
+            if (bits[i] > 8) count++;   // 8/255 以下按背景噪声算
+        }
+    }
+    CGContextRelease(ctx);
+    return total > 0 ? (CGFloat)count / (CGFloat)total : 1.0;
+}
+
+// 遮罩覆盖率的门槛（0.9.4）：低于它就算「细环 / 玻璃圈」，不能拿去裁图标。
+// 实测：本机「液态玻璃」的 AppIconMask cov≈0.08（裁完图标主体全没，屏幕上就是空白图标），
+// 实心圆角方的遮罩 cov≈0.78。门槛放在两者中间，留给半透明边框素材一点余地。
+static const CGFloat TCPMaskCoverageFloor = 0.30;
+
 // 按请求尺寸重画：底图 → (遮罩 | 圆角) → 图标 → overlay。
 // 合成顺序按需求：遮罩先，overlay 最后压在最上面。
 static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIImage *overlay,
@@ -213,6 +249,8 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *globalFileMap;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSString *> *> *bundleFileMap;
 @property (nonatomic, copy) NSString *maskPath;
+@property (nonatomic) CGFloat maskCoverage;    // 遮罩 alpha 覆盖占比（重载时量）
+@property (nonatomic) BOOL maskSkipped;        // 覆盖太低被跳过（玻璃圈那类，裁完图标就空白）
 @property (nonatomic, copy) NSString *basePath;
 @property (nonatomic, copy) NSString *overlayPath;
 @property (nonatomic, copy) NSString *folderPath;
@@ -354,6 +392,19 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         [self.renderedCache removeAllObjects];
         [self.assetCache removeAllObjects];
         [self.renderedImages removeAllObjects];
+        // 遮罩体检（0.9.4，修「图标空白」）：把遮罩的 alpha 覆盖量一遍 —— 玻璃 / 细环那类遮罩
+        // 几乎全透明，拿去裁图标只会把主体裁没。低于门槛的**不使用**，让图标保持素材原样。
+        CGFloat coverage = 1.0;
+        BOOL skipped = NO;
+        if (self.maskPath.length > 0) {
+            UIImage *maskImage = [self cachedImageAtPath:self.maskPath size:CGSizeZero];
+            if (maskImage != nil) {
+                coverage = TCPAlphaCoverage(maskImage);
+                skipped = (coverage < TCPMaskCoverageFloor);
+            }
+        }
+        self.maskCoverage = coverage;
+        self.maskSkipped = skipped;
         self.badgeSettings = [self badgeSettingsFromValues:values];
         self.cornerMaskOn = TCPBoolValue(values, TCPKeyIconCornerMask, NO);
     }
@@ -826,7 +877,16 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
     if (!path) return nil;
 
     if (scale <= 0) scale = 2.0;
+    // 遮罩可用性（0.9.4）：reload 里量过覆盖率的「玻璃圈」遮罩一律不用 —— 它把图标裁成空白。
+    BOOL maskUsable = (self.maskPath.length > 0 && !self.maskSkipped);
     BOOL roundCorners = cornerRadius > 0;
+    // 遮罩被跳过时按系统图标的圆角比例（22.37%）兜底，免得换出来是直角方块的玻璃片；
+    // 素材本来就带圆角的话，这一刀裁下去什么都不会改变。
+    // 只在「有遮罩但被跳过」这一种情况下兜底：主题没配遮罩的老行为（不裁）一点不动。
+    if (self.maskSkipped && !roundCorners && size.width > 0) {
+        cornerRadius = size.width * 0.2237;
+        roundCorners = YES;
+    }
     NSString *cacheKey = [NSString stringWithFormat:@"%lu|%@|%.0fx%.0f|%.2f|%.2f",
                           (unsigned long)self.generation, path, size.width, size.height, scale, (roundCorners ? cornerRadius : 0)];
     UIImage *cached = [self.renderedCache objectForKey:cacheKey];
@@ -837,7 +897,7 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
         UIImage *icon = [self cachedImageAtPath:path size:CGSizeZero];
         if (!icon) return nil;
         UIImage *base = self.basePath ? [self cachedImageAtPath:self.basePath size:CGSizeZero] : nil;
-        UIImage *mask = self.maskPath ? [self cachedImageAtPath:self.maskPath size:CGSizeZero] : nil;
+        UIImage *mask = maskUsable ? [self cachedImageAtPath:self.maskPath size:CGSizeZero] : nil;
         UIImage *overlay = self.overlayPath ? [self cachedImageAtPath:self.overlayPath size:CGSizeZero] : nil;
         UIImage *rendered = TCPRenderIcon(icon, base, mask, overlay, size, scale, cornerRadius, roundCorners);
         if (rendered) {
@@ -969,7 +1029,7 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
         NSString *layers = chain.count > 0 ? [chain componentsJoinedByString:@"|"] : @"-";
         if (layers.length > 160) layers = [layers substringToIndex:160];
         return [NSString stringWithFormat:
-                @"v%@;active=%d;theme=%@;layers=%lu[%@];gen=%lu;icon{look=%lu,hit=%lu};badge{look=%lu,hit=%lu};file{look=%lu,hit=%lu};named=%lu;mask=%d;base=%d;overlay=%d;folder=%d;hit=[%@];miss=[%@]",
+                @"v%@;active=%d;theme=%@;layers=%lu[%@];gen=%lu;icon{look=%lu,hit=%lu};badge{look=%lu,hit=%lu};file{look=%lu,hit=%lu};named=%lu;mask=%d,cov=%.2f,skip=%d;base=%d;overlay=%d;folder=%d;hit=[%@];miss=[%@]",
                 TCP_VERSION,
                 self.active ? 1 : 0,
                 self.themeName ?: @"-",
@@ -980,7 +1040,7 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
                 (unsigned long)self.badgeLookups, (unsigned long)self.badgeHits,
                 (unsigned long)self.fileLookups, (unsigned long)self.fileHits,
                 (unsigned long)self.namedMap.count,
-                self.maskPath ? 1 : 0,
+                self.maskPath ? 1 : 0, (double)self.maskCoverage, self.maskSkipped ? 1 : 0,
                 self.basePath ? 1 : 0,
                 self.overlayPath ? 1 : 0,
                 self.folderPath ? 1 : 0,

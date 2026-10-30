@@ -35,8 +35,43 @@ static void TCPDrawAssetAspectFitted(UIImage *image, CGRect box) {
 // 有这个就不必看屏幕判断形状 —— 一个数字时画布必须等于素材的宽高比（正方形素材 → 正方形画布）。
 static NSString *sBadgeProbe = nil;
 
+// —— 单层闸门 + 各站打点（0.9.4）——
+// iOS 16 的角标视图会先问底板站、再问成图站；两站都往结果里画同一张素材底板，
+// 屏幕上就是底板画了两遍（用户 2026-10-30 说的「图标目前二个图层」）。现在的分工：
+//   底板站（_checkoutBackgroundImage*）换成功过 → 成图站只出「数字」（透明底），底板归底板站；
+//   底板站一次都没命中（有的版本只走成图站） → 成图站照旧出「底板 + 数字」的整图。
+// 每站被问几次、换成功几次写进诊断 badge{}，装完机不用看屏幕就知道哪条路在跑。
+static NSInteger sBadgeBackLook = 0, sBadgeBackHit = 0;
+static NSInteger sBadgeTupleLook = 0, sBadgeTupleHit = 0;
+static NSInteger sBadgeTextLook = 0, sBadgeTextHit = 0;
+
+void TCPBadgeResetStations(void) {
+    sBadgeBackLook = sBadgeBackHit = 0;
+    sBadgeTupleLook = sBadgeTupleHit = 0;
+    sBadgeTextLook = sBadgeTextHit = 0;
+}
+
+void TCPBadgeNoteStation(TCPSiteKind kind, BOOL replaced) {
+    switch (kind) {
+        case TCPSiteKindBadgeBackground: sBadgeBackLook++; if (replaced) sBadgeBackHit++; break;
+        case TCPSiteKindBadgeTuple:      sBadgeTupleLook++; if (replaced) sBadgeTupleHit++; break;
+        case TCPSiteKindBadgeTextImage:  sBadgeTextLook++; if (replaced) sBadgeTextHit++; break;
+        default: break;
+    }
+}
+
+BOOL TCPBadgeBackgroundServed(void) {
+    return (sBadgeBackHit + sBadgeTupleHit) > 0;
+}
+
 NSString *TCPBadgeProbeReport(void) {
-    return sBadgeProbe ?: @"badge=-";
+    return [NSString stringWithFormat:
+            @"%@;bg{look=%ld,hit=%ld};tup{look=%ld,hit=%ld};txt{look=%ld,hit=%ld};gate=%@",
+            sBadgeProbe ?: @"badge=-",
+            (long)sBadgeBackLook, (long)sBadgeBackHit,
+            (long)sBadgeTupleLook, (long)sBadgeTupleHit,
+            (long)sBadgeTextLook, (long)sBadgeTextHit,
+            TCPBadgeBackgroundServed() ? @"text-only" : @"composed"];
 }
 
 // 圆头拉伸时两头要留多宽：按素材自己的尺寸算，素材两头是什么形状（圆弧、尖角、异形）都原样保留。
@@ -145,6 +180,62 @@ UIImage *TCPThemedBadgeTextImage(NSString *text, UIFont *font, CGFloat scale, CG
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     sBadgeProbe = [NSString stringWithFormat:@"badge=%@;asset=%.0fx%.0f;canvas=%.0fx%.0f;fit=%.2f",
+                   text, asset.size.width, asset.size.height, width, side, factor];
+    return image;
+}
+
+// 数字单独一张、透明底（0.9.4）：底板站已经把主题底板换上去时，成图站只交数字，
+// 屏幕上就只剩一层底板 —— 「二个图层」就是这么消掉的。
+// 画布按系统给的盒子（底板那张也是同一个盒子），拿不到盒子才退回素材的自然宽度。
+// 字号、颜色、自动缩放的规则与整图站完全同一套，两种走法出来的字一样大。
+UIImage *TCPThemedBadgeTextOnlyImage(NSString *text, UIFont *font, CGFloat scale, CGSize systemBox) {
+    if (text.length == 0) return nil;
+    TCPThemeStore *store = [TCPThemeStore shared];
+    UIImage *asset = TCPThemedBadgeBackground(scale);
+    if (scale <= 0) scale = [UIScreen mainScreen].scale;
+    if (scale <= 0) scale = 3.0;
+
+    CGFloat side = systemBox.height > 0 ? systemBox.height : asset.size.height;
+    if (side <= 0) return nil;
+    CGFloat aspect = (asset.size.height > 0) ? asset.size.width / asset.size.height : 1.0;
+    CGFloat naturalWidth = side * aspect;
+    CGFloat width = systemBox.width > 0 ? systemBox.width : naturalWidth;
+
+    UIFont *drawFont = font;
+    CGFloat configuredSize = [store badgeFontSize];
+    NSString *configuredName = [store badgeFontName];
+    if (configuredName.length > 0) {
+        UIFont *named = [UIFont fontWithName:configuredName size:(configuredSize > 0 ? configuredSize : side * 0.62)];
+        if (named) drawFont = named;
+    } else if (configuredSize > 0 && font != nil) {
+        drawFont = [font fontWithSize:configuredSize];
+    }
+    if (drawFont == nil) drawFont = [UIFont systemFontOfSize:side * 0.62];
+    UIColor *color = [store badgeTextColor] ?: [UIColor whiteColor];
+
+    NSDictionary<NSAttributedStringKey, id> *attributes = @{ NSFontAttributeName: drawFont,
+                                                             NSForegroundColorAttributeName: color };
+    CGSize textSize = [text sizeWithAttributes:attributes];
+    CGFloat fitWidth = MAX(1.0, width * 0.84);
+    CGFloat fitHeight = MAX(1.0, side * 0.78);
+    CGFloat factor = 1.0;
+    if (textSize.width > fitWidth) factor = MIN(factor, fitWidth / textSize.width);
+    if (textSize.height > fitHeight) factor = MIN(factor, fitHeight / textSize.height);
+    if (factor < 0.999) {
+        drawFont = [drawFont fontWithSize:MAX(1.0, drawFont.pointSize * factor)];
+        attributes = @{ NSFontAttributeName: drawFont, NSForegroundColorAttributeName: color };
+        textSize = [text sizeWithAttributes:attributes];
+    }
+    if (width <= 0 || side <= 0) return nil;
+
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(width, side), NO, scale);
+    [text drawInRect:CGRectMake((width - textSize.width) / 2.0,
+                                (side - textSize.height) / 2.0,
+                                textSize.width, textSize.height)
+      withAttributes:attributes];
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    sBadgeProbe = [NSString stringWithFormat:@"badge=%@;asset=%.0fx%.0f;canvas=%.0fx%.0f;fit=%.2f;only=1",
                    text, asset.size.width, asset.size.height, width, side, factor];
     return image;
 }

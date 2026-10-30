@@ -146,6 +146,15 @@ UIImage *TCPThemedBadgeTextImage(NSString *text, UIFont *font, CGFloat scale, CG
 UIImage *TCPThemedFolderBackground(CGFloat scale);
 NSString *TCPBadgeProbeReport(void);
 
+// 角标单层闸门（0.9.4，实现在 ThemeCorePlusBadges.m）：
+//   底板站命中过 → 成图站只出「数字」（透明底），底板归底板站那张，屏幕上只有一层；
+//   底板站没命中 → 成图站照旧出「底板 + 数字」整图。
+// 每站的 look/hit 一起写进诊断，装完机不用看屏幕就知道哪条路在跑。
+void TCPBadgeResetStations(void);
+void TCPBadgeNoteStation(TCPSiteKind kind, BOOL replaced);
+BOOL TCPBadgeBackgroundServed(void);
+UIImage *TCPThemedBadgeTextOnlyImage(NSString *text, UIFont *font, CGFloat scale, CGSize systemBox);
+
 // 类型安全替换（实现在 ThemeCorePlusHooks.m）：原返回什么类型就还什么类型，只把里面的图
 // 换成 themed；themed 为 nil、original 为 nil 或类型认不出时，原样返回 original。
 // 铁律：绝不拿 UIImage 顶替别的类型 —— iOS 16.7 的角标元组就是这样把 SpringBoard 送进

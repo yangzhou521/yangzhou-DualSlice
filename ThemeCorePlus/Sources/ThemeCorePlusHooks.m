@@ -194,7 +194,9 @@ static id TCPBadgeBackHandle(IMP *slot, id self, SEL _cmd) {
     IMP original = *slot;
     if (original == NULL) return nil;
     id result = ((id (*)(id, SEL))original)(self, _cmd);
-    return TCPThemedImageReplacement(result, TCPThemedBadgeBackgroundInBox(TCPUIScale(), TCPBadgeSystemBoxSize(result)));
+    UIImage *themed = TCPThemedBadgeBackgroundInBox(TCPUIScale(), TCPBadgeSystemBoxSize(result));
+    TCPBadgeNoteStation(TCPSiteKindBadgeBackground, themed != nil);
+    return TCPThemedImageReplacement(result, themed);
 }
 
 #define TCP_DEFINE_BADGEBACK_SLOT(n)                                          \
@@ -215,7 +217,9 @@ static id TCPBadgeTupleHandle(IMP *slot, id self, SEL _cmd) {
     IMP original = *slot;
     if (original == NULL) return nil;
     id result = ((id (*)(id, SEL))original)(self, _cmd);
-    return TCPThemedImageReplacement(result, TCPThemedBadgeBackgroundInBox(TCPUIScale(), TCPBadgeSystemBoxSize(result)));
+    UIImage *themed = TCPThemedBadgeBackgroundInBox(TCPUIScale(), TCPBadgeSystemBoxSize(result));
+    TCPBadgeNoteStation(TCPSiteKindBadgeTuple, themed != nil);
+    return TCPThemedImageReplacement(result, themed);
 }
 
 #define TCP_DEFINE_BADGETUPLE_SLOT(n)                                         \
@@ -240,8 +244,14 @@ static id TCPBadgeTextHandle(IMP *slot, id self, SEL _cmd, NSString *text, UIFon
     id result = ((TCPBadgeTextFn)original)(self, _cmd, text, font, highlighted);
     // 角标盒子的高度就是屏幕上角标的高：一个字时宽也取这个值 → 正圆；
     // 两个以上再按文字宽度加宽成圆头胶囊。盒子拿不到才退回素材自己的点数。
-    return TCPThemedImageReplacement(result,
-                                     TCPThemedBadgeTextImage(text, font, TCPUIScale(), TCPBadgeSystemBoxSize(result)));
+    CGSize box = TCPBadgeSystemBoxSize(result);
+    // 单层闸门（0.9.4）：底板站这一轮已经换过底板了，这里就只交数字（透明底）——
+    // 两站都画底板的话屏幕上就是同一张底板叠两层（用户说的「二个图层」）。
+    UIImage *themed = TCPBadgeBackgroundServed()
+        ? TCPThemedBadgeTextOnlyImage(text, font, TCPUIScale(), box)
+        : TCPThemedBadgeTextImage(text, font, TCPUIScale(), box);
+    TCPBadgeNoteStation(TCPSiteKindBadgeTextImage, themed != nil);
+    return TCPThemedImageReplacement(result, themed);
 }
 
 #define TCP_DEFINE_BADGETEXT_SLOT(n)                                          \

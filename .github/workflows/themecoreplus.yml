@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.3
+  VERSION: 0.9.4
 
 jobs:
   build:
@@ -78,6 +78,35 @@ jobs:
 
       - name: Install build tools
         run: brew install ldid dpkg
+
+      - name: Verify version consistency
+        run: |
+          set -euo pipefail
+          # tag 必须与包版本一致：2026-10-30 17:19 那次只改了脚本、工作流还写着旧 tag，
+          # 新版 deb 被发进了旧的那个 Release（同一个 Release 现在挂着两个版本）。
+          # 这里把它变成一条硬检查，三处不一致就不编、不发，免得再把包发错地方。
+          HEADER_VERSION=$(grep -E '^#define TCP_VERSION' ThemeCorePlus/Sources/ThemeCorePlusVersion.h | sed -E 's/.*"(.*)".*/\1/')
+          SCRIPT_VERSION=$(grep -E '^VERSION=' scripts/build-themecoreplus.sh | head -n 1 | cut -d= -f2)
+          echo "::notice title=version::header=$HEADER_VERSION script=$SCRIPT_VERSION env=$VERSION"
+          for pair in "header:$HEADER_VERSION" "script:$SCRIPT_VERSION"; do
+            name=${pair%%:*}
+            value=${pair#*:}
+            if [ "$value" != "$VERSION" ]; then
+              echo "::error title=version-mismatch::$name=$value 与 env.VERSION=$VERSION 不一致"
+              exit 1
+            fi
+          done
+          WORKFLOW=.github/workflows/themecoreplus.yml
+          TAGS=$(grep -c "themecoreplus-v$VERSION" "$WORKFLOW" || true)
+          if [ "${TAGS:-0}" -lt 2 ]; then
+            echo "::error title=version-mismatch::工作流里只出现 $TAGS 次 themecoreplus-v$VERSION"
+            exit 1
+          fi
+          OTHER=$(grep -nE "themecoreplus-v[0-9]+\.[0-9]+\.[0-9]+" "$WORKFLOW" | grep -v "themecoreplus-v$VERSION" || true)
+          if [ -n "$OTHER" ]; then
+            echo "::error title=version-mismatch::工作流里还有别的 tag：$OTHER"
+            exit 1
+          fi
 
       - name: Build package
         run: |
@@ -121,6 +150,13 @@ jobs:
           done
           DEB=$(ls packages/*.deb | head -n 1)
           echo "::notice title=deb::$(basename "$DEB") sha256=$(shasum -a 256 "$DEB" | awk '{print $1}')"
+          # 包名里的版本与 control 里的版本也一起核对：deb 名错了会让装机的人抓错文件。
+          DEBVER=$(dpkg-deb -f "$DEB" Version)
+          echo "::notice title=deb-version::$DEBVER"
+          if [ "$DEBVER" != "$VERSION" ] || ! echo "$(basename "$DEB")" | grep -q "_${VERSION}_"; then
+            echo "::error title=version-mismatch::deb=$(basename "$DEB") 版本=$DEBVER 期望=$VERSION"
+            exit 1
+          fi
           echo "=== deb contents ==="
           dpkg-deb -c "$DEB"
 
@@ -132,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.3)
+    name: Release (themecoreplus-v0.9.4)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -149,20 +185,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.3
-          name: ThemeCorePlus v0.9.3
+          tag_name: themecoreplus-v0.9.4
+          name: ThemeCorePlus v0.9.4
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.3 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.4 —— MarkTheme 式的主题引擎，作者 yangzhou。
 
-            v0.9.3：
+            v0.9.4：
 
-            1. **「选择主题」页一律用系统开关**：每个主题行右端一颗 iOS 原生开关（与设置里「启用插件」
-               同款），点整行与拨开关走同一个写入口 —— 勾中的顺序就是叠加顺序，再点一次 = 取消这一层，
-               全部取消就是系统原生外观。
-            2. **这一页只剩主题行**：段落标题、页脚说明、「素材开关」四行、「系统原生外观」行全部删掉，
-               页面上只有主题。
-            3. **四类素材（应用图标 / 文件夹 / 角标 / 系统界面图）默认全开**：主题里有哪类就换哪类，
-               没有的那类既不生效也不加载。
+            1. **修掉「图标空白」**：主题里的玻璃图标遮罩（AppIconMask）有时几乎整张是透明的，
+               拿它去裁剪合成图，出来的就是一片空白。现在合成前先量遮罩的不透明覆盖率，
+               低于 30% 的遮罩直接不用，改按系统圆角裁 —— 图标照旧显示，不再白块。
+            2. **修掉「角标两个图层」**：iOS 16 的角标会先问底板站、再问成图站，两站各画一遍
+               同一张主题底板，屏幕上就是同一层叠两遍。现在底板站换成功过，成图站就只交数字
+               （透明底），底板只画一次；老版本只走成图站时仍出「底板 + 数字」整图。
+            3. **诊断里能直接看出走了哪条路**：遮罩记 `mask=,cov=,skip=`，角标三站各记
+               look/hit 与 `gate=text-only|composed`，装完机不用看屏幕就知道哪个站在干活。
 
             - 读 SnowBoard / IconBundles 主题**原素材**并现场合成：主屏与文件夹图标、文件夹底板、
               角标底图、系统图片覆盖（状态栏 / 拨号盘 / 设置 / 分享）。
@@ -179,7 +216,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.3/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.4/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'

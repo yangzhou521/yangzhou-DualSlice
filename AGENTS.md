@@ -300,10 +300,21 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   0.6.0 的崩溃根因写在提交 `ef781ae1`：`TCPIconImageInfo` 多写 `reserved[5]` 把 4 个 double 的 HFA
   撑成 8 个 → 编译器改成从 x2 取结构体指针，而系统调用方不设 x2 → `tcpIconHook6+0x20` 崩；
   现在结构体与系统一致，并加了 `_Static_assert(sizeof(...)==32)`。
-- **ThemeCorePlus 0.9.3 待装（2026-10-30 17:0x~17:2x 改）**：面板只剩「主题」——「素材开关」四行删干净、
-  「系统原生外观」那行删掉、主题行副标题带素材清单；四类素材一律全换（默认开启，没素材就不换也不加载）；
-  「选择主题」页每一行右端是**系统开关**（`UISwitch`，与设置里「启用插件」那颗同款），不用对号，
-  而且**整页只有主题行**：段落标题与页脚说明都删了。
+- **ThemeCorePlus 0.9.4（2026-10-30 19:5x 改，云编译 0.9.4）**：0.9.3 的面板改版（只剩「主题」页、
+  主题行右端用系统开关、四类素材默认全换）＋ 两处 bug 修复：
+  ① **图标空白**：主题的玻璃遮罩（`AppIconMask`）几乎整张透明（本机「液态玻璃」cov≈0.08，实心圆角方
+  ≈0.78），拿它裁图标主体就没了。`reload` 里用 `TCPAlphaCoverage()` 量遮罩 alpha 覆盖，
+  低于 `TCPMaskCoverageFloor`（0.30）就**不用这张遮罩**、改按系统圆角（宽的 22.37%）裁；
+  诊断里记为 `mask=1,cov=0.08,skip=1`。只在「有遮罩但被跳过」时兜底圆角，主题没配遮罩的老行为不动。
+  ② **角标两个图层**：iOS 16 的角标会先问底板站（`_checkoutBackgroundImage` /
+  `_checkoutBackgroundImageTuple`）再问成图站（`+_checkoutImageForText:font:highlighted:`），
+  两站都画同一张主题底板 = 屏幕上叠两遍。现在**单层闸门**：底板站命中过 → 成图站只交数字
+  （`TCPThemedBadgeTextOnlyImage`，透明底）；底板站没命中 → 成图站照旧出「底板 + 数字」整图。
+  诊断里 `badge{…}` 后面多了 `bg{look,hit};tup{look,hit};txt{look,hit};gate=text-only|composed`，
+  面板改一次设置就清零重数（`TCPBadgeResetStations()` 在 `TCPPreferencesChanged` 里）。
+  ③ 云编译加了**版本一致性硬检查**（`Verify version consistency` 步骤）：`TCP_VERSION`、脚本 `VERSION`、
+  工作流的 tag 三处不一致就**不编不发**，产物再核对 `dpkg-deb -f … Version` —— 治的是 10-30 17:19
+  那次「只改脚本没改 tag，0.9.3 的包被发进 v0.9.2 那个 Release」的老毛病。
 - 装机用的 0.6.0 包：Release `themecoreplus-v0.6.0` 资产（run 40983356266 编译），
   100720 B，sha256 `beba61e58738a7b268e46f1482ac604d1a048dce7c6df15fe7662d55d61f98b7`。
   **装包不会 reload 已跑的 SpringBoard**，改 dylib 必须重启进程才算数。
