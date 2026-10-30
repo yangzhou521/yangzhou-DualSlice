@@ -102,9 +102,19 @@ done
 
 echo "build-sileofix.sh: --- otool -L ---"
 otool -L "$DY"
-# 依赖的 substrate 路径必须和这个 slice 形态对得上（roothide 走 @loader_path/.jbroot/…）。
-if ! otool -L "$DY" | grep -q "$WANTED_SUBSTRATE"; then
-  echo "build-sileofix.sh: substrate dependency is not $WANTED_SUBSTRATE" >&2
+# substrate 依赖必须是相对安装路径（roothide 走 @loader_path/.jbroot/…），否则本机解析不到。
+SUBSTRATE_ENTRY=$(otool -L "$DY" | awk 'tolower($0) ~ /substrate/ {print $1; exit}')
+if [ -z "$SUBSTRATE_ENTRY" ]; then
+  echo "build-sileofix.sh: no substrate dependency at all" >&2
+  exit 5
+fi
+if [ "$SUBSTRATE_ENTRY" != "$WANTED_SUBSTRATE" ]; then
+  echo "build-sileofix.sh: rewriting $SUBSTRATE_ENTRY -> $WANTED_SUBSTRATE"
+  install_name_tool -change "$SUBSTRATE_ENTRY" "$WANTED_SUBSTRATE" "$DY"
+fi
+SUBSTRATE_ENTRY=$(otool -L "$DY" | awk 'tolower($0) ~ /substrate/ {print $1; exit}')
+if [ "$SUBSTRATE_ENTRY" != "$WANTED_SUBSTRATE" ]; then
+  echo "build-sileofix.sh: substrate entry is '$SUBSTRATE_ENTRY', wanted '$WANTED_SUBSTRATE'" >&2
   exit 5
 fi
 
