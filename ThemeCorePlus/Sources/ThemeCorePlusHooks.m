@@ -353,11 +353,13 @@ static BOOL TCPInstallOneSite(Class cls, SEL sel, TCPSiteKind kind) {
     return YES;
 }
 
-NSUInteger TCPInstallSitesForClassPrefixes(NSArray<NSString *> *prefixes,
-                                           NSArray<NSString *> *excludingSubstrings,
-                                           NSArray<NSString *> *selectors,
-                                           TCPSiteKind kind) {
-    if (prefixes.count == 0 || selectors.count == 0) return 0;
+// 类名匹配：byPrefix = YES 按前缀，NO 按「包含」。
+static NSUInteger TCPInstallSitesMatching(NSArray<NSString *> *patterns,
+                                          BOOL byPrefix,
+                                          NSArray<NSString *> *excludingSubstrings,
+                                          NSArray<NSString *> *selectors,
+                                          TCPSiteKind kind) {
+    if (patterns.count == 0 || selectors.count == 0) return 0;
     // 不缓存类表：类是按需加载的，晚一轮再扫才能把 SpringBoardHome 的类带进来。
     unsigned int count = 0;
     Class *classes = objc_copyClassList(&count);
@@ -371,8 +373,9 @@ NSUInteger TCPInstallSitesForClassPrefixes(NSArray<NSString *> *prefixes,
         if (raw == NULL) continue;
         NSString *name = @(raw);
         BOOL wanted = NO;
-        for (NSString *prefix in prefixes) {
-            if ([name hasPrefix:prefix]) { wanted = YES; break; }
+        for (NSString *pattern in patterns) {
+            BOOL hit = byPrefix ? [name hasPrefix:pattern] : [name containsString:pattern];
+            if (hit) { wanted = YES; break; }
         }
         if (!wanted) continue;
         BOOL skipped = NO;
@@ -386,6 +389,20 @@ NSUInteger TCPInstallSitesForClassPrefixes(NSArray<NSString *> *prefixes,
     }
     if (classes) free(classes);
     return installed;
+}
+
+NSUInteger TCPInstallSitesForClassPrefixes(NSArray<NSString *> *prefixes,
+                                           NSArray<NSString *> *excludingSubstrings,
+                                           NSArray<NSString *> *selectors,
+                                           TCPSiteKind kind) {
+    return TCPInstallSitesMatching(prefixes, YES, excludingSubstrings, selectors, kind);
+}
+
+NSUInteger TCPInstallSitesForClassSubstrings(NSArray<NSString *> *substrings,
+                                             NSArray<NSString *> *excludingSubstrings,
+                                             NSArray<NSString *> *selectors,
+                                             TCPSiteKind kind) {
+    return TCPInstallSitesMatching(substrings, NO, excludingSubstrings, selectors, kind);
 }
 
 #pragma mark - 运行期普查
@@ -422,6 +439,49 @@ NSString *TCPCensusForClasses(NSArray<NSString *> *classNames, NSUInteger limit)
         used += joined.length + name.length + 2;
     }
     return [parts componentsJoinedByString:@"\n"];
+}
+
+// 角标类普查：类名带 Badge / Notification 的类里，谁自己声明了角标那三个站。
+// 用它坐实「锁屏通知的角标是哪个类画的」，不必猜类名（猜测的代价是 SpringBoard 安全模式）。
+NSString *TCPClassCensusForSubstrings(NSArray<NSString *> *substrings,
+                                      NSArray<NSString *> *selectors,
+                                      NSUInteger limit) {
+    if (substrings.count == 0 || selectors.count == 0) return @"-";
+    unsigned int count = 0;
+    Class *classes = objc_copyClassList(&count);
+    if (classes == NULL) return @"-";
+
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    NSUInteger used = 0;
+    for (unsigned int i = 0; i < count && used < limit; i++) {
+        Class cls = classes[i];
+        if (cls == Nil) continue;
+        const char *raw = class_getName(cls);
+        if (raw == NULL) continue;
+        NSString *name = @(raw);
+        BOOL wanted = NO;
+        for (NSString *part in substrings) {
+            if ([name containsString:part]) { wanted = YES; break; }
+        }
+        if (!wanted) continue;
+
+        NSMutableArray<NSString *> *methods = [NSMutableArray array];
+        for (NSString *selectorName in selectors) {
+            SEL sel = NSSelectorFromString(selectorName);
+            if (sel == NULL) continue;
+            if (TCPClassDeclaresMethod(cls, sel)) {
+                [methods addObject:selectorName];
+            } else if (TCPClassDeclaresMethod(object_getClass(cls), sel)) {
+                [methods addObject:[@"+" stringByAppendingString:selectorName]];
+            }
+        }
+        if (methods.count == 0) continue;   // 只有真实现了角标站的类才配占一行
+        NSString *line = [NSString stringWithFormat:@"%@=%@", name, [methods componentsJoinedByString:@" "]];
+        [parts addObject:line];
+        used += line.length + 1;
+    }
+    if (classes) free(classes);
+    return parts.count > 0 ? [parts componentsJoinedByString:@"\n"] : @"-";
 }
 
 #pragma mark - 「谁 hook 了它」

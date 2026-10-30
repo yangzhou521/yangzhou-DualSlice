@@ -14,6 +14,7 @@
 #import "ThemeCorePlusPaths.h"
 #import "ThemeCorePlusPreferences.h"
 #import "ThemeCorePlusKeys.h"
+#import "ThemeCorePlusLog.h"
 #import "ThemeCorePlusVersion.h"
 
 // 诊断写到**目标进程自己的**偏好域：沙箱只允许进程写自己的域，SpringBoard 里的诊断在
@@ -92,6 +93,21 @@ static void TCPWriteDiagnostics(void) {
                                              @"_configureIconImageView:", @"isRealContentsImage" ];
     TCPWriteProcessPreference(@"ThemeCorePlusHookOwners",
                               TCPHookOwnerCensus(ownerClasses, ownerSelectors, 1600));
+
+    // 角标 / 通知的类普查（用户 2026-10-30 15:13 要求「角标开着时锁屏通知也跟着走」）：
+    //   ① 角标站实际落在哪些类上（含锁屏通知那套自己声明的类）；
+    //   ② 通知列表里有没有自己的图标显示层（有的话锁屏通知的 App 图标也该由它接管）。
+    NSArray<NSString *> *badgeSelectorNames = @[ @"_checkoutBackgroundImage",
+                                                  @"_checkoutBackgroundImageTuple",
+                                                  @"_checkoutImageForText:font:highlighted:" ];
+    TCPWriteProcessPreference(@"ThemeCorePlusBadgeCensus",
+                              TCPClassCensusForSubstrings(@[ @"Badge", @"Notification" ],
+                                                          badgeSelectorNames, 2000));
+    TCPWriteProcessPreference(@"ThemeCorePlusNotificationCensus",
+                              TCPClassCensusForSubstrings(@[ @"Notification" ],
+                                                          @[ @"displayedImage", @"contentsImage",
+                                                             @"squareContentsImage", @"iconImageWithInfo:",
+                                                             @"setIconImageInfo:" ], 1200));
 }
 
 // 让桌面把图标重新取一遍图。取不到就当没有这一步（有的版本没有这个方法）。
@@ -116,6 +132,17 @@ static void TCPReload(BOOL refreshImages) {
     TCPInstallFolderSites();
     TCPInstallFileSites();
     TCPRelayoutIcons();
+
+    // 每次重载记一行「这一轮解析成什么样」，另起一行贴素材快照：面板「运行日志」里看到的就是
+    // 这些。出问题时不用看屏幕也能知道插件在干什么、素材认出了几个。
+    TCPThemeStore *store = [TCPThemeStore shared];
+    TCPLogLine(@"重载 theme=%@ 层=%lu 站点=%lu 功能(图标=%d,文件夹=%d,角标=%d,文件=%d)",
+               store.active ? store.themeName : @"（原生外观）",
+               (unsigned long)store.themePaths.count,
+               (unsigned long)TCPTotalSiteCount(),
+               (int)store.iconsEnabled, (int)store.foldersEnabled,
+               (int)store.badgesEnabled, (int)store.filesEnabled);
+    TCPLogLine(@"快照 %@", [store diagnostics]);
     // refreshImages 只在「用户改了设置」时才为真。
     // 启动时（0/0.5/2/6 秒那几轮）一律不刷：2026-10-30 的安全模式就是启动即强刷视图
     // 与本机别的图标插件重入导致的（crash 栈 TCPReload → TCPRefreshIconImages →
@@ -123,9 +150,12 @@ static void TCPReload(BOOL refreshImages) {
     // 启动时挂好站点 + relayoutIcons 就够，下一次布局会自己按新主题取图。
     if (refreshImages) {
         TCPRefreshIconImages();
+        // 探针报告是进程内的累计值（活了多久就累多久），注释里写清楚，免得被当成单次结果。
+        TCPLogLine(@"刷新图标（累计）%@", TCPRefreshProbeReport());
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             TCPRefreshIconImages();
+            TCPLogLine(@"刷新图标第二轮（累计）%@", TCPRefreshProbeReport());
             TCPWriteDiagnostics();
         });
     }
@@ -138,6 +168,7 @@ static void TCPPreferencesChanged(CFNotificationCenterRef center,
                                   const void *object,
                                   CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
+        TCPLogLine(@"收到面板的刷新请求（Darwin 通知）");
         TCPReload(YES);
         os_log(TCPLogHandle(), "TCPS_RELOAD site=%lu", (unsigned long)TCPTotalSiteCount());
     });
@@ -151,6 +182,11 @@ __attribute__((constructor)) static void TCPInitialize(void) {
         os_log(TCPLogHandle(), "ApelinLoaded com.yangzhou.themecoreplus-%{public}@", TCP_VERSION);
         os_log(TCPLogHandle(), "TCPS_START v%{public}@ bundle=%{public}@",
                TCP_VERSION, [[NSBundle mainBundle] bundleIdentifier] ?: @"?");
+        // 日志从这里开始。重启进程后「运行日志」页最上面那行的 pid 一变，就知道后面的事
+        // 都发生在这一次重启之后。
+        TCPLogLine(@"启动 v%@ bundle=%@ pid=%d",
+                   TCP_VERSION, [[NSBundle mainBundle] bundleIdentifier] ?: @"?",
+                   (int)[NSProcessInfo processInfo].processIdentifier);
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
                                         NULL,

@@ -38,3 +38,8 @@ static NSString * const TCPKeyBadgeFontSize = @"BadgeFontSize";
 // 诊断键名：dylib 写到**目标进程自己的**偏好域（沙箱只允许写自己的域），
 // 所以 SpringBoard 里的诊断在 com.apple.springboard 域。
 static NSString * const TCPKeyDiagnostics = @"ThemeCorePlusDiagnostics";
+// 运行日志（ThemeCorePlusLog.h）：同样写在目标进程自己的域，面板跨域读它显示/复制。
+// 与诊断分开是有原因的：诊断在每次 reload 被整串覆盖，中间发生的事只有日志留得住。
+static NSString * const TCPKeyRuntimeLog = @"ThemeCorePlusLog";
+// 是否记日志（默认开）。排查完可以关掉，省得白写盘。
+static NSString * const TCPKeyLogEnabled = @"LogEnabled";

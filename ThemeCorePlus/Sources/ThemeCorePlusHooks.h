@@ -86,6 +86,20 @@ NSUInteger TCPInstallSitesForClassPrefixes(NSArray<NSString *> *prefixes,
                                            NSArray<NSString *> *selectors,
                                            TCPSiteKind kind);
 
+// 同上，但按「类名**包含**某个子串」匹配。锁屏通知那套角标视图的类名事先不知道
+// （不在 SpringBoardHome 的 SBIconBadge* 家族里），用子串兜住：凡是类名带 Badge 又自己
+// 声明了角标站的类都挂上，有素材才动图，没素材照原样转发。
+NSUInteger TCPInstallSitesForClassSubstrings(NSArray<NSString *> *substrings,
+                                             NSArray<NSString *> *excludingSubstrings,
+                                             NSArray<NSString *> *selectors,
+                                             TCPSiteKind kind);
+
+// 普查：类名含 substrings 之一、且自己声明了 selectors 之一的类，写成
+// "类名=方法名 方法名" 的行；用它在设备上坐实「锁屏通知的角标到底是哪个类」。
+NSString *TCPClassCensusForSubstrings(NSArray<NSString *> *substrings,
+                                      NSArray<NSString *> *selectors,
+                                      NSUInteger limit);
+
 NSUInteger TCPTotalSiteCount(void);
 NSArray<NSString *> *TCPSiteDescriptions(void);
 

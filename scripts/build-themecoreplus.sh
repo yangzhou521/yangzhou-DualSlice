@@ -25,7 +25,7 @@ set -eu
 PRODUCT=ThemeCorePlus
 PREFS_BUNDLE=ThemeCorePlusPrefs
 PACKAGE_ID=com.yangzhou.themecoreplus
-VERSION=0.8.1
+VERSION=0.9.0
 NAME_ZH="主题美化 +"
 AUTHOR=yangzhou
 DESCRIPTION="MarkTheme 式主题引擎：读 SnowBoard / IconBundles 主题原素材，改主屏与文件夹图标、角标底图与系统图片覆盖；支持多主题叠加，面板里点「刷新图标」即可当场生效、不用注销。作者 yangzhou。"
@@ -93,8 +93,9 @@ SHARED_FLAGS="-fobjc-arc -miphoneos-version-min=$MIN_IOS -isysroot $SDKROOT -O2 
 # 凡用到 CGContext… / CGRect… 必须显式列出来，别为了"修"链接把它去掉。
 FRAMEWORKS="-framework Foundation -framework UIKit -framework CoreGraphics"
 
+# 面板自带一份共享源码（自己扫盘、自己读写偏好），日志模块也在里面：面板那一页日志就是用它读的。
 SHARED_SRCS="$SRC/ThemeCorePlusPaths.m $SRC/ThemeCorePlusConfig.m \
-$SRC/ThemeCorePlusPreferences.m $SRC/ThemeCorePlusStore.m"
+$SRC/ThemeCorePlusPreferences.m $SRC/ThemeCorePlusStore.m $SRC/ThemeCorePlusLog.m"
 TWEAK_SRCS="$SHARED_SRCS $SRC/ThemeCorePlusIcons.m $SRC/ThemeCorePlusFolders.m \
 $SRC/ThemeCorePlusBadges.m $SRC/ThemeCorePlusFiles.m $SRC/ThemeCorePlusHooks.m \
 $SRC/ThemeCorePlusMain.m"
@@ -229,6 +230,20 @@ done
 plutil -replace CFBundleShortVersionString -string "$VERSION" "$PREFS_STAGE/Info.plist"
 plutil -lint "$PREFS_STAGE/Info.plist"
 echo "build-themecoreplus.sh: bundle Info.plist version = $(plutil -extract CFBundleShortVersionString raw "$PREFS_STAGE/Info.plist")"
+
+# 维护者脚本：装完让「设置」自己重读面板（更轻的「注销」）。
+# 面板 bundle 是设置 App 打开面板时才 dlopen 进来的，设置 App 不重启就一直用内存里的旧代码，
+# 新装的版本在设置里看不到。杀掉设置 App 进程只影响设置本身，别的 App 与界面状态都不动；
+# 当时没在跑就静默跳过。做法照本机装着的 IPSLog（com.axs.ipslog）的 postinst。
+cat > "$STAGE/DEBIAN/postinst" <<'POSTINST'
+#!/bin/sh
+(
+    sleep 2
+    killall Preferences 2>/dev/null || true
+) >/dev/null 2>&1 &
+exit 0
+POSTINST
+chmod 0755 "$STAGE/DEBIAN/postinst"
 
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: $PACKAGE_ID

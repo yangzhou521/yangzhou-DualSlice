@@ -138,6 +138,86 @@ static void TCPPurgeViewImageCache(id view) {
     sRefreshCacheMiss++;
 }
 
+#pragma mark - 图标像素自检：桌面上哪些图标其实是空的
+
+// 用户 2026-10-30 14:42/14:51 两次报「有些是空白图标」「图标目前二个图层」，但 agent 这边看不到屏幕
+// （本机 icli screen ocr / describe 都报 capture failed，截图也没有读图能力）。所以让插件自己在
+// 「刷新图标」时把每个图标视图的图缩到 32×32 数一遍像素：
+//   · clear = 几乎全透明（>9 成透明）—— 画上去等于什么都没有，就是「空白图标」
+//   · flat  = 几乎纯白/纯黑且无细节 —— 发白的空壳
+// 同时数每个视图里有几个 UIImageView（layers.max）：同一个位置叠了两张图就是「两个图层」。
+// 结果进诊断的 pix{...}，不用注销也能一眼看出是哪个 app 的图标有问题。
+static NSInteger sPixelViews = 0;
+static NSInteger sPixelClear = 0;
+static NSInteger sPixelFlat = 0;
+static NSInteger sPixelNil = 0;
+static NSInteger sPixelMaxImageViews = 0;
+static CGFloat sPixelMinOpaque = 1.0;
+static NSMutableArray<NSString *> *sPixelBlankSamples = nil;
+
+static void TCPInspectIconImage(UIImage *image, NSString *bundleID) {
+    sPixelViews++;
+    if (image == nil) {
+        // 视图还没拿到图（或图不是 UIImage）。这不算「空白」，另计一栏，免得把「还没画」当结论。
+        sPixelNil++;
+        return;
+    }
+
+    const size_t side = 32;
+    unsigned char buffer[side * side * 4];
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(buffer, side, side, 8, side * 4, space,
+                                             kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(space);
+    if (ctx == NULL) return;
+    CGContextDrawImage(ctx, CGRectMake(0, 0, side, side), image.CGImage);
+    CGContextRelease(ctx);
+
+    const size_t total = side * side;
+    size_t clear = 0, flat = 0;
+    for (size_t i = 0; i < total; i++) {
+        const unsigned char *px = buffer + i * 4;
+        if (px[3] < 8) { clear++; continue; }
+        int dr = (int)px[0] - (int)px[1];
+        int dg = (int)px[1] - (int)px[2];
+        int lum = (px[0] * 299 + px[1] * 587 + px[2] * 114) / 1000;
+        if (abs(dr) < 8 && abs(dg) < 8 && (lum > 244 || lum < 12)) flat++;
+    }
+
+    CGFloat opaque = (CGFloat)(total - clear) / (CGFloat)total;
+    if (opaque < sPixelMinOpaque) sPixelMinOpaque = opaque;
+
+    NSString *tag = nil;
+    if ((CGFloat)clear / (CGFloat)total > 0.9) {
+        sPixelClear++;
+        tag = @"(clear)";
+    } else if ((CGFloat)flat / (CGFloat)total > 0.9) {
+        sPixelFlat++;
+        tag = @"(flat)";
+    }
+    if (tag && bundleID.length > 0 && sPixelBlankSamples.count < 8 &&
+        ![sPixelBlankSamples containsObject:bundleID]) {
+        [sPixelBlankSamples addObject:[bundleID stringByAppendingString:tag]];
+    }
+}
+
+// 一个视图里直接挂了几张 UIImageView。同一个位置叠两张，屏幕上就是「两个图层」。
+static NSInteger TCPCountImageViews(UIView *view) {
+    NSInteger count = 0;
+    for (UIView *sub in view.subviews) {
+        NSString *name = NSStringFromClass([sub class]);
+        if ([name containsString:@"ImageView"] && sub.bounds.size.width > 1) count++;
+    }
+    return count;
+}
+
+NSString *TCPIconPixelProbeReport(void) {
+    return [NSString stringWithFormat:@"pix{n=%ld,clear=%ld,flat=%ld,minOpaque=%.2f,maxImgViews=%ld,blank=[%@]}",
+            (long)sPixelViews, (long)sPixelClear, (long)sPixelFlat, (double)sPixelMinOpaque,
+            (long)sPixelMaxImageViews,
+            sPixelBlankSamples.count > 0 ? [sPixelBlankSamples componentsJoinedByString:@","] : @"-"];
+}
+
 // 让屏幕当场换图，不注销。2026-10-30 第二版：
 //   上一版只清缓存 → 屏幕上纹丝不动（清了缓存没人重新问，视图手里还攥着旧图）。
 //   这一版在清完之后**主动叫每个视图重新出图**：-updateImageAnimated:NO 是视图自己的

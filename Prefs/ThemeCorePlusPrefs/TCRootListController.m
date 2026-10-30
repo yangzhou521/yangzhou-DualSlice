@@ -14,6 +14,7 @@
 #import "ThemeCorePlusKeys.h"
 #import "ThemeCorePlusPreferences.h"
 #import "ThemeCorePlusStore.h"
+#import "ThemeCorePlusLog.h"
 #import "ThemeCorePlusVersion.h"
 
 #pragma mark - Preferences 框架的最小声明（符号留到加载期）
@@ -53,24 +54,9 @@ enum {
 
 #pragma mark - 状态与诊断文本
 
-// 下面两个函数互相引用：摘要函数在前面用诊断函数，所以先声明（少了这一行 CI 直接编译失败：
-// 隐式声明按 int 处理，ARC 下报 "implicit conversion of 'int' to 'NSString *'"）。
-static NSString *TCPDiagnosticsText(void);
-
-// 素材统计：从诊断里抠出「主题到底认出了哪些素材」那一段（图标/角标/系统图片/遮罩·底图·overlay·
-// 文件夹底板），面板只显示这一段，用户才知道自己的素材有没有被认出来。
-// 诊断本身是目标进程（SpringBoard）写的，本进程读不到时返回空串，面板就不显示这一块。
-static NSString *TCPAssetSummaryText(void) {
-    NSString *text = TCPDiagnosticsText();
-    NSRange start = [text rangeOfString:@"icon{look="];
-    if (start.location == NSNotFound) return @"";
-    NSRange tail = NSMakeRange(start.location, text.length - start.location);
-    NSRange end = [text rangeOfString:@";hit=[" options:0 range:tail];
-    if (end.location == NSNotFound) {
-        return [text substringWithRange:tail];
-    }
-    return [text substringWithRange:NSMakeRange(start.location, end.location - start.location)];
-}
+// 诊断原文由日志页显示（面板正文里不再出现技术串：用户 2026-10-30 14:5x 明确要求正式版去掉
+// 「已认出：icon{…}」那行脚注——那是调试信息，不该占着用户的面板）。
+static NSString *TCPDiagnosticsText(NSUInteger limit);
 
 // 状态行以**实际解析结果**为准：说真话，别按配置猜。
 static NSString *TCPCurrentStatusLine(void) {
@@ -83,7 +69,7 @@ static NSString *TCPCurrentStatusLine(void) {
 
 // 诊断写在**目标进程自己的**偏好域：SpringBoard 的在 com.apple.springboard，
 // 本进程（设置本身也注入了插件）的在它自己的域。两个都读不到就说明还没重启过进程。
-static NSString *TCPDiagnosticsText(void) {
+static NSString *TCPDiagnosticsText(NSUInteger limit) {
     NSString *text = nil;
     CFStringRef fromSpringBoard = CFPreferencesCopyAppValue((__bridge CFStringRef)TCPKeyDiagnostics,
                                                             CFSTR("com.apple.springboard"));
@@ -100,15 +86,86 @@ static NSString *TCPDiagnosticsText(void) {
     if (![text isKindOfClass:[NSString class]] || text.length == 0) {
         return @"还没有读到诊断：重启一次桌面后回到这里再看。";
     }
-    if (text.length > 420) {
-        text = [[text substringToIndex:420] stringByAppendingString:@"…"];
+    if (limit > 0 && text.length > limit) {
+        text = [[text substringToIndex:limit] stringByAppendingString:@"…"];
     }
     return text;
 }
 
-#pragma mark - 二级页：生效主题（纯 UIKit 列表）
+#pragma mark - 二级页：运行日志（纯 UIKit 页面 + 系统分享）
 
-// 之前那一版是 PSListController 子类 + PSLinkCell 行。装机后点进这一页，设置进程当场闪退，
+// 用户 2026-10-30 14:58 要的「日志入口」：调试时要看得见，出问题时要能把日志发出来。
+// 做法照本机装着的 IPSLog（com.axs.ipslog 5.2.0，作者 Axs）那套：纯 UIKit 页面 + 系统分享面板
+//（UIActivityViewController / UIPasteboard），日志列表与全文各是独立控制器，不碰 Preferences 的
+// specifier 机制 —— 这一页因此不会有「点进来闪退」那类问题。
+//   · 只读 UITextView（等宽字体），能选中所以能只复制几行；下拉刷新重读；
+//   · 右上角「分享」把整段文本交给系统（微信 / 备忘录 / 邮件 / 拷贝都在这张面板里）；
+//   · 内容 = 桌面进程那份日志（真干活的是它）＋ 本进程那份，前面贴一段诊断原文。
+@interface TCPLogViewController : UIViewController
+@end
+
+@implementation TCPLogViewController {
+    UITextView *_logView;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor systemBackgroundColor];
+
+    _logView = [[UITextView alloc] initWithFrame:CGRectZero];
+    _logView.editable = NO;
+    _logView.selectable = YES;
+    _logView.alwaysBounceVertical = YES;
+    _logView.font = [UIFont monospacedSystemFontOfSize:11.5 weight:UIFontWeightRegular];
+    _logView.textContainerInset = UIEdgeInsetsMake(10, 10, 12, 10);
+    _logView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:_logView];
+    [NSLayoutConstraint activateConstraints:@[
+        [_logView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [_logView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [_logView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [_logView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
+    ]];
+
+    UIRefreshControl *refresh = [[UIRefreshControl alloc] init];
+    [refresh addTarget:self action:@selector(tcpReloadLogText)
+      forControlEvents:UIControlEventValueChanged];
+    _logView.refreshControl = refresh;
+
+    self.navigationItem.rightBarButtonItem =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAction
+                                                      target:self
+                                                      action:@selector(tcpShareLog)];
+    [self tcpReloadLogText];
+}
+
+- (NSString *)tcpLogText {
+    NSString *diagnostics = TCPDiagnosticsText(1200);
+    NSString *path = TCPLogFilePath();
+    NSString *footer = path.length > 0
+        ? [NSString stringWithFormat:@"—— 完整日志文件：%@（Filza 可取，每个进程一份）", path]
+        : @"—— 日志文件写不进去，这段文本就是全部。";
+    return [NSString stringWithFormat:@"=== 诊断（桌面进程写的）===\n%@\n\n%@\n\n%@",
+            diagnostics, TCPLogCombinedText(@"com.apple.springboard", 200), footer];
+}
+
+- (void)tcpReloadLogText {
+    _logView.text = [self tcpLogText];
+    [_logView.refreshControl endRefreshing];
+}
+
+- (void)tcpShareLog {
+    UIActivityViewController *share =
+        [[UIActivityViewController alloc] initWithActivityItems:@[ [self tcpLogText] ]
+                                           applicationActivities:nil];
+    // iPad 的分享面板是 popover，必须有锚点，缺了会崩；iPhone 上这两行无害。
+    share.popoverPresentationController.barButtonItem = self.navigationItem.rightBarButtonItem;
+    [self presentViewController:share animated:YES completion:nil];
+}
+
+@end
+
+// 主题选择页。之前那一版是 PSListController 子类 + PSLinkCell 行：装机后点进这一页，设置进程当场闪退，
 // 崩在 Preferences 内部给 specifier 准备元数据那一步（同一页在 icli 探针里却 1 段 6 行齐全，
 // 验不到真凶）。这一版换成纯 UIKit 的 UITableViewController：
 //   · 表格的数据源、代理、勾选、返回，全是 UIKit 公开 API，Preferences 一行都不碰；
@@ -135,7 +192,9 @@ static NSString *TCPDiagnosticsText(void) {
 // 重写它会变成递归。Preferences 无论用哪个入口建我们，得到的都是同一个可用的表格页。
 
 - (NSString *)title {
-    return @"生效主题";
+    // 与 ThemeCore 的面板叫法一致（用户 2026-10-30 15:19）：这一页标题就是「选择主题」，
+    // 与根页那一行的名字相同，别自己造一个「生效主题」。
+    return @"选择主题";
 }
 
 // Preferences 把 detail 控制器 push 进来之后，会给它塞几样东西（specifier、父控制器、根控制器）。
@@ -399,21 +458,24 @@ static NSString *TCPDiagnosticsText(void) {
     // 回滚不需要单独按钮：主题列表顶部那行「系统原生外观」点一下就是回滚。
     // 用户 2026-10-30 14:49 明确「功能独立开关是一开始的要求」，所以四项开关加回来。
     // 它们从来只是被从面板上撤掉，键与 dylib 侧的判断一直在（store 里默认全开）。
-    [specs addObject:[self tcpGroupWithHeader:@"通用"
-                                       footer:@"四项功能各自独立开关，默认全开；也可以叠着用（一个管图标、一个管角标）。"]];
+    // 用户 2026-10-30 15:13/15:14 连着两条要求：**面板要简洁**（照 ThemeCore 0.5.1 的样子，
+    // 别写功能说明）——「开关只是用不用」这类解释、功能清单、诊断串一律不出现在面板正文里。
+    [specs addObject:[self tcpGroupWithHeader:@"通用" footer:nil]];
     [specs addObject:[self tcpSwitchNamed:@"启用插件" key:TCPKeyEnabled]];
     [specs addObject:[self tcpSwitchNamed:@"应用图标" key:TCPKeyIconsEnabled]];
     [specs addObject:[self tcpSwitchNamed:@"文件夹" key:TCPKeyFoldersEnabled]];
     [specs addObject:[self tcpSwitchNamed:@"角标" key:TCPKeyBadgesEnabled]];
-    [specs addObject:[self tcpSwitchNamed:@"系统界面图（状态栏 / 设置 / 电话 / 分享）" key:TCPKeyFilesEnabled]];
+    [specs addObject:[self tcpSwitchNamed:@"系统界面图（状态栏 / 拨号盘 / 设置 / 分享）" key:TCPKeyFilesEnabled]];
 
-    NSString *assets = TCPAssetSummaryText();
-    NSString *materialFooter = assets.length > 0
-        ? [NSString stringWithFormat:@"已认出：%@\n点「刷新图标」当场生效，不用注销；角标素材也认（ThemeCore 不做角标）。", assets]
-        : @"点「刷新图标」当场生效，不用注销；角标素材也认（ThemeCore 不做角标）。";
-    [specs addObject:[self tcpGroupWithHeader:@"主题" footer:materialFooter]];
+    // 主题组不再挂任何技术串（用户 2026-10-30 14:5x 要求正式版去掉「已认出：icon{…}」，
+    // 15:06 又要求去掉「刷新图标 ref{views=…}：views=找到的图标视图…」这类提示 —— 刷新本身
+    // 当场就生效，屏幕上的变化就是反馈，面板里不必再解释一遍）。
+    // 素材到底认出了什么，进「运行日志」看；面板正文只留用户看得懂的话。
+    [specs addObject:[self tcpGroupWithHeader:@"主题" footer:nil]];
     [specs addObject:[self tcpThemeEntryRow]];
     [specs addObject:[self tcpButtonNamed:@"刷新图标" action:@selector(tcpRefreshIcons)]];
+    // 日志入口（用户 2026-10-30 14:58 要求）：只有一行按钮，不单独分组、不带说明。
+    [specs addObject:[self tcpButtonNamed:@"运行日志" action:@selector(tcpShowLog)]];
 
     [specs addObject:[self tcpGroupWithHeader:nil
                                        footer:[NSString stringWithFormat:@"作者：yangzhou　·　v%@\n%@",
@@ -524,6 +586,28 @@ static NSString *TCPDiagnosticsText(void) {
                    dispatch_get_main_queue(), ^{
         [self reloadSpecifiers];
     });
+}
+
+// 「运行日志」：push 一个纯 UIKit 页面（日志页不经过 Preferences 的 specifier 机制）。
+// 万一没有导航栈（正常不会），退化成弹出 + 「完成」按钮，别把用户困在页里。
+- (void)tcpShowLog {
+    TCPLogViewController *log = [[TCPLogViewController alloc] init];
+    log.title = @"运行日志";
+    UINavigationController *nav = self.navigationController;
+    if (nav != nil) {
+        [nav pushViewController:log animated:YES];
+        return;
+    }
+    UINavigationController *wrapper = [[UINavigationController alloc] initWithRootViewController:log];
+    log.navigationItem.leftBarButtonItem =
+        [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                                                      target:self
+                                                      action:@selector(tcpDismissLog)];
+    [self presentViewController:wrapper animated:YES completion:nil];
+}
+
+- (void)tcpDismissLog {
+    [self dismissViewControllerAnimated:YES completion:nil];
 }
 
 @end
