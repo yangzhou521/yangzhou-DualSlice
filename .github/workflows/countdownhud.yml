@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.4.0)
+    name: Release (countdownhud-v1.4.1)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,14 +133,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.4.0
-          name: CountdownHUD v1.4.0
+          tag_name: countdownhud-v1.4.1
+          name: CountdownHUD v1.4.1
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
 
             为什么不靠通知：Apelin 的本地通知在发送瞬间会把 App 拉回前台，横幅被它自己的
             UNUserNotificationCenterDelegate 吞掉，既看不到、也进不了灵动岛。这个插件不碰通知，
             直接在 SpringBoard 顶层窗口画。
+
+            v1.4.1：**修安全模式**。v1.4.0 在 SpringBoard 的 dyld 构造函数里就创建
+            UISelectionFeedbackGenerator，那时 UIKit 还没初始化完 → +[UIScreen mainScreen]
+            触发断言抛异常 → SIGABRT → SpringBoard 崩溃循环 → 设备进安全模式。
+            现在生成器改成**惰性创建**：第一次真要震的时候（主线程、UIKit 已就绪）才 new，
+            构造阶段只做一件安全的事（预热一只已存在的生成器，没有就什么都不做），
+            并且整个震动过程包在 @try 里，失败就安静跳过，绝不把桌面搞崩。
 
             v1.4.0：**注销 / 装包这类要动设备的倒计时，先打一下最弱的震动再画胶囊** ——
             用户要求「有注销的打算时第一时间来一下最弱的震动，而且要早于倒计时」。
@@ -179,4 +186,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.4.0/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.4.1/$(basename "$DEB")"

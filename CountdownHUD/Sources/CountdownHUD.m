@@ -49,7 +49,7 @@
 #import <math.h>
 #import <os/log.h>
 
-static NSString *const CHVersion = @"1.4.0";
+static NSString *const CHVersion = @"1.4.1";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static const NSTimeInterval CHPollInterval = 0.5;
 
@@ -588,17 +588,23 @@ static BOOL gPrimed = NO;   // 首次读到的内容只记不触发（多半是�
 // 没拿到 windowScene 时那一拍只是重试，不重复震。设备侧：iPhone 8 有 Taptic Engine，
 // 在 SpringBoard 里调它会真的震；万一某个机型没有，也只是安静地什么都不发生。
 //
-// 复用同一只 generator 并提前 `prepare`：Taptic Engine 需要提前上电，第一次调用才震得干脆
-// （每次新建一只再立刻 `selectionChanged` 有把第一次吞掉的可能，而这里**第一次**恰恰最重要）。
+// v1.4.1 修复：生成器**绝不在构造函数里创建**。
+// 1.4.0 在 CHInitialize（SpringBoard 启动的 dyld 构造函数）里就 CHPrepareHaptic()，
+// 那时 UIKit 还没初始化完：UISelectionFeedbackGenerator init → _defaultCoordinateSpace
+// → +[UIScreen mainScreen] 触发 NSAssertionHandler 抛异常 → SIGABRT，
+// SpringBoard 崩溃循环 → 设备进安全模式（案例：docs/cases/countdownhud-safe-mode.md）。
+// 现在改成：第一次真要震的时候（主线程、已经有 windowScene、UIKit 完全活着）才惰性创建，
+// 创建失败就静默跳过，绝不让震动功能把桌面搞崩。
 static UISelectionFeedbackGenerator *gHapticGenerator = nil;
 
 static void CHPrepareHaptic(void) {
+    // 只在生成器已经存在时预热；不存在就跳过（绝不在这里 new）。
     void (^warm)(void) = ^{
-        if (gHapticGenerator == nil) {
-            gHapticGenerator = [[UISelectionFeedbackGenerator alloc] init];
-        }
         [gHapticGenerator prepare];
     };
+    if (gHapticGenerator == nil) {
+        return;
+    }
     if ([NSThread isMainThread]) {
         warm();
     } else {
@@ -606,14 +612,27 @@ static void CHPrepareHaptic(void) {
     }
 }
 
-static void CHFireWeakHaptic(void) {
-    if (gHapticGenerator == nil) {
-        gHapticGenerator = [[UISelectionFeedbackGenerator alloc] init];
+// 返回 NO 表示这台设备/这一刻用不了震动（安静跳过，不崩）。
+static BOOL CHFireWeakHaptic(void) {
+    @try {
+        if (gHapticGenerator == nil) {
+            // 惰性创建：只在主线程、UIKit 已就绪的时刻做。
+            if (![NSThread isMainThread]) {
+                return NO;
+            }
+            gHapticGenerator = [[UISelectionFeedbackGenerator alloc] init];
+        }
+        [gHapticGenerator selectionChanged];
+        gHaptics += 1;
+        os_log(CHLog(), "weak haptic fired (#%lu)", (unsigned long)gHaptics);
+        [gHapticGenerator prepare];   // 给下一次（下一条请求）重新上电
+        return YES;
+    } @catch (NSException *e) {
+        // 理论上走不到（生成器只在 UIKit 就绪后创建），但万一系统抛异常也不能带崩 SpringBoard。
+        os_log(CHLog(), "weak haptic failed: %{public}@", e.name);
+        gHapticGenerator = nil;
+        return NO;
     }
-    [gHapticGenerator selectionChanged];
-    gHaptics += 1;
-    os_log(CHLog(), "weak haptic fired (#%lu)", (unsigned long)gHaptics);
-    [gHapticGenerator prepare];   // 给下一次（下一条请求）重新上电
 }
 
 static BOOL CHHandleRequest(NSString *content) {
@@ -704,7 +723,10 @@ static void CHPollOnce(void) {
 __attribute__((constructor)) static void CHInitialize(void) {
     os_log(CHLog(), "v%{public}@ loaded; watching %{public}@", CHVersion, CHRequestPath);
 
-    // v1.4.0：先给 Taptic Engine 上电，让「注销前的第一下弱震动」震得干脆。
+    // v1.4.1：这里**绝不能**创建震动生成器（UIKit 在 dyld 构造函数阶段还没就绪，
+    // 1.4.0 就是这么把 SpringBoard 搞崩进安全模式的）。CHPrepareHaptic() 现在只预热
+    // 一只已经存在的生成器，此刻还没有 → 什么都不做，安全。
+    // 真正的震动在第一次消费请求时惰性创建，那时 UIKit 早就活着了。
     CHPrepareHaptic();
 
     dispatch_queue_t queue = dispatch_queue_create("com.yangzhou.countdownhud.poll", DISPATCH_QUEUE_SERIAL);
