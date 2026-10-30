@@ -49,7 +49,7 @@
 #import <math.h>
 #import <os/log.h>
 
-static NSString *const CHVersion = @"1.4.1";
+static NSString *const CHVersion = @"1.4.2";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static const NSTimeInterval CHPollInterval = 0.5;
 
@@ -589,7 +589,7 @@ static BOOL gPrimed = NO;   // 首次读到的内容只记不触发（多半是�
 // 在 SpringBoard 里调它会真的震；万一某个机型没有，也只是安静地什么都不发生。
 //
 // v1.4.1 修复：生成器**绝不在构造函数里创建**。
-// 1.4.0 在 CHInitialize（SpringBoard 启动的 dyld 构造函数）里就 CHPrepareHaptic()，
+// 1.4.0 在 CHInitialize（SpringBoard 启动的 dyld 构造函数）里就预热震动生成器，
 // 那时 UIKit 还没初始化完：UISelectionFeedbackGenerator init → _defaultCoordinateSpace
 // → +[UIScreen mainScreen] 触发 NSAssertionHandler 抛异常 → SIGABRT，
 // SpringBoard 崩溃循环 → 设备进安全模式（案例：docs/cases/countdownhud-safe-mode.md）。
@@ -597,20 +597,8 @@ static BOOL gPrimed = NO;   // 首次读到的内容只记不触发（多半是�
 // 创建失败就静默跳过，绝不让震动功能把桌面搞崩。
 static UISelectionFeedbackGenerator *gHapticGenerator = nil;
 
-static void CHPrepareHaptic(void) {
-    // 只在生成器已经存在时预热；不存在就跳过（绝不在这里 new）。
-    void (^warm)(void) = ^{
-        [gHapticGenerator prepare];
-    };
-    if (gHapticGenerator == nil) {
-        return;
-    }
-    if ([NSThread isMainThread]) {
-        warm();
-    } else {
-        dispatch_async(dispatch_get_main_queue(), warm);
-    }
-}
+// v1.4.2：预热函数整体删除 —— 构造函数阶段连「碰一下已存在的生成器」都不做。
+// 震动生成器只在消费请求、拿到 windowScene 之后才惰性创建。
 
 // 返回 NO 表示这台设备/这一刻用不了震动（安静跳过，不崩）。
 static BOOL CHFireWeakHaptic(void) {
@@ -669,17 +657,28 @@ static BOOL CHHandleRequest(NSString *content) {
     // v1.4.0：要动设备的动作（注销 / 装包 / 杀进程，也就是非 `!` 的倒计时）先把最弱的震动
     // 打出去 —— 而且是**同一请求只震一次**（同一个 content 在重试时不再震），然后才画胶囊：
     // 先震，屏幕上再出现「N 秒后…」。
+    // 同一请求只震一次：**在真的震成功之后**才记 token。
+    // v1.4.2 修：原来是在「准备震」时就记 token，若那一刻 UIKit 还没就绪（拿不到 windowScene）
+    // 就跳过了震动，但 token 已经写上 → 后续重试不会再震（用户要求的「震动早于胶囊」就丢了）。
     BOOL needsHaptic = (!plain && ![content isEqualToString:gHapticToken]);
-    if (needsHaptic) {
-        gHapticToken = [content copy];
-    }
 
     // 显示一律在主线程做，并且要等它给出结果：只有真的显示出来了，这一条请求才算消费掉
     // （没有 windowScene 不算，轮询下一拍会重试）。
+    // v1.4.2 修复：**震动必须排在「UIKit 完全就绪」之后**。
+    // 1.4.1 把生成器的创建从构造函数挪到了「第一次要震时惰性创建」，但那一次恰恰发生在
+    // SpringBoard 刚起来、windowScene 还没拿到的时候 —— UISelectionFeedbackGenerator init
+    // 会走到 +[UIScreen mainScreen]，那时 UIKit 还没初始化完 → NSAssertionHandler → SIGABRT，
+    // SpringBoard 崩溃循环 → 安全模式（真机实测：SpringBoard 启动 0.67 秒后崩）。
+    // 现在的规矩：**先 CHEnsureWindow()（拿到真实 windowScene = UIKit 已经活着），再打震动**，
+    // 然后才画胶囊。既保住「震动早于倒计时」的次序，又绝不在 UIKit 未就绪时碰它。
     __block BOOL shown = NO;
     void (^run)(void) = ^{
         if (needsHaptic) {
-            CHFireWeakHaptic();
+            // 只有真的能拿到 windowScene 才敢震；拿不到就安静跳过（不崩、不消费请求）。
+            // 震成功之后才记 token：这样「第一次没震成」不会把这一条请求永久变成「不震」。
+            if (CHEnsureWindow() && CHFireWeakHaptic()) {
+                gHapticToken = [content copy];
+            }
         }
         shown = CHStartCountdown(seconds, label, plain);
     };
@@ -723,11 +722,11 @@ static void CHPollOnce(void) {
 __attribute__((constructor)) static void CHInitialize(void) {
     os_log(CHLog(), "v%{public}@ loaded; watching %{public}@", CHVersion, CHRequestPath);
 
-    // v1.4.1：这里**绝不能**创建震动生成器（UIKit 在 dyld 构造函数阶段还没就绪，
-    // 1.4.0 就是这么把 SpringBoard 搞崩进安全模式的）。CHPrepareHaptic() 现在只预热
-    // 一只已经存在的生成器，此刻还没有 → 什么都不做，安全。
-    // 真正的震动在第一次消费请求时惰性创建，那时 UIKit 早就活着了。
-    CHPrepareHaptic();
+    // v1.4.2：**构造函数里彻底不碰 UIKit**。
+    // v1.4.0 在这里创建震动生成器 → +[UIScreen mainScreen] 断言 → SIGABRT → 安全模式；
+    // v1.4.1 改成只预热一只已存在的生成器（此刻没有，等于什么都不做）；
+    // v1.4.2 直接删掉这次预热：震动生成器只在消费请求、拿到 windowScene 之后才惰性创建。
+    // 铁律：注入 SpringBoard 的插件，dyld 构造函数阶段禁止调用任何 UIKit API。
 
     dispatch_queue_t queue = dispatch_queue_create("com.yangzhou.countdownhud.poll", DISPATCH_QUEUE_SERIAL);
     dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);

@@ -16,7 +16,7 @@ set -eu
 # ── 包身份 ───────────────────────────────────────────────────────────
 PRODUCT=CountdownHUD
 PACKAGE_ID=com.yangzhou.countdownhud
-VERSION=1.4.1
+VERSION=1.4.2
 NAME_ZH="倒计时胶囊"
 DESCRIPTION="注销/装包前的自绘倒计时 HUD，兼作灵动岛纯文案提醒（任务完成/进度）：脚本写请求文件，SpringBoard 里按灵动岛容器的实际尺寸与位置画胶囊。不依赖通知。"
 MAINTAINER=yangzhou

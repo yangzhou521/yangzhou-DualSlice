@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.4.1)
+    name: Release (countdownhud-v1.4.2)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,14 +133,27 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.4.1
-          name: CountdownHUD v1.4.1
+          tag_name: countdownhud-v1.4.2
+          name: CountdownHUD v1.4.2
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
 
             为什么不靠通知：Apelin 的本地通知在发送瞬间会把 App 拉回前台，横幅被它自己的
             UNUserNotificationCenterDelegate 吞掉，既看不到、也进不了灵动岛。这个插件不碰通知，
             直接在 SpringBoard 顶层窗口画。
+
+            v1.4.2：**震动必须排在 UIKit 就绪之后**。v1.4.1 把生成器改成惰性创建，但「第一次
+            真要震时」那一刻往往正是 SpringBoard 刚起来、windowScene 还没拿到的时候 ——
+            UISelectionFeedbackGenerator init 仍会走到 +[UIScreen mainScreen]，
+            那时 UIKit 尚未初始化完 → 断言 → SIGABRT（真机实测：SpringBoard 启动 0.67 秒后崩，
+            连续崩溃计数 2 → 安全模式）。现在改成**先 CHEnsureWindow() 拿到真实 windowScene
+            （= UIKit 已经活着）才打震动，然后才画胶囊**：既保住「震动早于倒计时」的次序，
+            又绝不在 UIKit 未就绪时碰它。
+
+            铁律：注入 SpringBoard 的插件，构造函数阶段禁止调用任何 UIKit API
+            （UIScreen / UIFeedbackGenerator / UIWindow / UIView / UIFont…），
+            必须延迟到主线程 + 拿到 windowScene 之后；包 @try 也不够，
+            NSAssertionHandler 走的是 abort，不是可捕获异常。
 
             v1.4.1：**修安全模式**。v1.4.0 在 SpringBoard 的 dyld 构造函数里就创建
             UISelectionFeedbackGenerator，那时 UIKit 还没初始化完 → +[UIScreen mainScreen]
@@ -186,4 +199,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.4.1/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.4.2/$(basename "$DEB")"
