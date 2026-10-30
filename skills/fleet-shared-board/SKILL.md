@@ -211,24 +211,32 @@ sh "$F" care 20      # 看到「疑似睡死」列表 + 每人的唤醒整行（
 
 唤醒文案要点：说清「你停了多久 / 你的下一步是什么 / 先 beat 报个心跳 / 30 秒内回一句」。
 
-## Fleet 协调群（群聊对话，2026-10-31 起）
+## Fleet 协调群 = 大脑中枢（2026-10-31 起）
 
-用户 2026-10-31 01:56 原话：「给所有对话机器人开一个群聊一样的对话。只用来专门处理同步刷新分配任务和汇报工作进展？」
+用户 2026-10-31 01:56 原话：「给所有对话机器人开一个群聊一样的对话。」；
+2026-10-31 02:09 原话：「它应当是大脑🧠中枢！领导一切机器人！」
 
-黑板是文件（只写不打扰），协调群是实时对话（即时转发）。**两者互补**：
+协调群是**全体机器人的中央指挥（大脑）**——不是被动转发消息的公告板。黑板是文件（只写不打扰），
+协调群是实时指挥通道（主动调度）。**两者互补**：
 
 | 通道 | 用途 | 工具 |
 | --- | --- | --- |
 | 黑板（board.tsv） | 结构化状态（谁在做什么、下一步、设备占用） | `fleet.sh post`/`progress`/`care` |
-| 协调群（对话） | 实时消息（进展转发、任务分配、唤醒、relay） | `apelin_conversation_send(session_id, ...)` |
+| 协调群（对话） | 实时指挥（任务分配、冲突裁决、唤醒、relay、汇总、请示） | `apelin_conversation_send(session_id, ...)` |
 
 **协调群的 session ID** 存在 `$HOME/Documents/wiki.qaq.apelin/fleet/coordinator.txt`。
-新对话开工先查这个文件；不存在或对话已 ended → `apelin_conversation_create` 建新的（prompt 模板见技能 `cross-chat-coordination` §十六），把 session ID 写回文件。**已有活的就不建。**
+新对话开工先查这个文件；不存在或对话已 ended → `apelin_conversation_create` 建新的（prompt 模板见技能
+`cross-chat-coordination` §十六），把 session ID 写回文件。**已有活的就不建。**
 
-**协调员（群聊里的 agent）职责**：
-1. 收到进展 → `apelin_conversation_list` 查谁在跑 → 逐个 `apelin_conversation_send` 转发（三行内）
-2. 每收到消息 → 跑 `sh "$HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh" care 15`
-3. 睡死 → 唤醒（`apelin_conversation_send` 发【fleet-wake】）
-4. waiting-approval → relay 只读（`sh "$F" relay` 看详情，替做下载/校验/读诊断/查CI）
-5. 新任务 → `sh "$F" plan` + `assign`
-6. **不做设备操作**（不改源码/不装包/不注销/不杀进程/不 stop 别人/不改别人工程文件）
+**协调员（大脑）的七项主动职责**（每收到一条消息都要跑一遍）：
+1. **盘点**：`apelin_conversation_list`（全部工程）+ `fleet.sh list` + `care 15` → 全队状态图
+2. **分配**：新任务/请求 → 拆解 → `fleet.sh plan` + `assign`/`handout` 按能力+负载分配；空闲的派小任务
+3. **裁决**：两人同改一文件 → 立即介入裁定谁先谁后、文件归谁；风险动作 → 先协调再放行
+4. **看护**：睡死→唤醒；唤不醒→`takeover` 改派；全员停摆→自己顶上+通知用户
+5. **汇总**：全队进展简报（谁做完什么、谁在做什么、下一步、阻塞在哪）
+6. **relay**：`waiting-approval` 的对话 → 替做只读任务（下载/校验/查CI/读诊断），结果发回
+7. **请示**：需要用户决策的 → `apelin_notification_send` + `hud-notify.sh` 上岛
+
+**决策权**（用户不在时可自行决定）：任务优先级、资源分配、冲突裁决、唤醒/接管、派活。
+**不可自行决定**：装包、注销、杀进程、改源码、删包、改系统设置——须用户当次明确同意。
+**红线**：不改源码/不装包/不注销/不杀进程/不 stop 别人/不改别人工程文件。
