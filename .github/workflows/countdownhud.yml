@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.2.0)
+    name: Release (countdownhud-v1.3.0)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,14 +133,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.2.0
-          name: CountdownHUD v1.2.0
+          tag_name: countdownhud-v1.3.0
+          name: CountdownHUD v1.3.0
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
 
             为什么不靠通知：Apelin 的本地通知在发送瞬间会把 App 拉回前台，横幅被它自己的
             UNUserNotificationCenterDelegate 吞掉，既看不到、也进不了灵动岛。这个插件不碰通知，
             直接在 SpringBoard 顶层窗口画。
+
+            v1.3.0：窗口必须挂在真实的 windowScene 上 —— 老写法在拿不到 scene 时退回
+            initWithFrame:，而 iOS 13+ 里那种没有 scene 的窗口根本不参与渲染（诊断里
+            shows 照涨、屏幕上却什么都没有），这正是「注销前用户毫不知情」的根因。
+            现在拿不到 scene 就不显示、0.5 秒后重试，显示成功才记这条请求已消费；
+            诊断串末尾多了 win=<窗口>|scene=…|lvl=… 与 islandWin=…，一眼能看出
+            自己的窗口有没有 scene、层级压不压得住岛。
 
             v1.1.1：胶囊上的文字压到原来的 2/3（高度 ÷ 3，本机 125×37 的岛上约 12.3pt），
             并改成等宽数字 + Medium 字重（数字每秒跳动不再左右抖）；常规文字色由白改为
@@ -166,4 +173,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.2.0/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.3.0/$(basename "$DEB")"

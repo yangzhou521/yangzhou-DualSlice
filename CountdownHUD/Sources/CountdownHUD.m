@@ -43,9 +43,12 @@
 #import <math.h>
 #import <os/log.h>
 
-static NSString *const CHVersion = @"1.2.0";
+static NSString *const CHVersion = @"1.3.0";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static const NSTimeInterval CHPollInterval = 0.5;
+
+// 胶囊窗口的层级：既要盖在灵动岛（SystemAperture 那套）之上，也要盖在任何 App 之上。
+static const CGFloat CHWindowLevel = 20000000.0;
 
 // 兜底尺寸：找不到岛的时候才用。
 static const CGFloat CHFallbackPillWidth = 190.0;
@@ -94,26 +97,33 @@ static BOOL gFollowIsland = YES;          // 量到岛就跟着岛走
 static NSString *gIslandDetail = @"-";    // 诊断串：<类名>|x,y,w,h
 static NSString *gIslandSource = @"none"; // aperture / classname / none
 static NSUInteger gIslandCandidates = 0;
+static NSString *gIslandWindowDetail = @"-"; // v1.3.0 诊断：岛所在的那个窗口 <类名>|lvl=…
+static NSString *gSelfWindowDetail = @"-";   // v1.3.0 诊断：我们自己的窗口有没有 scene / 层级
 static CGFloat gFontSize = 12.5;         // v1.1.1：诊断串里报出来，省得靠眼睛量字号
 
-static UIWindowScene *CHActiveScene(void) {
+// v1.3.0：窗口必须挂在一块真实的 windowScene 上，否则 iOS 13+ 根本不渲染它。
+// 老写法在量不到 scene 时退回 `[[UIWindow alloc] initWithFrame:]`，那种窗口有 window、
+// 有 subview、isHidden=NO、诊断计数照涨，**屏幕上永远看不见** —— 这就是「注销前用户
+// 毫不知情」的根因。现在量不到 scene 就什么都不建，把请求留到下一次轮询重试。
+static UIWindowScene *CHPickScene(void) {
     UIApplication *app = [UIApplication sharedApplication];
     if (app == nil) {
         return nil;
     }
-    NSSet<UIScene *> *scenes = app.connectedScenes;
-    for (UIScene *scene in scenes) {
-        if ([scene isKindOfClass:[UIWindowScene class]] &&
-            scene.activationState == UISceneActivationStateForegroundActive) {
-            return (UIWindowScene *)scene;
+    UIWindowScene *fallback = nil;
+    for (UIScene *scene in app.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) {
+            continue;
+        }
+        UIWindowScene *ws = (UIWindowScene *)scene;
+        if (ws.activationState == UISceneActivationStateForegroundActive) {
+            return ws;
+        }
+        if (fallback == nil) {
+            fallback = ws;
         }
     }
-    for (UIScene *scene in scenes) {
-        if ([scene isKindOfClass:[UIWindowScene class]]) {
-            return (UIWindowScene *)scene;
-        }
-    }
-    return nil;
+    return fallback;
 }
 
 static NSString *CHClassNameOf(id obj) {
@@ -243,6 +253,7 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
     NSString *bestClass = nil;
     CGRect bestRect = CGRectZero;
     BOOL bestInAperture = NO;
+    UIWindow *bestWindow = nil;
     double bestScore = -1.0e9;
     NSUInteger candidates = 0;
     NSMutableArray<NSString *> *dump = [NSMutableArray array];
@@ -287,6 +298,7 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
                 bestClass = cls;
                 bestRect = r;
                 bestInAperture = YES;
+                bestWindow = w;
             }
         }
     }
@@ -311,6 +323,7 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
                     bestClass = cls;
                     bestRect = r;
                     bestInAperture = NO;
+                    bestWindow = w;
                 }
             }
         }
@@ -326,9 +339,15 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
     if (bestClass == nil || CGRectIsEmpty(bestRect)) {
         gIslandSource = @"none";
         gIslandDetail = @"-";
+        gIslandWindowDetail = @"-";
         os_log(CHLog(), "no island pill found (candidates=%lu)", (unsigned long)candidates);
         return NO;
     }
+
+    // 岛所在的那只窗口与它的层级（v1.3.0 诊断）：胶囊的窗口层级必须高过它，否则被岛盖住。
+    gIslandWindowDetail = bestWindow
+        ? [NSString stringWithFormat:@"%@|lvl=%.0f", CHClassNameOf(bestWindow), bestWindow.windowLevel]
+        : @"-";
 
     NSString *cls = bestClass.length > 48 ? [bestClass substringToIndex:48] : bestClass;
     gIslandSource = bestInAperture ? @"aperture" : @"classname";
@@ -344,13 +363,14 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
 }
 
 static void CHWriteDiagnostics(void) {
-    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@",
+    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@",
                          CHVersion, gShows, gLastSeconds,
                          gLabelText.length ? gLabelText : @"-",
                          gFontSize,
                          gIslandDetail, gIslandSource,
                          (unsigned long)gIslandCandidates,
-                         gPlainNotice ? @"plain" : @"count"];
+                         gPlainNotice ? @"plain" : @"count",
+                         gSelfWindowDetail, gIslandWindowDetail];
     CFPreferencesSetAppValue(CFSTR("CountdownHUDDiagnostics"),
                              (__bridge CFStringRef)summary,
                              kCFPreferencesCurrentApplication);
@@ -389,37 +409,61 @@ static void CHLayOut(void) {
                                CHFallbackPillHeight));
 }
 
-static void CHBuildIfNeeded(void) {
+// v1.3.0：只在真的有 windowScene 时才建窗口；场景换了（换屏 / SpringBoard 重排）就重建，
+// 并把胶囊重新挂上去。返回 NO 表示「现在还没法显示」，调用方要留着请求下次再来。
+static BOOL CHEnsureWindow(void) {
+    UIWindowScene *scene = CHPickScene();
+    if (scene == nil) {
+        return NO;
+    }
+    if (gWindow != nil && gWindow.windowScene == scene) {
+        return YES;
+    }
     if (gWindow != nil) {
-        return;
+        [gPill removeFromSuperview];
+        gWindow.hidden = YES;
+        gWindow = nil;
     }
-    UIWindowScene *scene = CHActiveScene();
-    if (scene != nil) {
-        gWindow = [[CHWindow alloc] initWithWindowScene:scene];
-    } else {
-        gWindow = [[CHWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+
+    CHWindow *w = [[CHWindow alloc] initWithWindowScene:scene];
+    w.windowLevel = CHWindowLevel;
+    w.backgroundColor = [UIColor clearColor];
+    w.userInteractionEnabled = NO;
+    w.hidden = YES;
+
+    // 带 rootViewController 的窗口才是「完整」窗口：胶囊加在它内容层之上，
+    // 而且这一层不吃触摸（hitTest 在 CHWindow 里就返回 nil 了）。
+    UIViewController *host = [[UIViewController alloc] init];
+    host.view.backgroundColor = [UIColor clearColor];
+    host.view.userInteractionEnabled = NO;
+    w.rootViewController = host;
+
+    if (gPill == nil) {
+        gPill = [[UIView alloc] initWithFrame:CGRectMake(0, 0, CHFallbackPillWidth, CHFallbackPillHeight)];
+        gPill.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.86];
+        gPill.layer.cornerRadius = CHFallbackPillHeight / 2.0;
+        gPill.layer.masksToBounds = YES;
+        gPill.userInteractionEnabled = NO;
+
+        gLabel = [[UILabel alloc] initWithFrame:gPill.bounds];
+        gLabel.textAlignment = NSTextAlignmentCenter;
+        gLabel.textColor = [UIColor systemGreenColor];
+        gLabel.font = [UIFont monospacedDigitSystemFontOfSize:12.5 weight:UIFontWeightMedium];
+        gLabel.adjustsFontSizeToFitWidth = YES;
+        gLabel.minimumScaleFactor = 0.55;
+        gLabel.userInteractionEnabled = NO;
+
+        [gPill addSubview:gLabel];
     }
-    gWindow.windowLevel = 10000000.0;
-    gWindow.backgroundColor = [UIColor clearColor];
-    gWindow.userInteractionEnabled = NO;
-    gWindow.hidden = YES;
+    gWindow = w;
+    [host.view addSubview:gPill];
 
-    gPill = [[UIView alloc] initWithFrame:CGRectMake(0, 0, CHFallbackPillWidth, CHFallbackPillHeight)];
-    gPill.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.86];
-    gPill.layer.cornerRadius = CHFallbackPillHeight / 2.0;
-    gPill.layer.masksToBounds = YES;
-    gPill.userInteractionEnabled = NO;
-
-    gLabel = [[UILabel alloc] initWithFrame:gPill.bounds];
-    gLabel.textAlignment = NSTextAlignmentCenter;
-    gLabel.textColor = [UIColor systemGreenColor];
-    gLabel.font = [UIFont monospacedDigitSystemFontOfSize:12.5 weight:UIFontWeightMedium];
-    gLabel.adjustsFontSizeToFitWidth = YES;
-    gLabel.minimumScaleFactor = 0.55;
-    gLabel.userInteractionEnabled = NO;
-
-    [gPill addSubview:gLabel];
-    [gWindow addSubview:gPill];
+    gSelfWindowDetail = [NSString stringWithFormat:@"%@|scene=%@|lvl=%.0f|bounds=%.0fx%.0f",
+                         CHClassNameOf(w), CHClassNameOf(scene), w.windowLevel,
+                         w.bounds.size.width, w.bounds.size.height];
+    os_log(CHLog(), "HUD window ready on %{public}@ (level=%.0f)",
+           CHClassNameOf(scene), w.windowLevel);
+    return YES;
 }
 
 static void CHPaint(void) {
@@ -463,17 +507,18 @@ static void CHHide(void) {
                      }];
 }
 
-static void CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain) {
+static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain) {
     if (seconds == 0 || seconds > 600) {
         seconds = plain ? 8 : 5;
     }
     if (label.length == 0) {
         label = plain ? @"完成" : @"注销";
     }
-    CHBuildIfNeeded();
-    if (gWindow == nil) {
-        os_log(CHLog(), "no window scene, HUD skipped");
-        return;
+    if (!CHEnsureWindow()) {
+        // 还没有 windowScene（SpringBoard 刚起来的那一小会儿）：这次不显示，
+        // 也**不算显示过** —— 轮询下一拍会拿着同一条请求再来一次。
+        os_log(CHLog(), "no window scene yet, HUD deferred");
+        return NO;
     }
     if (gTimer != nil) {
         [gTimer invalidate];
@@ -517,13 +562,15 @@ static void CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain) {
             CHWriteDiagnostics();
         }
     }];
+    return YES;
 }
 
 #pragma mark - 轮询请求文件
 
 static NSString *gLastToken = nil;
+static BOOL gPrimed = NO;   // 首次读到的内容只记不触发（多半是上一次留下的旧请求）
 
-static void CHHandleRequest(NSString *content) {
+static BOOL CHHandleRequest(NSString *content) {
     NSArray<NSString *> *parts = [content componentsSeparatedByString:@"|"];
     NSUInteger seconds = 5;
     NSString *label = @"注销";
@@ -554,9 +601,18 @@ static void CHHandleRequest(NSString *content) {
             label = [[label substringToIndex:31] stringByAppendingString:@"…"];
         }
     }
-    dispatch_async(dispatch_get_main_queue(), ^{
-        CHStartCountdown(seconds, label, plain);
-    });
+    // 显示一律在主线程做，并且要等它给出结果：只有真的显示出来了，这一条请求才算消费掉
+    // （没有 windowScene 不算，轮询下一拍会重试）。
+    __block BOOL shown = NO;
+    void (^run)(void) = ^{
+        shown = CHStartCountdown(seconds, label, plain);
+    };
+    if ([NSThread isMainThread]) {
+        run();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), run);
+    }
+    return shown;
 }
 
 static void CHPollOnce(void) {
@@ -573,13 +629,17 @@ static void CHPollOnce(void) {
     if (gLastToken != nil && [content isEqualToString:gLastToken]) {
         return;
     }
-    BOOL firstSeen = (gLastToken == nil);
-    gLastToken = content;
-    if (firstSeen) {
+    if (!gPrimed) {
         // 插件刚加载时文件里可能还留着上一次的请求：记下来但不触发。
+        gPrimed = YES;
+        gLastToken = content;
         return;
     }
-    CHHandleRequest(content);
+    // 显示成功才把这条请求记成「已消费」；没显示出来（比如还没有 windowScene）就留着，
+    // 0.5 秒后的下一拍接着试。
+    if (CHHandleRequest(content)) {
+        gLastToken = content;
+    }
 }
 
 #pragma mark - 入口（没有 hook，纯 constructor）

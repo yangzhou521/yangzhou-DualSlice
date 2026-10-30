@@ -121,12 +121,19 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 用户 2026-10-30 16:12 与 16:14 两次明确要求，**适用于本次、下次、以后每一个对话、每一个工程**：
 
 - **本机全部技能包都要调用**：开工先 `apelin_skill_list`，再逐个 `apelin_skill_read` 把本机那几份
-  **全部**读完 ——
+  **全部**读完（**以 `apelin_skill_list` 的清单为准**，清单里新出现的也要读，不许漏）——
   `a11-roothide-ondevice`（本机 A11/roothide 的设备侧做法、云编译闭环、一站一槽钩子修法）、
   `axs-ios-tweaks`（Axs 个人约定的工程规范：命名空间、面板、滑条、Rootful/Rootless/Roothide 打包适配）、
   `respring-notify-countdown`（装包/注销/杀进程前的通知与 5 秒倒计时、外出取证必回 Apelin）、
   `cross-chat-coordination`（**自己的任务第一**；有进展/完成就广播给所有在跑的对话；注销/装包/杀进程前先查全部
-  工程与对话、先跟正在干活的对话打招呼再动手；闲置时才协助别人、交接要三段式）。
+  工程与对话、先跟正在干活的对话打招呼再动手；闲置时才协助别人、交接要三段式）、
+  `fleet-shared-board`（**机器人之间的状态一律写进共享黑板**：谁在做什么、下一步、进展、谁正占着设备；
+  派活/认领/完成也走黑板 —— 见下面「硬规矩」里的黑板条文）、
+  `injected-tweak-restart-app`（注入型插件划掉后台重开即生效，绝不为「等注销」挂起任务）、
+  `icli-status-self-check`（设备/插件/云端此刻状态一律自己查完再汇报，不推回用户）、
+  `settings-switch-ui`（设置面板里的选择一律 iOS 原生 UISwitch，不用对号）、
+  `task-done-notify`（每件有结果的事先在对话内汇报，再用灵动岛胶囊 + 通知提醒）、
+  `load-all-skills-memory-repos`（本机全部技能 + 全部记忆 + 云端两个越狱仓库一起用；三样同步上云）。
   不许只挑一份读，也不许拿「我记得内容」代替真读；Apelin 内置技能照旧按任务需要读。
 - **全部记忆一起读**：`apelin_memory_list`（加 `all_projects: true` 就是全部工程、全部对话的记忆），
   给别的工程干活时用 `apelin_memory_list project: <folder|projectID>`；动手前先看记忆里已有的结论与坑，
@@ -261,6 +268,28 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   - 红线：**绝不 `apelin_conversation_stop` 别人的对话**（实测只允许停自己开出来的）；绝不改别人工程的文件
     （`file_*` 工具出不了自己工程根），也不用 `shell_run` 绕过去；改第三方插件配置（如 Choicy 白名单）前先广播。
   - 技能：`cross-chat-coordination`（本机技能目录与仓库 `skills/` 各一份）。
+- **机器人之间的状态一律走「共享任务黑板」，别用互相发消息去问**（用户 2026-10-30 23:50 原话：「能否为所有在
+  活动的机器人建立一个统一的智能分配通知任务的技能？让它们各自知道另外别的机器正在进行的工作任务和以及下一步
+  的计划和最新工作进展？」**所有工程、所有对话、永久适用**）：
+  - 黑板数据 `$HOME/Documents/wiki.qaq.apelin/fleet/board.tsv`（本机、所有对话可读写，每行一个 agent）；
+    工具 `sh "$HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh" <命令>`，源码就是本仓库 `scripts/fleet.sh`，
+    改过后重新 `cp` 到上面那个位置（装法见技能）。
+  - **开工先 `list`**：谁在做什么、下一步是什么、谁正占着设备 —— 读别人的活，避免重复劳动，也免去问一轮。
+  - **干活中随手 `post`**：换步骤、有结论、遇到阻塞、在等用户，各 post 一次（只覆盖自己那一行，不打扰别人）；
+    长活每到一个有结论的节点也 post，别人不必问你。agent 写自己那条对话 id 的前 8 位。
+  - **动设备前 `busy`、动时 `hold`、动完 `free`**：`busy` 看有没有人正在 respring/install/kill/screen，
+    有就先打招呼或等它收尾；自己的 `hold <动作>` 声明 → 执行（通知 + 5 秒倒计时照旧）→ 立刻 `free` 释放，
+    别让别人一直等。`hold` 只是声明，不替代 `respring-notify-countdown` 的通知与倒计时。
+  - **派活/认领/完成**：`assign` 写一行给具体对话（一次 2~3 件、写清验收标准与输出格式），对方 `claim` 后
+    `post` 进展，做完 `done` 并 `prune`；同一件活不许两方同时做，**只有需要对方立刻改变行为**
+    （让路 / 停止 / 要结果）才用 `apelin_conversation_send`——**黑板是状态通道，消息是行为通道**。
+  - **非阻塞协作（用户 23:40「机器人之间关联任务仍然效率低下」）**：先查状态、别发消息问（`list`/`busy` 秒读，
+    不发消息等回复）；注销用「定时公告 + 30 秒反对窗口」，只有真收到「等等」才顺延（一次最多 60 秒），
+    不等逐个回执；依赖任务**先钉死接口**（文件路径、诊断键与期望值、包名版本、Release 资产 URL、CI run 号）
+    两边并行推进，不串行等待；备料写进工程文件，别留在聊天里（上下文一压缩就丢）。
+  - 每个工程干完一轮：`sh "$HOME/Documents/wiki.qaq.apelin/fleet/fleet.sh" snapshot` 把黑板快照进工程
+    `fleet/board.tsv`（便于上云与换机查看），再走「硬性规定 + 技能包 + 记忆」三样同步。
+  - 技能：`fleet-shared-board`（本机技能目录与仓库 `skills/` 各一份）。
 - **注入型插件装好后不必注销桌面：灭掉目标 App（后台划掉）再打开就完全生效**（用户 2026-10-30 21:24 原话：
   「这些注入型的插件在安装后 划掉后台重进软件和插件内就能实现功能完全注入！不必重新注销桌面！这个常识写进
   硬性规定、记忆和技能包内！并同步到云端！以后所有的对话和工程在工作时想要注销的时候看看这个常识性的知识！
@@ -272,6 +301,18 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
     划掉再点开）；设置面板类 → 退出设置再进。**先想这一步，别一上来就 respring。**
   - 验证：重开后读该 App 域里的诊断键，例如 `icli prefs read <bid> <Tweak>Diagnostics` 看版本号有没有变。
   - 真要注销（SpringBoard 注入、改 plist 过滤器、改包布局）时，才走上面「先协调对话 → 通知 → 5 秒 → 执行」。
+  - **铁律（用户 2026-10-30 23:32 追加，最高优先级）**：「这种的案例等待注销没必要！影响机器人工作任务的
+    效率！浪费手机电量和用户的宝贵的时间！」——**绝不为「等注销」挂起任务，绝不把「注销后验证」当成注入型
+    插件的默认验收路径**。判断先行：**注入的是哪个进程？** App 类（Sileo / 微信 / 备忘录 / 设置面板）→
+    **当场**重启那个进程验完给结果，注销完全不参与；SpringBoard 类（桌面图标、灵动岛 HUD、控制中心）→
+    才排队注销（SpringBoard 没有「划掉后台」）。
+  - **正面案例（2026-10-30 23:1x）**：`com.sileowallpaper.tweak` 0.1.9（并入 SileoFix）装好后**没注销**：
+    `icli app kill com.sileo --force` → `icli app launch com.sileo` → 日志首行 `loaded v0.1.9`、内页搜索框
+    可点、键盘弹出 → 用户 23:18 亲口确认「正常了」。全程几十秒，屏幕没黑、没打扰任何对话。**这就是标准流程。**
+  - **反面案例**：同一时段我为 ThemeCorePlus（桌面图标）与 CountdownHUD（灵动岛胶囊）排了一次注销 ——
+    它们注入的**就是 SpringBoard 本身**，注销这一半没错；错在没先把「App 类当场验、一次都不等注销」讲清
+    并写成规矩，让用户只看到「机器人又在等注销」。
+  - 汇报用语：**改了哪个目标 → 重启了哪个进程（或为什么只能注销）→ 读到的诊断值**；不许只写「等注销后验证」。
   - 技能：`injected-tweak-restart-app`（本机技能目录与仓库 `skills/` 各一份）。
 - **装包 / 注销 / 重启目标进程之前，必须：① `apelin_notification_send` 通知 → ② 明说「5 秒后执行」并
   真等 5 秒（`sh scripts/respring-guard.sh 5`）→ ③ 才执行。** 用户 2026-10-30 三次要求过、仍然漏过，
@@ -287,6 +328,21 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
     `wiki.qaq.apelin`，进程号不变 56376），它自己的通知代理随即把横幅吞掉。所以通知既不显示、
     也无法上灵动岛（微信能上岛，Apelin 这条进不了 SpringBoard 的横幅通道）。**倒计时永远以聊天正文
     为准**，通知只是补充，绝不当作「用户已经知道了」。
+- **「用户知情」的硬判据：知情通道 = 对话正文 + 屏幕上的胶囊，通知不算**（用户 2026-10-30 23:42 原话：
+  「上次注销前用户还是不知情！这个根本性问题也是没解决！」——**所有工程、所有对话、永久适用**）：
+  - 顺序不许颠倒：**① 回复正文写清「N 秒后注销 / 为什么 / 下一步」（永远必写）→ ② 屏幕上真的出现胶囊
+    （`sh scripts/respring-guard.sh <秒> <标签>`，只想提醒不发注销用 `scripts/hud-notify.sh`）→
+    ③ `apelin_notification_send` 通知（只是补充，仅 Apelin 不在前台时可见）**。发过通知 ≠ 用户已知情。
+  - **根因（2026-10-30 23:42 定位，CountdownHUD v1.3.0 已修）**：在这之前胶囊屏幕上根本不会出现 ——
+    老代码量不到 windowScene 时退回 `[[UIWindow alloc] initWithFrame:]`，而 iOS 13+ 里**没有 windowScene
+    的窗口完全不参与渲染**：窗口对象、子视图、`isHidden=NO`、诊断 `shows` 全都正常，屏幕上一个像素都没有。
+    v1.3.0 起：拿不到 scene 就**不显示、也不消费这条请求**（0.5 秒后自动重试）；窗口一律
+    `initWithWindowScene:` + `rootViewController`，层级 `20000000`（压得住灵动岛那套 SystemAperture）。
+  - **注销前先验胶囊真的显示了**（这是唯一证据）：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`
+    —— `shows` 必须比上一次大，`win=…|scene=UIWindowScene|lvl=…`，且 `islandWin=…|lvl=…` 的层级**小于**
+    自己窗口的。`shows` 不涨 / `scene=-` / `src=none` = 胶囊没显示，先修 HUD
+    （`icli log syslog --subsystem com.yangzhou.countdownhud`），不许「假装通知到位」就注销。
+  - 技能：`respring-notify-countdown` §零·七（本机技能目录与仓库 `skills/` 各一份）。
 - **离开 Apelin（桌面 / 插件设置内 / 别的 App）必须按时自己回到对话内**——三种去处一个都不例外；
   用户 2026-10-30 两次要求，第二次原话：「去桌面上去桌面插件内去软件插件内回来 Apelin 对话内都写进硬性规定和技能包」
   （**所有工程、所有对话适用**）：
