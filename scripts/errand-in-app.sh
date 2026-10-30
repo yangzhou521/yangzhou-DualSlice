@@ -8,9 +8,9 @@
 # 而不是写在最后一行。
 #
 # 用法：
-#   sh scripts/errand-in-app.sh <bundle-id> [最长时间秒，默认 60] [要点的元素文字]
+#   sh scripts/errand-in-app.sh <bundle-id> [最长时间秒，默认 60] [要点的元素文字]...
 #   sh scripts/errand-in-app.sh com.apple.Preferences 60                    # 只看一眼
-#   sh scripts/errand-in-app.sh com.apple.Preferences 60 "主题美化 +"        # 点进面板再看
+#   sh scripts/errand-in-app.sh com.apple.Preferences 60 "主题美化 +" "生效主题"  # 依次点两个
 #
 # 输出（一次调用就把证据带回来）：
 #   - 目标 App 的截图路径（落在 /tmp，要给你看时再 cp 进工程用 file_show）
@@ -25,7 +25,7 @@ set -u
 
 TARGET=${1:-}
 LIMIT=${2:-60}
-LABEL=${3:-}
+shift 2 2>/dev/null || shift $#   # 余下参数都是要依次点击的元素文字
 APELIN_BID=wiki.qaq.apelin
 
 if [ -z "$TARGET" ]; then
@@ -76,14 +76,19 @@ if over_limit; then
     exit 0
 fi
 
-if [ -n "$LABEL" ]; then
+for LABEL in "$@"; do
+    if over_limit; then
+        echo "时间已到，跳过剩余点击（「$LABEL」及之后）"
+        break
+    fi
     if icli ui wait "$LABEL" --timeout 5 >/dev/null 2>&1 && \
        icli ui tap "$LABEL" >/dev/null 2>&1; then
+        echo "已点击「$LABEL」"
         sleep 2
     else
         echo "点击「$LABEL」失败（元素没出现或不可点，不影响回程）"
     fi
-fi
+done
 
 if ! over_limit; then
     if icli screen shot --output "$SHOT" >/dev/null 2>&1 && [ -s "$SHOT" ]; then
@@ -95,6 +100,11 @@ fi
 
 if ! over_limit; then
     echo "--- 界面元素树 ---"
+    if ! icli ui tree --human --max-elements 120 2>&1 | sed -n '1,90p'; then
+        :
+    fi
+    sleep 1
+    echo "--- 界面元素树（第二次，防上一页残留） ---"
     icli ui tree --human --max-elements 120 2>&1 | sed -n '1,90p'
 fi
 

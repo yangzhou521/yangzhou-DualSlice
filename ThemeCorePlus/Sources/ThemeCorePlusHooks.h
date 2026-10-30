@@ -79,6 +79,14 @@ NSArray<NSString *> *TCPSiteDescriptions(void);
 // 运行期普查：把这些类自己声明的方法名列出来。钩子点靠它坐实，不靠猜。
 NSString *TCPCensusForClasses(NSArray<NSString *> *classNames, NSUInteger limit);
 
+// 「谁在这个站点上做了手脚」：对每个 (类, 选择器)，用 dladdr 看它现在的 IMP 属于哪个镜像。
+// MSHookMessageEx 换上的 IMP 属于插件自己的 dylib，所以能直接从运行中的 SpringBoard 读出
+// 可用的同类插件（MarkTheme16 / ThemeCore）到底 hook 了哪些站点 —— 不反汇编、不猜。
+// 返回 "类:选择器=镜像名" 逗号串；系统自己的实现（SpringBoardHome / IconServices 等）不计。
+NSString *TCPHookOwnerCensus(NSArray<NSString *> *classNames,
+                             NSArray<NSString *> *selectorNames,
+                             NSUInteger limit);
+
 // —— 站点拿到机会时问模块要替换素材；模块拿不出就返回 nil / 原对象，包装函数照原样转发 ——
 // 由 ThemeCorePlusIcons.m / ThemeCorePlusBadges.m / ThemeCorePlusFolders.m 实现。
 UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info);

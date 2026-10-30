@@ -64,6 +64,30 @@ static void TCPWriteDiagnostics(void) {
 
     NSString *census = TCPCensusForClasses(TCPCensusClassNames(), 3600);
     TCPWriteProcessPreference(@"ThemeCorePlusCensus", census);
+
+    // 本机装着的 MarkTheme16（com.hmmzzz.marktheme）能正常换图标，ThemeCore 0.5.1 也曾经能。
+    // 它们到底挂在哪几个 (类,选择器) 上，直接按 IMP 归属从运行中的 SpringBoard 里读出来：
+    // 换过 IMP 的站点，IMP 落在那个插件的 dylib 里。有了这张表就不必再猜站点。
+    NSArray<NSString *> *ownerClasses = @[ @"SBIconImageView", @"SBIconImageCrossfadeView",
+                                           @"SBIconView", @"SBIcon", @"SBApplicationIcon",
+                                           @"SBHIconImageCache", @"SBFolderIconImageView",
+                                           @"SBHClockApplicationIconImageView", @"IFImageBag",
+                                           @"ISIcon", @"SBIconIconImage" ];
+    NSArray<NSString *> *ownerSelectors = @[ @"iconImageWithInfo:", @"unmaskedIconImageWithInfo:",
+                                             @"displayedImage", @"contentsImage",
+                                             @"squareContentsImage", @"setImage:",
+                                             @"updateImageAnimated:", @"setIconImageInfo:",
+                                             @"generateIconImageWithInfo:", @"realImageForIcon:",
+                                             @"cacheImageForIcon:", @"setImages:",
+                                             @"setOriginalImages:", @"loadImageForGeneration:",
+                                             @"iconImageFromUnmaskedImage:", @"setCurrentImageSet:",
+                                             @"publishImageSet:", @"buildImageSetForSnapshot:",
+                                             @"_handleIconImage:", @"updateImageContentsWithImage:",
+                                             @"setComposedImage:", @"maskImageForImageSet:",
+                                             @"overlayImageForImageSet:", @"iconImageFromImage:",
+                                             @"_configureIconImageView:", @"isRealContentsImage" ];
+    TCPWriteProcessPreference(@"ThemeCorePlusHookOwners",
+                              TCPHookOwnerCensus(ownerClasses, ownerSelectors, 1600));
 }
 
 // 让桌面把图标重新取一遍图。取不到就当没有这一步（有的版本没有这个方法）。

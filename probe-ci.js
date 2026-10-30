@@ -1,25 +1,20 @@
-// 看云编译状态：最新几次 run 的 head_sha / status / conclusion
-var url = "https://api.github.com/repos/yangzhou521/yangzhou-DualSlice/actions/runs?per_page=5";
-var NSURL = ObjC.use('NSURL');
+// 查最近几次 CI 运行的状态（公开仓库，匿名可读）
+var url = "https://api.github.com/repos/yangzhou521/yangzhou-DualSlice/actions/runs?per_page=3";
 var NSData = ObjC.use('NSData');
-var NSJSONSerialization = ObjC.use('NSJSONSerialization');
-var d = NSData.dataWithContentsOfURL_(NSURL.URLWithString_(url));
-if (!d) { print('fetch-nil'); }
+var NSURL = ObjC.use('NSURL');
+var data = NSData.dataWithContentsOfURL_(NSURL.URLWithString_(url));
+if (!data) { print("fetch-nil"); }
 else {
-  var j = NSJSONSerialization.JSONObjectWithData_options_error_(d, 0, null);
-  if (!j) { print('parse-nil'); }
-  else {
-    var runs = j.objectForKey_('workflow_runs');
-    var n = runs.count();
-    for (var i = 0; i < n; i++) {
-      var r = runs.objectAtIndex_(i);
-      print('run ' + r.objectForKey_('id')
-        + ' sha=' + r.objectForKey_('head_sha')
-        + ' ' + r.objectForKey_('status')
-        + '/' + r.objectForKey_('conclusion')
-        + ' event=' + r.objectForKey_('event')
-        + ' created=' + r.objectForKey_('created_at')
-        + ' name=' + r.objectForKey_('name'));
-    }
+  var s = ObjC.use('NSString').alloc().initWithData_encoding_(data, 4);
+  var text = s.toString();
+  // 只挑要看的三样：状态、结论、提交号
+  var re = /"head_sha":"([0-9a-f]{8})[0-9a-f]*"|"status":"([a-z_]+)"|"conclusion":"([a-z_]+)"/g;
+  var m, out = [], run = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1]) { run++; out.push("run" + run + " sha=" + m[1]); }
+    else if (m[2]) out.push("  status=" + m[2]);
+    else if (m[3]) out.push("  conclusion=" + m[3]);
   }
+  print(out.join("\n"));
+  if (out.length === 0) print("raw-head: " + text.substring(0, 300));
 }

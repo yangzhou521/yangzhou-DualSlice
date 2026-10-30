@@ -3,6 +3,7 @@
 //
 #import "ThemeCorePlusHooks.h"
 #import <substrate.h>
+#import <dlfcn.h>   // dladdr：反查某个 IMP 属于哪个镜像（见文末「谁 hook 了它」）
 
 #define TCP_SLOT_COUNT 24
 
@@ -358,4 +359,49 @@ NSString *TCPCensusForClasses(NSArray<NSString *> *classNames, NSUInteger limit)
         used += joined.length + name.length + 2;
     }
     return [parts componentsJoinedByString:@"\n"];
+}
+
+#pragma mark - 「谁 hook 了它」
+
+// dladdr 给出 IMP 所在的镜像。MSHookMessageEx 换上的 IMP 落在插件自己的 dylib 里，
+// 所以「这个 (类,选择器) 现在的 IMP 在谁的地盘」= 谁在这个站点上做了手脚。
+// 这样就能直接从运行中的 SpringBoard 读出 MarkTheme16（本机能正常换图标）与 ThemeCore
+// 的站点清单，不必反汇编、不必猜。
+static NSString *TCPImageBasenameOfIMP(IMP imp) {
+    if (imp == NULL) return nil;
+    Dl_info info;
+    if (dladdr((void *)imp, &info) == 0 || info.dli_fname == NULL) return nil;
+    return [@(info.dli_fname) lastPathComponent];
+}
+
+NSString *TCPHookOwnerCensus(NSArray<NSString *> *classNames,
+                             NSArray<NSString *> *selectorNames,
+                             NSUInteger limit) {
+    // 系统自己的镜像：IMP 落在这里说明这个站点没人动过。
+    NSSet<NSString *> *systemImages = [NSSet setWithArray:@[
+        @"SpringBoardHome", @"SpringBoard", @"IconServices", @"UIKitCore",
+        @"SpringBoardFoundation", @"IconFoundation", @"BaseBoard", @"Foundation",
+        @"CoreFoundation", @"libobjc.A.dylib", @"libsystem_kernel.dylib"
+    ]];
+
+    NSMutableArray<NSString *> *hits = [NSMutableArray array];
+    for (NSString *className in classNames) {
+        Class cls = objc_getClass(className.UTF8String);
+        if (cls == Nil) continue;
+        for (NSString *selectorName in selectorNames) {
+            SEL sel = NSSelectorFromString(selectorName);
+            if (sel == NULL) continue;
+            // 同 R2：只认类自己声明的方法（实例方法优先，其次类方法）。
+            Class owner = TCPClassDeclaresMethod(cls, sel) ? cls : object_getClass(cls);
+            if (!TCPClassDeclaresMethod(owner, sel)) continue;
+            IMP imp = class_getMethodImplementation(owner, sel);
+            NSString *image = TCPImageBasenameOfIMP(imp);
+            if (image.length == 0 || [systemImages containsObject:image]) continue;
+            [hits addObject:[NSString stringWithFormat:@"%@:%@=%@", className, selectorName, image]];
+        }
+    }
+    if (hits.count == 0) return @"-";
+    NSString *text = [hits componentsJoinedByString:@","];
+    if (limit > 4 && text.length > limit) text = [text substringToIndex:limit];
+    return text;
 }

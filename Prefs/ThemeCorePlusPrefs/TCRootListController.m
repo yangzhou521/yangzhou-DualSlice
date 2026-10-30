@@ -235,18 +235,22 @@ static NSString *TCPDiagnosticsText(void) {
     return spec;
 }
 
-// 主题选择：写的是 ThemePath（绝对路径，最不容易有歧义）。这一行只负责 push 二级页
-// （TCPThemeListController，行由它自己造）；它自己不写任何偏好，所以 set 留空。
-- (PSSpecifier *)tcpThemePicker {
-    PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:@"生效主题"
+// 主题选择：一行一个主题的开关（开 = 生效，关 = 回到系统原生）。
+// 为什么不再 push 二级页（TCPThemeListController）：0.6.0 装机版点进「生效主题」那一页，设置
+// 进程当场闪退（crash 报告的 lastException 是 unrecognized selector，reason 被系统截断；
+// 离线探针里同一页 view()+viewWillAppear: 却是 1 段 6 行齐全）—— 差别全在设置进程框架内部的
+// 私有准备流程里，我们看不到也验不了，所以索性不依赖它。根页的开关行一直好用（同一条 set/get
+// 机制），主题也走它：spec 上的 tcpThemePath 属性就是这一行代表的主题路径（空串 = 系统原生），
+// 读和写全在下面 readPreferenceValue: / setPreferenceValue:specifier: 里处理。
+- (PSSpecifier *)tcpThemeSwitchNamed:(NSString *)name path:(NSString *)path {
+    PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:name
                                                       target:self
-                                                         set:nil
+                                                         set:@selector(setPreferenceValue:specifier:)
                                                          get:@selector(readPreferenceValue:)
-                                                      detail:[TCPThemeListController class]
-                                                        cell:TCPPSLinkCell
+                                                      detail:nil
+                                                        cell:TCPPSSwitchCell
                                                         edit:nil];
-    [spec setProperty:TCPPreferencesDomain forKey:@"defaults"];
-    [spec setProperty:TCPKeyThemePath forKey:@"key"];
+    [spec setProperty:(path ?: @"") forKey:@"tcpThemePath"];
     return spec;
 }
 
@@ -272,11 +276,19 @@ static NSString *TCPDiagnosticsText(void) {
         [specs addObjectsFromArray:fromPlist];
     }
 
+    TCPThemeStore *store = [TCPThemeStore shared];
     [specs addObject:[self tcpGroupWithHeader:@"主题"
-                                       footer:[NSString stringWithFormat:@"v%@ · %@",
-                                               TCP_VERSION, TCPCurrentStatusLine()]]];
-    [specs addObject:[self tcpThemePicker]];
+                                       footer:[NSString stringWithFormat:
+                                               @"v%@ · %@\n一共扫到 %lu 个主题：打开一个就生效，关掉回到系统原生外观。",
+                                               TCP_VERSION, TCPCurrentStatusLine(),
+                                               (unsigned long)[store availableThemePaths].count]]];
     [specs addObject:[self tcpSwitchNamed:@"启用主题美化" key:TCPKeyEnabled]];
+    [specs addObject:[self tcpThemeSwitchNamed:@"系统原生外观" path:@""]];
+    for (NSString *themePath in [store availableThemePaths]) {
+        NSString *name = themePath.lastPathComponent;
+        if ([name hasSuffix:@".theme"]) name = [name stringByDeletingPathExtension];
+        [specs addObject:[self tcpThemeSwitchNamed:name path:themePath]];
+    }
 
     [specs addObject:[self tcpGroupWithHeader:@"功能开关"
                                        footer:@"四项默认全开：主题里没有对应素材时，插件本身就是空转。"]];
@@ -334,6 +346,14 @@ static NSString *TCPDiagnosticsText(void) {
 - (id)readPreferenceValue:(id)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
 
+    // 主题开关：spec 上的 tcpThemePath（空串 = 系统原生外观）与当前生效路径相比。
+    NSString *choice = [specifier propertyForKey:@"tcpThemePath"];
+    if ([choice isKindOfClass:[NSString class]]) {
+        NSString *current = [TCPThemeStore shared].themePath;
+        if (![current isKindOfClass:[NSString class]]) current = @"";
+        return [choice isEqualToString:current] ? @YES : @NO;
+    }
+
     if ([key isEqualToString:TCPKeyThemePath]) {
         // 以实际生效的主题为准（也可能来自 ThemeName，或 shell 手写的路径）。
         NSString *active = [TCPThemeStore shared].themePath;
@@ -348,6 +368,20 @@ static NSString *TCPDiagnosticsText(void) {
 
 - (void)setPreferenceValue:(id)value specifier:(id)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
+
+    // 主题开关：这类 spec 没有 defaults/key，父类只会写一个没人读的键，所以自己落地。
+    // 打开 → 写这一行的路径；关掉 / 打开「系统原生外观」→ 清空 = 回原生。
+    NSString *choice = [specifier propertyForKey:@"tcpThemePath"];
+    if ([choice isKindOfClass:[NSString class]]) {
+        BOOL on = [value respondsToSelector:@selector(boolValue)] ? [value boolValue] : NO;
+        NSString *chosen = (on && choice.length > 0) ? choice : nil;
+        TCPWritePreference(TCPKeyThemePath, chosen);
+        TCPWritePreference(TCPKeyThemeName, nil);   // 两个键只留一个，免得互相打架
+        TCPPostPreferencesChanged();
+        [self reloadSpecifiers];                    // 其余开关按新快照重排
+        return;
+    }
+
     [super setPreferenceValue:value specifier:specifier];
 
     if ([key isEqualToString:TCPKeyThemePath]) {
