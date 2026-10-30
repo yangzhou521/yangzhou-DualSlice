@@ -237,14 +237,21 @@ static NSInteger sPixelNil = 0;
 static NSInteger sPixelMaxImageViews = 0;
 static CGFloat sPixelMinOpaque = 1.0;
 static NSMutableArray<NSString *> *sPixelBlankSamples = nil;
+// 0.9.5：「一个图标视图里到底叠了哪几层图、每层归谁」逐层记下来（最多 6 条）。
+// 光数张数说明不了问题 —— 得知道那张 stock 图是叠在我们的图下面（重影），还是另一处子视图。
+static NSMutableArray<NSString *> *sPixelLayerSamples = nil;
+static NSInteger sPixelStackDup = 0;   // 同一视图里「尺寸相同」的图叠在一起的对数
 
-// 一个视图里挂了几张 UIImageView（递归两层）。同一个位置叠两张，屏幕上就是「两个图层」。
+// 一个视图里挂了几张 UIImageView（递归到底）。同一个位置叠两张，屏幕上就是「两个图层」。
+// 0.9.5 修：原来写成 `if (sub.subviews.count > 0 && count > 0)` —— 本级一张都没数到时
+// 就不往下走了，嵌套两层以上的图（SBIconImageView 的真实形状）永远数成 0：
+// 诊断里 maxImgViews 一直是 0，「叠了几层」这条线索被彻底废掉。
 static NSInteger TCPCountImageViews(UIView *view) {
     NSInteger count = 0;
     for (UIView *sub in view.subviews) {
         NSString *name = NSStringFromClass([sub class]);
         if ([name containsString:@"ImageView"] && sub.bounds.size.width > 1) count++;
-        if (sub.subviews.count > 0 && count > 0) count += TCPCountImageViews(sub);
+        if (sub.subviews.count > 0) count += TCPCountImageViews(sub);
     }
     return count;
 }
@@ -282,6 +289,7 @@ static void TCPInspectIconView(id view) {
     // ② 屏幕上真正挂着的图：视图里那几张 UIImageView 手里的 image
     TCPThemeStore *store = [TCPThemeStore shared];
     NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithArray:((UIView *)view).subviews];
+    NSMutableSet<NSString *> *stackedSizes = [NSMutableSet set];
     NSUInteger guard = 0;
     while (queue.count > 0 && guard++ < 32) {
         UIView *sub = queue.firstObject;
@@ -292,8 +300,31 @@ static void TCPInspectIconView(id view) {
             if (image == nil) {
                 sPixelNil++;
             } else {
-                if ([store isRenderedImage:image]) sPixelScreenThemed++;
+                BOOL ours = [store isRenderedImage:image];
+                if (ours) sPixelScreenThemed++;
                 else sPixelScreenStock++;
+
+                // 0.9.5：逐层记样本。优先记「不是我们的」那一层 —— 那才是我们没盖住的图。
+                if (sPixelLayerSamples == nil) sPixelLayerSamples = [NSMutableArray array];
+                if (sPixelLayerSamples.count < 6 && !ours) {
+                    [sPixelLayerSamples addObject:
+                        [NSString stringWithFormat:@"%@|%@|%.0fx%.0f|%.0f,%.0f",
+                         (bundleID.length > 0 ? bundleID : @"?"),
+                         NSStringFromClass([sub class]),
+                         image.size.width, image.size.height,
+                         sub.frame.origin.x, sub.frame.origin.y]];
+                }
+                // 同一视图里尺寸一样的图叠了两张 = 屏幕上就是一个带重影的图标。
+                // 同一个尺寸第二次出现就记一对（不区分归属，归属已经在上面记过了）。
+                {
+                    NSString *sizeKey = [NSString stringWithFormat:@"%.0fx%.0f",
+                                         image.size.width, image.size.height];
+                    if (![stackedSizes containsObject:sizeKey]) {
+                        [stackedSizes addObject:sizeKey];
+                    } else {
+                        sPixelStackDup++;
+                    }
+                }
 
                 TCPPixelStats stats = TCPPixelStatsForImage(image);
                 if (stats.valid) {
@@ -320,14 +351,16 @@ static void TCPInspectIconView(id view) {
 NSString *TCPIconPixelProbeReport(void) {
     return [NSString stringWithFormat:
             @"gen{n=%ld,clear=%ld,minCov=%.2f,lum=%.2f,last=%@};"
-            @"pix{n=%ld,themed=%ld,screen{total=%ld,ours=%ld,stock=%ld},clear=%ld,flat=%ld,nil=%ld,minOpaque=%.2f,maxImgViews=%ld,blank=[%@]}",
+            @"pix{n=%ld,themed=%ld,screen{total=%ld,ours=%ld,stock=%ld},clear=%ld,flat=%ld,nil=%ld,minOpaque=%.2f,maxImgViews=%ld,dup=%ld,blank=[%@],lay=[%@]}",
             (long)sComposedCount, (long)sComposedClear, (double)sComposedMinCoverage,
             (double)sComposedLuminance, sComposedLast ?: @"-",
             (long)sPixelViews, (long)sPixelThemed, (long)sPixelScreenTotal,
             (long)sPixelScreenThemed, (long)sPixelScreenStock, (long)sPixelClear,
             (long)sPixelFlat, (long)sPixelNil, (double)sPixelMinOpaque,
             (long)sPixelMaxImageViews,
-            sPixelBlankSamples.count > 0 ? [sPixelBlankSamples componentsJoinedByString:@","] : @"-"];
+            (long)sPixelStackDup,
+            sPixelBlankSamples.count > 0 ? [sPixelBlankSamples componentsJoinedByString:@","] : @"-",
+            sPixelLayerSamples.count > 0 ? [sPixelLayerSamples componentsJoinedByString:@";"] : @"-"];
 }
 
 // 让屏幕当场换图，不注销。2026-10-30 第二版：

@@ -883,7 +883,13 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
     // 遮罩被跳过时按系统图标的圆角比例（22.37%）兜底，免得换出来是直角方块的玻璃片；
     // 素材本来就带圆角的话，这一刀裁下去什么都不会改变。
     // 只在「有遮罩但被跳过」这一种情况下兜底：主题没配遮罩的老行为（不裁）一点不动。
-    if (self.maskSkipped && !roundCorners && size.width > 0) {
+    //
+    // 0.9.5 修「双份素材 / 二个图层」：这一刀**不再看调用方传进来的 cornerRadius**。
+    // 上游站（SBIcon 那一组）传的是系统给的真圆角（60pt 图标 ≈ 13.50），显示层站传 0，
+    // 于是同一份素材在缓存里留下两个键（13.50 与 13.42）、被合成两份；两层叠在一起，
+    // 屏幕上就是一个带重影的图标 —— 用户说的「双份素材加载显示」。
+    // 现在圆角只由尺寸决定：一个图标、一个尺寸，只剩一张合成图。
+    if (self.maskSkipped && size.width > 0) {
         cornerRadius = size.width * 0.2237;
         roundCorners = YES;
     }
