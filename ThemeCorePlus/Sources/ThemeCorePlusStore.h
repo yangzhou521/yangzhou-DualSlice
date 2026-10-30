@@ -59,6 +59,15 @@
 // bundleID 为空时只查全局表。
 - (NSString *)overridePathForBundleID:(NSString *)bundleID fileName:(NSString *)fileName;
 
+// —— 面板用：一个主题自己带了哪几类素材 ——
+// 键就是下面这四个常量，值都是 NSNumber 计数（件数，不是 App 个数；0 = 这类素材是空的）。
+// 只做浅扫：不建索引、不读图、不合成，也不缓存。
+extern NSString * const TCPMaterialIcons;    // IconBundles/ / icons/ / Bundles/<bundleid>/icon*
+extern NSString * const TCPMaterialFolders;  // 文件夹底板（ANEMFolderIconBG / FolderIconBG…）
+extern NSString * const TCPMaterialBadges;   // 角标底图（SBBadgeBG…）
+extern NSString * const TCPMaterialFiles;    // 其余覆盖素材（状态栏 / 拨号盘 / 设置 / 分享…）
+- (NSDictionary<NSString *, NSNumber *> *)materialSummaryForThemePath:(NSString *)theme;
+
 // —— 诊断 ——
 - (NSArray<NSString *> *)availableThemePaths;
 - (NSString *)diagnostics;

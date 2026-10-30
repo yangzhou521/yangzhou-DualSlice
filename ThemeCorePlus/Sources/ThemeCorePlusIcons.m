@@ -48,6 +48,9 @@ static NSString *TCPIconBundleIdentifier(id icon) {
     return nil;
 }
 
+// 定义在下面「图标像素自检」那节：把合成的图量一遍像素（C 要求先声明后使用）。
+static void TCPNoteComposedImage(UIImage *image, NSString *bundleID);
+
 UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info) {
     if (icon == nil || info.size.width <= 0 || info.size.height <= 0) return nil;
     NSString *bundleID = TCPIconBundleIdentifier(icon);
@@ -58,10 +61,12 @@ UIImage *TCPThemedIconImage(id icon, TCPIconImageInfo info) {
 
     // 遮罩：优先用主题自带的作者遮罩（store 自己会套）；IconCornerMask 只是没有素材时的兜底。
     CGFloat radius = [store cornerMaskEnabled] ? info.cornerRadius : 0;
-    return [store iconImageForBundleID:bundleID
-                                 size:info.size
-                                scale:info.scale
-                         cornerRadius:radius];
+    UIImage *image = [store iconImageForBundleID:bundleID
+                                           size:info.size
+                                          scale:info.scale
+                                   cornerRadius:radius];
+    TCPNoteComposedImage(image, bundleID);   // 自己的产物也量一遍像素，见「图标像素自检」那节
+    return image;
 }
 
 void TCPInstallIconSites(void) {
@@ -138,16 +143,94 @@ static void TCPPurgeViewImageCache(id view) {
     sRefreshCacheMiss++;
 }
 
-#pragma mark - 图标像素自检：桌面上哪些图标其实是空的
+#pragma mark - 图标像素自检：桌面上哪些图标其实是空的 / 屏幕上挂的是不是我们的图
 
-// 用户 2026-10-30 14:42/14:51 两次报「有些是空白图标」「图标目前二个图层」，但 agent 这边看不到屏幕
-// （本机 icli screen ocr / describe 都报 capture failed，截图也没有读图能力）。所以让插件自己在
-// 「刷新图标」时把每个图标视图的图缩到 32×32 数一遍像素：
-//   · clear = 几乎全透明（>9 成透明）—— 画上去等于什么都没有，就是「空白图标」
-//   · flat  = 几乎纯白/纯黑且无细节 —— 发白的空壳
-// 同时数每个视图里有几个 UIImageView（layers.max）：同一个位置叠了两张图就是「两个图层」。
-// 结果进诊断的 pix{...}，不用注销也能一眼看出是哪个 app 的图标有问题。
+// 用户 2026-10-30 14:42/14:51 两次报「有些是空白图标」「图标目前二个图层」，15:33 又说「图标主题和角标
+// 都没正式显示加载」，但 agent 这边看不到屏幕（本机 icli screen ocr / describe 都报 capture failed，
+// 我也没有读图能力）。所以让插件自己数像素，一次回答三件事：
+//   gen{...}  我们合出来的那张图本身是不是透明的 —— 是的话就是我们把图抹没了；
+//   pix{...}  视图交出去的图是不是我们的、**屏幕上那几个 UIImageView 手里攥的是不是我们的** ——
+//             「交出去的是主题图、屏幕上是原图」就等于显示层白干，得改走 IconServices 那条路；
+//             顺带数一个视图里叠了几张 UIImageView（「两个图层」）。
+// 说明：这段以前写好了却**从来没被调用**（15:4x 才发现），所以诊断里一直没有 pix{}。
+
+typedef struct {
+    CGFloat coverage;    // 不透明像素占比：1 = 整张都是实的，0 = 全透明
+    CGFloat flat;        // 纯白/纯黑且没有细节的比例（发白的空壳）
+    CGFloat luminance;   // 实心部分的平均亮度 0~1
+    BOOL valid;
+} TCPPixelStats;
+
+static TCPPixelStats TCPPixelStatsForImage(UIImage *image) {
+    TCPPixelStats stats = { 0, 0, 0, NO };
+    if (image == nil || image.CGImage == NULL) return stats;
+
+    const size_t side = 24;   // 24×24 足够分清「透明 / 纯色 / 有内容」，又不会拖慢刷新
+    unsigned char buffer[side * side * 4];
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(buffer, side, side, 8, side * 4, space,
+                                             kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(space);
+    if (ctx == NULL) return stats;
+    CGContextSetInterpolationQuality(ctx, kCGInterpolationLow);
+    CGContextDrawImage(ctx, CGRectMake(0, 0, side, side), image.CGImage);
+    CGContextRelease(ctx);
+
+    const size_t total = side * side;
+    size_t clear = 0, flat = 0, lumaSum = 0;
+    for (size_t i = 0; i < total; i++) {
+        const unsigned char *px = buffer + i * 4;
+        if (px[3] < 8) { clear++; continue; }
+        int lum = (px[0] * 299 + px[1] * 587 + px[2] * 114) / 1000;
+        lumaSum += (size_t)lum;
+        int dr = (int)px[0] - (int)px[1];
+        int dg = (int)px[1] - (int)px[2];
+        if (abs(dr) < 8 && abs(dg) < 8 && (lum > 244 || lum < 12)) flat++;
+    }
+    stats.valid = YES;
+    stats.coverage = (CGFloat)(total - clear) / (CGFloat)total;
+    stats.flat = (CGFloat)flat / (CGFloat)total;
+    size_t solid = total - clear;
+    stats.luminance = solid > 0 ? (CGFloat)lumaSum / (CGFloat)(255.0 * (double)solid) : 0;
+    return stats;
+}
+
+// 显示层站的打点开关：体检自己问 displayedImage 时不要把自己的询问算进 look/hit（会虚高）。
+static BOOL sPixelQuietDisplayCounters = NO;
+// 定义在文件后面（显示层站那节）：视图 → 它绑定的图标对象。
+static id TCPDisplayViewIcon(id view);
+
+// —— 合成站：我们自己的产物 ——
+static NSInteger sComposedCount = 0;
+static NSInteger sComposedClear = 0;
+static CGFloat sComposedMinCoverage = 1.0;
+static CGFloat sComposedLuminance = 0;
+static NSString *sComposedLast = nil;
+
+// 合完一张主题图立刻量它自己。全透明 = 就是我们把它抹没了，用户看到的就是「空白图标」。
+static void TCPNoteComposedImage(UIImage *image, NSString *bundleID) {
+    if (image == nil) return;
+    sComposedCount++;
+    TCPPixelStats stats = TCPPixelStatsForImage(image);
+    if (!stats.valid) {
+        sComposedLast = [NSString stringWithFormat:@"%@:%.0fx%.0f@%.0f,noCGImage",
+                         bundleID ?: @"?", image.size.width, image.size.height, image.scale];
+        return;
+    }
+    if (stats.coverage < sComposedMinCoverage) sComposedMinCoverage = stats.coverage;
+    if (stats.coverage < 0.2) sComposedClear++;
+    sComposedLuminance = stats.luminance;
+    sComposedLast = [NSString stringWithFormat:@"%@:%.0fx%.0f@%.0f,cov=%.2f,lum=%.2f",
+                     bundleID ?: @"?", image.size.width, image.size.height, image.scale,
+                     (double)stats.coverage, (double)stats.luminance];
+}
+
+// —— 视图层：屏幕上到底挂了什么 ——
 static NSInteger sPixelViews = 0;
+static NSInteger sPixelThemed = 0;        // 视图 displayedImage 交出来的就是我们合的图
+static NSInteger sPixelScreenTotal = 0;   // 数过的屏幕 UIImageView 张数
+static NSInteger sPixelScreenThemed = 0;  // 屏幕上那张图是我们的
+static NSInteger sPixelScreenStock = 0;   // 屏幕上那张图不是我们的（=显示层白干）
 static NSInteger sPixelClear = 0;
 static NSInteger sPixelFlat = 0;
 static NSInteger sPixelNil = 0;
@@ -155,65 +238,94 @@ static NSInteger sPixelMaxImageViews = 0;
 static CGFloat sPixelMinOpaque = 1.0;
 static NSMutableArray<NSString *> *sPixelBlankSamples = nil;
 
-static void TCPInspectIconImage(UIImage *image, NSString *bundleID) {
-    sPixelViews++;
-    if (image == nil) {
-        // 视图还没拿到图（或图不是 UIImage）。这不算「空白」，另计一栏，免得把「还没画」当结论。
-        sPixelNil++;
-        return;
-    }
-
-    const size_t side = 32;
-    unsigned char buffer[side * side * 4];
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-    CGContextRef ctx = CGBitmapContextCreate(buffer, side, side, 8, side * 4, space,
-                                             kCGImageAlphaPremultipliedLast);
-    CGColorSpaceRelease(space);
-    if (ctx == NULL) return;
-    CGContextDrawImage(ctx, CGRectMake(0, 0, side, side), image.CGImage);
-    CGContextRelease(ctx);
-
-    const size_t total = side * side;
-    size_t clear = 0, flat = 0;
-    for (size_t i = 0; i < total; i++) {
-        const unsigned char *px = buffer + i * 4;
-        if (px[3] < 8) { clear++; continue; }
-        int dr = (int)px[0] - (int)px[1];
-        int dg = (int)px[1] - (int)px[2];
-        int lum = (px[0] * 299 + px[1] * 587 + px[2] * 114) / 1000;
-        if (abs(dr) < 8 && abs(dg) < 8 && (lum > 244 || lum < 12)) flat++;
-    }
-
-    CGFloat opaque = (CGFloat)(total - clear) / (CGFloat)total;
-    if (opaque < sPixelMinOpaque) sPixelMinOpaque = opaque;
-
-    NSString *tag = nil;
-    if ((CGFloat)clear / (CGFloat)total > 0.9) {
-        sPixelClear++;
-        tag = @"(clear)";
-    } else if ((CGFloat)flat / (CGFloat)total > 0.9) {
-        sPixelFlat++;
-        tag = @"(flat)";
-    }
-    if (tag && bundleID.length > 0 && sPixelBlankSamples.count < 8 &&
-        ![sPixelBlankSamples containsObject:bundleID]) {
-        [sPixelBlankSamples addObject:[bundleID stringByAppendingString:tag]];
-    }
-}
-
-// 一个视图里直接挂了几张 UIImageView。同一个位置叠两张，屏幕上就是「两个图层」。
+// 一个视图里挂了几张 UIImageView（递归两层）。同一个位置叠两张，屏幕上就是「两个图层」。
 static NSInteger TCPCountImageViews(UIView *view) {
     NSInteger count = 0;
     for (UIView *sub in view.subviews) {
         NSString *name = NSStringFromClass([sub class]);
         if ([name containsString:@"ImageView"] && sub.bounds.size.width > 1) count++;
+        if (sub.subviews.count > 0 && count > 0) count += TCPCountImageViews(sub);
     }
     return count;
 }
 
+// 现场体检一个图标视图。刷新时对每个视图调一次。
+static void TCPInspectIconView(id view) {
+    if (view == nil || ![view isKindOfClass:[UIView class]]) return;
+    if (sPixelBlankSamples == nil) sPixelBlankSamples = [NSMutableArray array];
+    sPixelViews++;
+
+    NSString *bundleID = TCPIconBundleIdentifier(TCPDisplayViewIcon(view));
+
+    NSInteger layers = TCPCountImageViews((UIView *)view);
+    if (layers > sPixelMaxImageViews) sPixelMaxImageViews = layers;
+
+    // ① 视图交出去的那张图（把打点静音，免得体检把自己的询问算成 look/hit）
+    static SEL sDisplayed = NULL;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        sDisplayed = NSSelectorFromString(@"displayedImage");
+    });
+    UIImage *displayed = nil;
+    if ([view respondsToSelector:sDisplayed]) {
+        sPixelQuietDisplayCounters = YES;
+        id value = ((id (*)(id, SEL))objc_msgSend)(view, sDisplayed);
+        sPixelQuietDisplayCounters = NO;
+        if ([value isKindOfClass:[UIImage class]]) displayed = value;
+    }
+    if (displayed == nil) {
+        sPixelNil++;
+    } else if ([[TCPThemeStore shared] isRenderedImage:displayed]) {
+        sPixelThemed++;
+    }
+
+    // ② 屏幕上真正挂着的图：视图里那几张 UIImageView 手里的 image
+    TCPThemeStore *store = [TCPThemeStore shared];
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithArray:((UIView *)view).subviews];
+    NSUInteger guard = 0;
+    while (queue.count > 0 && guard++ < 32) {
+        UIView *sub = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        if ([sub isKindOfClass:[UIImageView class]] && sub.bounds.size.width > 1) {
+            UIImage *image = ((UIImageView *)sub).image;
+            sPixelScreenTotal++;
+            if (image == nil) {
+                sPixelNil++;
+            } else {
+                if ([store isRenderedImage:image]) sPixelScreenThemed++;
+                else sPixelScreenStock++;
+
+                TCPPixelStats stats = TCPPixelStatsForImage(image);
+                if (stats.valid) {
+                    if (stats.coverage < sPixelMinOpaque) sPixelMinOpaque = stats.coverage;
+                    NSString *tag = nil;
+                    if (stats.coverage < 0.1) {
+                        sPixelClear++;
+                        tag = @"(clear)";
+                    } else if (stats.flat > 0.9) {
+                        sPixelFlat++;
+                        tag = @"(flat)";
+                    }
+                    if (tag && bundleID.length > 0 && sPixelBlankSamples.count < 8 &&
+                        ![sPixelBlankSamples containsObject:[bundleID stringByAppendingString:tag]]) {
+                        [sPixelBlankSamples addObject:[bundleID stringByAppendingString:tag]];
+                    }
+                }
+            }
+        }
+        if (sub.subviews.count > 0) [queue addObjectsFromArray:sub.subviews];
+    }
+}
+
 NSString *TCPIconPixelProbeReport(void) {
-    return [NSString stringWithFormat:@"pix{n=%ld,clear=%ld,flat=%ld,minOpaque=%.2f,maxImgViews=%ld,blank=[%@]}",
-            (long)sPixelViews, (long)sPixelClear, (long)sPixelFlat, (double)sPixelMinOpaque,
+    return [NSString stringWithFormat:
+            @"gen{n=%ld,clear=%ld,minCov=%.2f,lum=%.2f,last=%@};"
+            @"pix{n=%ld,themed=%ld,screen{total=%ld,ours=%ld,stock=%ld},clear=%ld,flat=%ld,nil=%ld,minOpaque=%.2f,maxImgViews=%ld,blank=[%@]}",
+            (long)sComposedCount, (long)sComposedClear, (double)sComposedMinCoverage,
+            (double)sComposedLuminance, sComposedLast ?: @"-",
+            (long)sPixelViews, (long)sPixelThemed, (long)sPixelScreenTotal,
+            (long)sPixelScreenThemed, (long)sPixelScreenStock, (long)sPixelClear,
+            (long)sPixelFlat, (long)sPixelNil, (double)sPixelMinOpaque,
             (long)sPixelMaxImageViews,
             sPixelBlankSamples.count > 0 ? [sPixelBlankSamples componentsJoinedByString:@","] : @"-"];
 }
@@ -297,6 +409,10 @@ void TCPRefreshIconImages(void) {
         if (icon == nil || ![view respondsToSelector:updateImage]) continue;
         ((void (*)(id, SEL, BOOL))objc_msgSend)(view, updateImage, NO);
         pushed++;
+
+        // 4) 顺手把刚重画完的视图体检一遍：屏幕上那几张 UIImageView 手里到底是我们的图还是原图。
+        //    原来这个体检函数写好了却没人调，所以诊断里永远没有 pix{}（2026-10-30 15:5x 接上）。
+        TCPInspectIconView(view);
     }
 
     sRefreshPushed += (NSInteger)pushed;
@@ -321,14 +437,24 @@ NSString *TCPDisplayProbeReport(void) {
 }
 
 // 视图 → 它正在显示的图标对象。SBIconImageView 自己声明了 -icon（普查坐实）。
+// 自己身上没有就往上找最多 4 层：图是先被创建、后绑模型的，刚建出来的视图自己还没 icon，
+// 但它已经在父视图的图标上下文里了 —— 诊断里 noicon 那一摞大半是这么来的（2026-10-30 15:5x）。
 static id TCPDisplayViewIcon(id view) {
     static SEL sIcon = NULL;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         sIcon = NSSelectorFromString(@"icon");
     });
-    if (![view respondsToSelector:sIcon]) return nil;
-    return ((id (*)(id, SEL))objc_msgSend)(view, sIcon);
+    id current = view;
+    for (NSInteger level = 0; level < 4 && current != nil; level++) {
+        if ([current respondsToSelector:sIcon]) {
+            id icon = ((id (*)(id, SEL))objc_msgSend)(current, sIcon);
+            if (icon != nil) return icon;
+        }
+        if (![current isKindOfClass:[UIView class]]) break;
+        current = ((UIView *)current).superview;
+    }
+    return nil;
 }
 
 // 显示图可能是 UIImage（displayedImage / squareContentsImage），也可能是 CGImage
@@ -349,7 +475,10 @@ id TCPThemedDisplayReplacement(id original, id view) {
         return original;
     }
 
-    sDisplayLook++;
+    // 体检自己问 displayedImage 时不要把自己的询问算进 look/hit/miss（否则数字虚高）。
+    const BOOL quiet = sPixelQuietDisplayCounters;
+
+    if (!quiet) sDisplayLook++;
 
     // 尺寸/缩放：UIImage 自带 scale；CGImage 没有，按屏幕缩放比折成点，
     // 否则 180×180 像素会被当成 180pt 渲染出一张巨图。
@@ -365,7 +494,7 @@ id TCPThemedDisplayReplacement(id original, id view) {
         pointSize = CGSizeMake(CGImageGetWidth(cg) / scale, CGImageGetHeight(cg) / scale);
     }
     if (pointSize.width < 1.0 || pointSize.height < 1.0) {
-        sDisplayMissNoImage++;
+        if (!quiet) sDisplayMissNoImage++;
         return original;
     }
 
@@ -374,10 +503,10 @@ id TCPThemedDisplayReplacement(id original, id view) {
     TCPIconImageInfo info = { .size = pointSize, .scale = scale, .cornerRadius = 0 };
     UIImage *themed = TCPThemedIconImage(TCPDisplayViewIcon(view), info);
     if (themed == nil) {
-        sDisplayMissNoIcon++;
+        if (!quiet) sDisplayMissNoIcon++;
         return original;
     }
-    sDisplayHit++;
+    if (!quiet) sDisplayHit++;
 
     // 类型严丝合缝地还回去：UIImage 进就 UIImage 出，CGImage 进就 CGImage 出。
     // 拿 UIImage 顶 CGImage 是当场崩溃的路子（角标那次安全模式就是这么来的）。

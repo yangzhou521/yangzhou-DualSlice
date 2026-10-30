@@ -165,6 +165,43 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
 
 @end
 
+#pragma mark - 二级页：选择主题（含四个功能开关）
+
+// 四个功能开关（用户 2026-10-30 16:0x：**这些开关属于「选择主题」这一页**，不再是根页「通用」组里的行）：
+// 每个开关都带一句副标题，写清上面勾中的主题里这一类素材有没有、有几件。
+static NSArray<NSArray<NSString *> *> *TCPFeatureSwitchRows(void) {
+    return @[ @[ @"应用图标", TCPKeyIconsEnabled ],
+              @[ @"文件夹", TCPKeyFoldersEnabled ],
+              @[ @"角标", TCPKeyBadgesEnabled ],
+              @[ @"系统界面图（状态栏 / 拨号盘 / 设置 / 分享）", TCPKeyFilesEnabled ] ];
+}
+
+// 开关的当前值：键不存在就是**关**（与 dylib 侧 TCPConfig、根页的读取三者同一口径，
+// 见用户 2026-10-30 15:33 的要求：四个功能开关默认关，总开关默认开）。
+static BOOL TCPFeatureSwitchValue(NSString *key) {
+    id value = TCPReadPreferences()[key];
+    return [value respondsToSelector:@selector(boolValue)] ? [value boolValue] : NO;
+}
+
+// 开关单元：纯 UIKit 表格单元 + UISwitch，不经过 Preferences 的 specifier（与这一页的表格同一套理由）。
+@interface TCPFeatureSwitchCell : UITableViewCell
+@property (nonatomic, strong) UISwitch *tcpSwitch;
+@end
+
+@implementation TCPFeatureSwitchCell
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
+    self = [super initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:reuseIdentifier];
+    if (self) {
+        _tcpSwitch = [[UISwitch alloc] initWithFrame:CGRectZero];
+        self.accessoryView = _tcpSwitch;
+        self.selectionStyle = UITableViewCellSelectionStyleNone;
+    }
+    return self;
+}
+
+@end
+
 // 主题选择页。之前那一版是 PSListController 子类 + PSLinkCell 行：装机后点进这一页，设置进程当场闪退，
 // 崩在 Preferences 内部给 specifier 准备元数据那一步（同一页在 icli 探针里却 1 段 6 行齐全，
 // 验不到真凶）。这一版换成纯 UIKit 的 UITableViewController：
@@ -178,6 +215,8 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
 @implementation TCPThemeChooserController {
     NSArray<NSString *> *_rows;             // 第 0 项固定为空串 = 系统原生外观
     NSMutableArray<NSString *> *_selected;  // 勾选顺序 = 叠加顺序：靠后的主题覆盖靠前的
+    NSMutableDictionary<NSString *, NSDictionary *> *_materials;   // 主题目录 → 素材清点
+    NSDictionary<NSString *, NSNumber *> *_totals;                 // 勾中的这几层加起来的素材数
 }
 
 - (instancetype)initWithStyle:(UITableViewStyle)style {
@@ -213,7 +252,7 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.tableView.rowHeight = 56.0;
+    self.tableView.rowHeight = 62.0;   // 开关行与主题行都带一句副标题，56 会被截
     // 多选页勾完不自动返回（要继续勾别的），所以给一个明确的出口；Preferences 的返回按钮同样能回去。
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonItemStyleDone
@@ -237,6 +276,88 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     NSMutableArray<NSString *> *rows = [NSMutableArray arrayWithObject:@""];
     [rows addObjectsFromArray:[store availableThemePaths]];
     _rows = rows;
+    [self tcpReloadMaterials];             // 接着清点每个主题自己的素材（浅扫，见 store）
+    [self.tableView reloadData];
+}
+
+// 每个主题自己带了哪几类素材：进页面时每层扫一次，之后查表。
+// 主题行要写「这个主题有什么」，开关行要写「勾中的这几层加起来有多少」，两处都用它。
+- (void)tcpReloadMaterials {
+    TCPThemeStore *store = [TCPThemeStore shared];
+    NSMutableDictionary<NSString *, NSDictionary *> *materials = [NSMutableDictionary dictionary];
+    for (NSString *path in _rows) {
+        if (path.length == 0) continue;
+        NSDictionary *summary = [store materialSummaryForThemePath:path];
+        if (summary.count > 0) materials[path] = summary;
+    }
+    _materials = materials;
+    [self tcpRefreshTotals];
+}
+
+// 勾中的各层加起来各类素材各有多少件
+- (void)tcpRefreshTotals {
+    NSUInteger icons = 0, folders = 0, badges = 0, files = 0;
+    for (NSString *path in _selected) {
+        NSDictionary *summary = _materials[path];
+        if (summary == nil) {
+            summary = [[TCPThemeStore shared] materialSummaryForThemePath:path];
+            if (summary.count > 0) _materials[path] = summary;
+        }
+        icons += [summary[TCPMaterialIcons] unsignedIntegerValue];
+        folders += [summary[TCPMaterialFolders] unsignedIntegerValue];
+        badges += [summary[TCPMaterialBadges] unsignedIntegerValue];
+        files += [summary[TCPMaterialFiles] unsignedIntegerValue];
+    }
+    _totals = @{ TCPMaterialIcons: @(icons), TCPMaterialFolders: @(folders),
+                 TCPMaterialBadges: @(badges), TCPMaterialFiles: @(files) };
+}
+
+// 开关行 ↔ 素材类别的对应
+- (NSString *)tcpMaterialKeyForFeatureKey:(NSString *)key {
+    if ([key isEqualToString:TCPKeyIconsEnabled]) return TCPMaterialIcons;
+    if ([key isEqualToString:TCPKeyFoldersEnabled]) return TCPMaterialFolders;
+    if ([key isEqualToString:TCPKeyBadgesEnabled]) return TCPMaterialBadges;
+    return TCPMaterialFiles;
+}
+
+// 开关行的副标题：先说清「有没有、有几件」，一件都没有就直说 —— 打开开关也不会有变化。
+- (NSString *)tcpFeatureSubtitleForKey:(NSString *)key {
+    if (_selected.count == 0) return @"还没勾主题：先在上面选一个，这里才知道有没有这类素材";
+    NSString *materialKey = [self tcpMaterialKeyForFeatureKey:key];
+    NSUInteger count = [_totals[materialKey] unsignedIntegerValue];
+    if (count == 0) return @"勾中的主题里没有这一类素材";
+    NSDictionary<NSString *, NSString *> *words =
+        @{ TCPMaterialIcons: @" 张图标素材",
+           TCPMaterialFolders: @" 件文件夹底板素材",
+           TCPMaterialBadges: @" 张角标素材",
+           TCPMaterialFiles: @" 个系统界面素材" };
+    return [NSString stringWithFormat:@"勾中的主题共 %lu%@",
+            (unsigned long)count, words[materialKey] ?: @" 件素材"];
+}
+
+// 主题行的素材标签：只列真有的那几类，一件都没有就说清楚
+- (NSString *)tcpMaterialTagsForPath:(NSString *)path {
+    NSDictionary *summary = _materials[path];
+    NSMutableArray<NSString *> *tags = [NSMutableArray array];
+    NSUInteger icons = [summary[TCPMaterialIcons] unsignedIntegerValue];
+    NSUInteger folders = [summary[TCPMaterialFolders] unsignedIntegerValue];
+    NSUInteger badges = [summary[TCPMaterialBadges] unsignedIntegerValue];
+    NSUInteger files = [summary[TCPMaterialFiles] unsignedIntegerValue];
+    if (icons > 0) [tags addObject:[NSString stringWithFormat:@"图标 %lu", (unsigned long)icons]];
+    if (folders > 0) [tags addObject:@"文件夹底板"];
+    if (badges > 0) [tags addObject:[NSString stringWithFormat:@"角标 %lu", (unsigned long)badges]];
+    if (files > 0) [tags addObject:[NSString stringWithFormat:@"界面图 %lu", (unsigned long)files]];
+    return tags.count > 0 ? [tags componentsJoinedByString:@" · "] : @"里面没有可用素材";
+}
+
+// 四个开关的开关动作：写偏好 + 立刻广播（SpringBoard 里的插件收到就重读快照、重排图标）。
+- (void)tcpFeatureSwitchChanged:(UISwitch *)sender {
+    NSArray<NSArray<NSString *> *> *rows = TCPFeatureSwitchRows();
+    NSInteger row = sender.tag;
+    if (row < 0 || row >= (NSInteger)rows.count) return;
+    NSString *key = rows[(NSUInteger)row][1];
+    TCPWritePreference(key, @(sender.isOn));
+    TCPPostPreferencesChanged();
     [self.tableView reloadData];
 }
 
@@ -263,37 +384,73 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return _rows.count > 0 ? 2 : 1;
+    // 0 = 系统原生外观，1 = 主题列表，2 = 四个功能开关（用户 16:0x：开关就长在这一页里）
+    return 3;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 0) return 1;
+    if (section == 2) return (NSInteger)TCPFeatureSwitchRows().count;
     return (NSInteger)_rows.count - 1;
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     if (section == 0) return nil;
+    if (section == 2) return @"素材开关";
     return [NSString stringWithFormat:@"主题（%lu 个）", (unsigned long)(_rows.count - 1)];
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == 0) {
         return @"可以多选：勾几个就叠几层，副标题里的「第 N 层」就是叠加顺序 —— 数字大的盖住数字小的（同一张素材谁在上层就用谁的）。"
-               @"「图标包 ＋ 角标包」这种各管一块的组合随便勾；重叠的部分后勾的那个说了算。再点一次 = 取消这一层。";
+               @"「图标包 ＋ 角标包」这种各管一块的组合随便勾；重叠的部分后勾的那个说了算。再点一次 = 取消这一层。"
+               @"名字下面那一行写的是这个主题自己带了什么素材。";
     }
     if (section == 1) {
         return @"勾完点右上角「完成」（或左上角返回）。选中立刻生效，不用注销：桌面图标会自己重取一遍图。";
+    }
+    if (section == 2) {
+        return @"开关管的就是上面勾中的主题：关掉哪一类，那一类素材就不换（例如只想要图标，就把其余几项关掉）。"
+               @"改完立刻生效，不用注销。";
     }
     return nil;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+    // 第三段：四个功能开关（单元自带 UISwitch，副标题写清勾中的主题里这类素材有几件）
+    if (indexPath.section == 2) {
+        static NSString *switchIdentifier = @"TCPFeatureSwitchCell";
+        TCPFeatureSwitchCell *cell = [tableView dequeueReusableCellWithIdentifier:switchIdentifier];
+        if (cell == nil) {
+            cell = [[TCPFeatureSwitchCell alloc] initWithStyle:UITableViewCellStyleSubtitle
+                                               reuseIdentifier:switchIdentifier];
+        }
+        NSArray<NSArray<NSString *> *> *rows = TCPFeatureSwitchRows();
+        if (indexPath.row < 0 || indexPath.row >= (NSInteger)rows.count) return cell;
+        NSArray<NSString *> *row = rows[(NSUInteger)indexPath.row];
+        cell.textLabel.text = row[0];
+        cell.detailTextLabel.font = [UIFont systemFontOfSize:12.0];
+        cell.detailTextLabel.numberOfLines = 2;
+        cell.detailTextLabel.text = [self tcpFeatureSubtitleForKey:row[1]];
+        // 复用池里的开关要按这一行重新绑：tag 是行号，动作只有一个。
+        cell.tcpSwitch.tag = indexPath.row;
+        cell.tcpSwitch.on = TCPFeatureSwitchValue(row[1]);
+        [cell.tcpSwitch removeTarget:nil action:NULL forControlEvents:UIControlEventValueChanged];
+        [cell.tcpSwitch addTarget:self
+                           action:@selector(tcpFeatureSwitchChanged:)
+                 forControlEvents:UIControlEventValueChanged];
+        return cell;
+    }
+
     static NSString *identifier = @"TCPThemeChoiceCell";
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
     if (cell == nil) {
         cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
                                       reuseIdentifier:identifier];
     }
+    cell.accessoryView = nil;
+    cell.detailTextLabel.font = [UIFont systemFontOfSize:12.0];
+    cell.detailTextLabel.numberOfLines = 2;
 
     NSString *path = [self tcpPathAtIndexPath:indexPath];
     if (path.length == 0) {
@@ -309,19 +466,26 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     NSString *name = path.lastPathComponent;
     if ([name hasSuffix:@".theme"]) name = [name stringByDeletingPathExtension];
     cell.textLabel.text = name;
-    // 副标题写它所在的根目录名：面板扫到的主题可能来自 /Library/ThemeCore，也可能来自 /Library/Themes
-    NSString *root = [path stringByDeletingLastPathComponent].lastPathComponent;
-    if (root.length == 0) root = path;
+    // 副标题两段：先说它是什么（第几层 / 来自哪个主题根），再说它自己带哪些素材 ——
+    // 用户 16:0x 要的就是「在选择主题里就看得到素材」，别再让人猜开了开关为什么没反应。
+    NSString *prefix = nil;
     NSInteger layer = [self tcpLayerForPath:path];
-    cell.detailTextLabel.text = layer > 0
-        ? [NSString stringWithFormat:@"叠加第 %ld 层 · %@", (long)layer, root]
-        : root;
+    if (layer > 0) {
+        prefix = [NSString stringWithFormat:@"第 %ld 层", (long)layer];
+    } else {
+        // 面板扫到的主题可能来自 /Library/ThemeCore，也可能来自 /Library/Themes
+        NSString *root = [path stringByDeletingLastPathComponent].lastPathComponent;
+        prefix = root.length > 0 ? root : path;
+    }
+    cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ · %@",
+                                 prefix, [self tcpMaterialTagsForPath:path]];
     cell.accessoryType = layer > 0 ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
     return cell;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+    if (indexPath.section == 2) return;   // 开关行：只认开关本身，点整行什么都不做
 
     NSString *path = [self tcpPathAtIndexPath:indexPath];
     if (path.length == 0) {
@@ -351,6 +515,7 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     TCPWritePreference(TCPKeyThemeName, nil);
     TCPPostPreferencesChanged();                            // SpringBoard 收到立刻重读 + 重取图标图
 
+    [self tcpRefreshTotals];          // 勾中的层变了，开关行副标题里的素材数跟着变
     [tableView reloadData];                                 // 停在原地继续勾，不自动返回
 }
 
@@ -451,21 +616,17 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     }
 
     // 版面照 ThemeCore 原样（用户 2026-10-30 14:37 给的参照）：
-    //   通用 = 启用插件（+ 四项功能独立开关）
+    //   通用 = 启用插件
     //   主题 = 选择主题 + 刷新图标
     //   底部 = 作者
-    // 我们比 ThemeCore 多的一样东西是角标素材支持，写在主题组脚注里。
     // 回滚不需要单独按钮：主题列表顶部那行「系统原生外观」点一下就是回滚。
-    // 用户 2026-10-30 14:49 明确「功能独立开关是一开始的要求」，所以四项开关加回来。
-    // 它们从来只是被从面板上撤掉，键与 dylib 侧的判断一直在（store 里默认全开）。
     // 用户 2026-10-30 15:13/15:14 连着两条要求：**面板要简洁**（照 ThemeCore 0.5.1 的样子，
     // 别写功能说明）——「开关只是用不用」这类解释、功能清单、诊断串一律不出现在面板正文里。
+    // 用户 2026-10-30 16:0x：**四个功能开关（应用图标 / 文件夹 / 角标 / 系统界面图）从这一组撤掉，
+    // 收进「选择主题」那一页**——它们本来就是管主题素材的，放在那里才能一眼看见「这个主题有没有
+    // 这类素材」。键与 dylib 侧的判断没变，只是长在了另一个页面里（见 TCPThemeChooserController）。
     [specs addObject:[self tcpGroupWithHeader:@"通用" footer:nil]];
     [specs addObject:[self tcpSwitchNamed:@"启用插件" key:TCPKeyEnabled]];
-    [specs addObject:[self tcpSwitchNamed:@"应用图标" key:TCPKeyIconsEnabled]];
-    [specs addObject:[self tcpSwitchNamed:@"文件夹" key:TCPKeyFoldersEnabled]];
-    [specs addObject:[self tcpSwitchNamed:@"角标" key:TCPKeyBadgesEnabled]];
-    [specs addObject:[self tcpSwitchNamed:@"系统界面图（状态栏 / 拨号盘 / 设置 / 分享）" key:TCPKeyFilesEnabled]];
 
     // 主题组不再挂任何技术串（用户 2026-10-30 14:5x 要求正式版去掉「已认出：icon{…}」，
     // 15:06 又要求去掉「刷新图标 ref{views=…}：views=找到的图标视图…」这类提示 —— 刷新本身
@@ -474,8 +635,13 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     [specs addObject:[self tcpGroupWithHeader:@"主题" footer:nil]];
     [specs addObject:[self tcpThemeEntryRow]];
     [specs addObject:[self tcpButtonNamed:@"刷新图标" action:@selector(tcpRefreshIcons)]];
-    // 日志入口（用户 2026-10-30 14:58 要求）：只有一行按钮，不单独分组、不带说明。
+
+#if TCP_PANEL_LOG_ENTRY
+    // 日志入口（用户 2026-10-30 15:27：**放在面板最下方**）：独立一段、一行按钮、不带说明文字。
+    // 正式版去掉它：把 ThemeCorePlusVersion.h 的 TCP_PANEL_LOG_ENTRY 改成 0 —— 连这一段空白一起消失。
+    [specs addObject:[self tcpGroupWithHeader:nil footer:nil]];
     [specs addObject:[self tcpButtonNamed:@"运行日志" action:@selector(tcpShowLog)]];
+#endif
 
     [specs addObject:[self tcpGroupWithHeader:nil
                                        footer:[NSString stringWithFormat:@"作者：yangzhou　·　v%@\n%@",
@@ -533,7 +699,10 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     }
     id value = [super readPreferenceValue:specifier];
     if (value == nil) {
-        return @YES;   // 键不存在 = 没设置 = 默认开（与 dylib 侧 TCPConfig 的默认值一致）
+        // 键不存在 = 没设置过，默认值与 dylib 侧 TCPConfig 保持一致（2026-10-30 15:33 用户要求）：
+        // 总开关默认开，四个功能开关默认关 —— 面板显示什么，dylib 就按什么做，不再默认全开。
+        if ([key isEqualToString:TCPKeyEnabled]) return @YES;
+        return @NO;
     }
     return value;
 }

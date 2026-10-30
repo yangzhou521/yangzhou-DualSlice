@@ -306,11 +306,13 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     BOOL enabled = TCPBoolValue(values, TCPKeyEnabled, YES);
     NSArray<NSString *> *paths = enabled ? [self resolveThemePathsWithValues:values] : @[];
 
+    // 总开关默认开；四个功能开关默认关（用户 2026-10-30 15:33：默认不许全开，必须自己勾）。
+    // 是否真生效 = 「选了主题素材」＋「这个功能开关是开的」，两者缺一不做。
     NSUInteger flags = 0;
-    if (TCPBoolValue(values, TCPKeyIconsEnabled, YES)) flags |= TCPFeatureIcons;
-    if (TCPBoolValue(values, TCPKeyFoldersEnabled, YES)) flags |= TCPFeatureFolders;
-    if (TCPBoolValue(values, TCPKeyBadgesEnabled, YES)) flags |= TCPFeatureBadges;
-    if (TCPBoolValue(values, TCPKeyFilesEnabled, YES)) flags |= TCPFeatureFiles;
+    if (TCPBoolValue(values, TCPKeyIconsEnabled, NO)) flags |= TCPFeatureIcons;
+    if (TCPBoolValue(values, TCPKeyFoldersEnabled, NO)) flags |= TCPFeatureFolders;
+    if (TCPBoolValue(values, TCPKeyBadgesEnabled, NO)) flags |= TCPFeatureBadges;
+    if (TCPBoolValue(values, TCPKeyFilesEnabled, NO)) flags |= TCPFeatureFiles;
 
     // 多层叠加：扫描器是「先到先得」的（见 indexDirectory / scanIconDirectory 里的 if (!entry[key])），
     // 所以**从最后一层往前扫**：靠后的主题先落表、也就覆盖掉了靠前的。单个主题内部的行为
@@ -677,6 +679,103 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         }
     }
     return result;
+}
+
+#pragma mark 面板用：一个主题自己带了哪几类素材
+
+NSString * const TCPMaterialIcons = @"icons";
+NSString * const TCPMaterialFolders = @"folders";
+NSString * const TCPMaterialBadges = @"badges";
+NSString * const TCPMaterialFiles = @"files";
+
+// 素材粗分类：只给面板那句「有几件素材」用，不做严格判定（真判定在索引表里）。
+// 认名字：角标底图叫 SBBadgeBG（也有 SBBadgeBackground 之类写法），文件夹底板叫 ANEMFolderIconBG。
+static NSInteger TCPMaterialKindOfFile(NSString *file) {
+    if (!TCPIsImageFile(file)) return -1;                  // 非图（含目录）不进统计
+    NSString *stem = [[file stringByDeletingPathExtension] lowercaseString];
+    NSInteger scale = 0;
+    stem = TCPStripScaleSuffix(stem, &scale);
+    if ([stem containsString:@"badgebg"] || [stem containsString:@"badgebackground"]) return 2;
+    if ([stem containsString:@"foldericonbg"]) return 1;
+    return 0;                                              // 其余算覆盖素材
+}
+
+// 只做**浅扫**：数这个主题目录里各类素材各有多少件 —— 不建索引、不读图、不合成，也不缓存
+//（只在打开「选择主题」页时算一次；主题目录随时会变，缓存只会骗人）。
+// 用户 2026-10-30 16:0x 要求那四个功能开关收进「选择主题」页，并让每行都写清
+//「这类素材有没有、有几件」，免得开关打开了屏幕却什么都没变。
+- (NSDictionary<NSString *, NSNumber *> *)materialSummaryForThemePath:(NSString *)theme {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    BOOL isDir = NO;
+    if (theme.length == 0 || ![fm fileExistsAtPath:theme isDirectory:&isDir] || !isDir) return @{};
+
+    NSUInteger icons = 0, folders = 0, badges = 0, files = 0;
+
+    // 1) 图标：IconBundles/ 与 icons/ 里符合 SnowBoard / IconBundles 命名的图。
+    for (NSString *sub in @[ @"IconBundles", @"icons" ]) {
+        for (NSString *file in [fm contentsOfDirectoryAtPath:[theme stringByAppendingPathComponent:sub] error:NULL]) {
+            NSString *bundleID = nil;
+            NSInteger scale = 0;
+            BOOL large = NO;
+            if (TCPParseIconFileName(file, &bundleID, &scale, &large)) icons++;
+        }
+    }
+
+    // 2) Bundles/：<bundleid>/icon* 是图标，其余按名字分类（Bundles/ 根下的散图同样）。
+    NSString *bundlesDir = [theme stringByAppendingPathComponent:@"Bundles"];
+    for (NSString *entry in [fm contentsOfDirectoryAtPath:bundlesDir error:NULL]) {
+        NSString *full = [bundlesDir stringByAppendingPathComponent:entry];
+        BOOL entryIsDir = NO;
+        if (![fm fileExistsAtPath:full isDirectory:&entryIsDir]) continue;
+        if (!entryIsDir) {
+            switch (TCPMaterialKindOfFile(entry)) {
+                case 2: badges++; break;
+                case 1: folders++; break;
+                case 0: files++; break;
+                default: break;
+            }
+            continue;
+        }
+        for (NSString *file in [fm contentsOfDirectoryAtPath:full error:NULL]) {
+            if (!TCPIsImageFile(file)) continue;
+            NSString *stem = [[file stringByDeletingPathExtension] lowercaseString];
+            for (NSString *suffix in @[ @"-large", @"_large" ]) {
+                if ([stem hasSuffix:suffix]) {
+                    stem = [stem substringToIndex:stem.length - suffix.length];
+                    break;
+                }
+            }
+            NSInteger scale = 0;
+            stem = TCPStripScaleSuffix(stem, &scale);
+            if ([stem isEqualToString:@"icon"]) { icons++; continue; }
+            switch (TCPMaterialKindOfFile(file)) {
+                case 2: badges++; break;
+                case 1: folders++; break;
+                case 0: files++; break;
+                default: break;
+            }
+        }
+    }
+
+    // 3) 主题根散图，以及遮罩 / overlay / UIImages 这几个约定目录。
+    for (NSString *dir in @[ theme,
+                             [theme stringByAppendingPathComponent:@"AnemoneEffects"],
+                             [theme stringByAppendingPathComponent:@"UIImages"],
+                             [theme stringByAppendingPathComponent:@"com.apple.mobileicons.framework"] ]) {
+        for (NSString *file in [fm contentsOfDirectoryAtPath:dir error:NULL]) {
+            switch (TCPMaterialKindOfFile(file)) {
+                case 2: badges++; break;
+                case 1: folders++; break;
+                case 0: files++; break;
+                default: break;
+            }
+        }
+    }
+
+    return @{ TCPMaterialIcons: @(icons),
+              TCPMaterialFolders: @(folders),
+              TCPMaterialBadges: @(badges),
+              TCPMaterialFiles: @(files) };
 }
 
 #pragma mark 查询：图标

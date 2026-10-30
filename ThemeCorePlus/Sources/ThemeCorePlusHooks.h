@@ -124,6 +124,17 @@ NSString *TCPIconProbeReport(void);
 id TCPThemedDisplayReplacement(id original, id view);
 // 显示层打点：look/hit/未换原因，写进诊断。
 NSString *TCPDisplayProbeReport(void);
+// 图标像素自检（实现在 ThemeCorePlusIcons.m）：把「我们合出来的图」「视图手里那张图」
+// 「屏幕上 UIImageView 里真挂着的图」三处各数一遍像素，写进诊断。
+//   gen{...}   = 合成站的同图：n 张，其中几乎全透明的几张、最低不透明比、平均亮度
+//   pix{...}   = 视图层：数过几个视图、其中屏幕上挂的是我们的图几张（screen）、原图几张、
+//                空白/发白几张、一个视图里最多叠了几张 UIImageView
+//   late{...}  = 刷新后 1.2 秒再数一遍同一批视图：当场是原图、晚一拍才变成我们的 = 只是慢一拍；
+//                两次都是原图 = 视图交出去的图是对的、屏幕上却挂原图，那得换挂点（IconServices 那条路）。
+// 有这三组数，不用看屏幕也能分清「是我们合成把图抹了」还是「屏幕上根本不是我们的图」。
+NSString *TCPIconPixelProbeReport(void);
+// 晚一拍的体检结束后要能立刻把结果落进诊断（否则读到的还是刷新那一刻的快照）。
+void TCPWriteDiagnosticsNow(void);
 
 // 即时生效：不注销，把桌面上已建好的图标视图的图缓存清掉、按当前 info 重取一遍。
 // 改完设置（面板广播、或 shell 手写偏好后 respring）由 ThemeCorePlusMain.m 调。
