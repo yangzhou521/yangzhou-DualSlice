@@ -637,8 +637,50 @@ NSString *TCPClockViewProbeReport(void) {
 // SBIconImageView 实例决定了显示层站能不能摸到它。
 // 这里只读地扫一遍窗口树：数出文件夹视图几个、它们直接子视图的类名/尺寸/手里那张图归谁。
 // 不碰任何视图状态，一次装包就能判定该挂哪一层。
+// 1.0.4：递归深入两层 + 记录 SBFolderIconImageView 自己声明的方法名（定位该挂哪一站）。
 static NSInteger sFolderViewCount = 0;
 static NSMutableArray<NSString *> *sFolderViewSamples = nil;
+static NSString *sFolderMethods = @"-";
+
+// 递归扫一个文件夹视图内部，最多深入两层。
+static void TCPProbeFolderViewRecursive(UIView *view, NSInteger depth,
+                                         NSMutableArray<NSString *> *outLines,
+                                         TCPThemeStore *store) {
+    if (depth < 0 || outLines.count >= 12) return;
+    for (UIView *sub in view.subviews) {
+        NSString *line = [NSString stringWithFormat:@"%@|%.0fx%.0f",
+                          NSStringFromClass([sub class]),
+                          sub.bounds.size.width, sub.bounds.size.height];
+        if ([sub isKindOfClass:[UIImageView class]]) {
+            UIImage *image = ((UIImageView *)sub).image;
+            line = [line stringByAppendingFormat:@"|%@",
+                    image == nil ? @"nil"
+                                 : ([store isRenderedImage:image] ? @"ours" : @"stock")];
+        }
+        [outLines addObject:line];
+        if (depth > 0) TCPProbeFolderViewRecursive(sub, depth - 1, outLines, store);
+    }
+}
+
+// 枚举一个类自己声明的方法名（只取含 image/background/folder / icon 字样的），用于定位挂点。
+static NSString *TCPFolderIconImageViewMethods(void) {
+    Class cls = NSClassFromString(@"SBFolderIconImageView");
+    if (cls == Nil) return @"nocls";
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(cls, &count);
+    if (methods == NULL || count == 0) return @"nomethods";
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (unsigned int i = 0; i < count; i++) {
+        SEL sel = method_getName(methods[i]);
+        NSString *name = NSStringFromSelector(sel);
+        if ([name containsString:@"image"] || [name containsString:@"background"] ||
+            [name containsString:@"folder"] || [name containsString:@"icon"]) {
+            [names addObject:name];
+        }
+    }
+    free(methods);
+    return names.count > 0 ? [names componentsJoinedByString:@","] : @"nohit";
+}
 
 void TCPProbeFolderViews(void) {
     if (![NSThread isMainThread]) return;
@@ -647,6 +689,7 @@ void TCPProbeFolderViews(void) {
     if (sFolderViewSamples == nil) sFolderViewSamples = [NSMutableArray array];
     [sFolderViewSamples removeAllObjects];
     sFolderViewCount = 0;
+    sFolderMethods = TCPFolderIconImageViewMethods();
 
     TCPThemeStore *store = [TCPThemeStore shared];
     NSMutableArray *stack = [NSMutableArray array];
@@ -659,6 +702,7 @@ void TCPProbeFolderViews(void) {
             sFolderViewCount++;
             if (sFolderViewSamples.count < 4) {
                 NSMutableArray<NSString *> *kids = [NSMutableArray array];
+                // 1.0.4：直接子视图（一层）+ 递归深入两层（看 mini 图标层）。
                 for (UIView *sub in view.subviews) {
                     NSString *line = [NSString stringWithFormat:@"%@|%.0fx%.0f",
                                       NSStringFromClass([sub class]),
@@ -670,6 +714,8 @@ void TCPProbeFolderViews(void) {
                                              : ([store isRenderedImage:image] ? @"ours" : @"stock")];
                     }
                     [kids addObject:line];
+                    // 再往下两层
+                    TCPProbeFolderViewRecursive(sub, 1, kids, store);
                 }
                 [sFolderViewSamples addObject:[NSString stringWithFormat:@"%.0fx%.0f[%@]",
                                                view.bounds.size.width, view.bounds.size.height,
@@ -681,9 +727,10 @@ void TCPProbeFolderViews(void) {
 }
 
 NSString *TCPFolderProbeReport(void) {
-    return [NSString stringWithFormat:@"folderv{n=%ld,s=[%@]}", (long)sFolderViewCount,
+    return [NSString stringWithFormat:@"folderv{n=%ld,s=[%@],m=%@}", (long)sFolderViewCount,
             sFolderViewSamples.count > 0
-                ? [sFolderViewSamples componentsJoinedByString:@";"] : @"-"];
+                ? [sFolderViewSamples componentsJoinedByString:@";"] : @"-",
+            sFolderMethods];
 }
 
 // —— 视图层：屏幕上到底挂了什么 ——
