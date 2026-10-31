@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 1.0.7
+  VERSION: 1.0.8
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v1.0.7)
+    name: Release (themecoreplus-v1.0.8)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,10 +185,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v1.0.7
-          name: ThemeCorePlus v1.0.7
+          tag_name: themecoreplus-v1.0.8
+          name: ThemeCorePlus v1.0.8
           body: |
-            主题美化 +（ThemeCorePlus）v1.0.7 —— MarkTheme 式主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v1.0.8 —— MarkTheme 式主题引擎，作者 yangzhou。
+
+            **v1.0.8**：修时钟图标「两个图标错层叠加」（用户 2026-10-31 21:15 报：
+            「像是两个图标错层叠加在一起了，一个是我的素材一个是系统图标」）。
+            根因：1.0.6 起用一层 overlay 把主题表盘盖在时钟视图上，但 overlay 设的是
+            `contentMode = ScaleAspectFit` + `opaque = NO` —— 素材按比例缩进 bounds、四周留边，
+            系统自己的表盘与指针就从留边处透出来，屏幕上就是两个图标叠着。
+            改法：overlay 改 `ScaleToFill`（表盘是正方形，填满不变形）+ `opaque = YES`，
+            并在素材外圈先铺一层不透明底（取表盘主色），再把图标视图自己的 `layer.contents` 清掉、
+            其余子视图藏掉 —— 系统那层被彻底盖住，屏幕上只剩一个干净的时钟。
+
+            本次只动时钟。日历与文件夹 mini 图标未改，见仓库 AGENTS.md「已知 bug 登记簿」。
 
             **v1.0.7**：修用户 2026-10-31 20:31 报的三个问题（角标变形+双层、文件夹 mini 图标、时钟日历不主题化）。
             ① 角标：圆形素材被拉成异形 + 系统红底叠成两层。
@@ -500,7 +511,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v1.0.7/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v1.0.8/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'
