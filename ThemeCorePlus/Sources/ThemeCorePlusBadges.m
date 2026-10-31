@@ -385,7 +385,11 @@ UIImage *TCPThemedBadgeTextImage(NSString *text, UIFont *font, CGFloat scale, CG
     if (scale <= 0) scale = [UIScreen mainScreen].scale;
     if (scale <= 0) scale = 3.0;
 
-    CGFloat side = systemBox.height > 0 ? systemBox.height : asset.size.height;
+    // 高度固定用素材自己的高度（25 点），不迁就系统给的小盒子。
+    // 系统给 2 位以上数字角标的 systemBox.height 只有 19，而素材是 25 —— 用 19 会把
+    // 素材压小、文字跟着缩，最终角标「切割放大 / 显示不全」。角标底图的高度就该由素材定，
+    // 宽度才随文字位数加宽成圆头胶囊。
+    CGFloat side = asset.size.height > 0 ? asset.size.height : (systemBox.height > 0 ? systemBox.height : 25.0);
     if (side <= 0) return nil;
     CGFloat aspect = asset.size.width / asset.size.height;
     CGFloat naturalWidth = side * aspect;
@@ -454,10 +458,12 @@ UIImage *TCPThemedBadgeTextOnlyImage(NSString *text, UIFont *font, CGFloat scale
     if (text.length == 0) return nil;
     TCPThemeStore *store = [TCPThemeStore shared];
     UIImage *asset = TCPThemedBadgeBackground(scale);
+    if (asset == nil || asset.size.height <= 0) return nil;
     if (scale <= 0) scale = [UIScreen mainScreen].scale;
     if (scale <= 0) scale = 3.0;
 
-    CGFloat side = systemBox.height > 0 ? systemBox.height : asset.size.height;
+    // 同整图站：高度用素材自身（25 点），不迁就系统给的小盒子（2 位数字时 systemBox 只有 19）。
+    CGFloat side = asset.size.height > 0 ? asset.size.height : (systemBox.height > 0 ? systemBox.height : 25.0);
     if (side <= 0) return nil;
     CGFloat aspect = (asset.size.height > 0) ? asset.size.width / asset.size.height : 1.0;
     CGFloat naturalWidth = side * aspect;

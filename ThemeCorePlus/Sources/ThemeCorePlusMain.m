@@ -243,13 +243,17 @@ __attribute__((constructor)) static void TCPInitialize(void) {
             });
         }
 
-        // 「注销后自动生效」（精简版 2026-10-31）：图标视图都建好之后，安全地自动刷一次。
-        // 这是用户要的核心效果 —— 选好主题注销回来，图标和角标自己出现，不必手动点「刷新图标」。
-        // 与当年安全模式（2026-10-30）的区别：那次是「启动即强刷 + 走 clearIconImageInfo」，
-        // 现在 TCPRefreshIconImages 已改成走 -updateImageAnimated:NO 的安全路径，且这里
-        // 只在 SpringBoard 进程、延迟 3 秒、刷一次，不再连刷。
+        // 「注销后自动生效」（精简版 2026-10-31）：图标视图一建好就刷，尽量接近「注销即加载」。
+        // 为什么不能 0 秒：注销后 SBIconImageView 要等 SpringBoard 启动约 1 秒才建出来，0 秒时
+        // 视图还不存在，刷了白刷。所以第一拍 1 秒刷一次，2.5 秒再补一次兜底（第一拍若视图还没
+        // 建好，pushed=0，第二拍补上）。两次都走 -updateImageAnimated:NO 安全路径，不复用当年
+        // clearIconImageInfo 那条崩过的路。只在 SpringBoard 进程。
         if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"]) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                TCPRefreshIconImages();
+            });
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 TCPRefreshIconImages();
             });

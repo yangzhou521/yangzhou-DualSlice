@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 1.0.0
+  VERSION: 1.0.1
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v1.0.0)
+    name: Release (themecoreplus-v1.0.1)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,12 +185,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v1.0.0
-          name: ThemeCorePlus v1.0.0
+          tag_name: themecoreplus-v1.0.1
+          name: ThemeCorePlus v1.0.1
           body: |
-            主题美化 +（ThemeCorePlus）v1.0.0 —— MarkTheme 式主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v1.0.1 —— MarkTheme 式主题引擎，作者 yangzhou。
 
-            **v1.0.0 精简重启版**：只加载图标 + 角标，砍掉布局保存/文件夹/文件/时钟日历；注销后自动生效。
+            **v1.0.1**：只加载图标 + 角标；注销后自动加载图标（1s+2.5s 两拍，接近注销即加载）；
+            修角标「切割放大」——高度改用素材自身 25 点，不迁就系统给 2 位数字时的 19 点小盒子。
             （下方 0.9.x 历史说明仅供参考，本版不再包含这些模块。）
 
             v0.9.31（**时钟/日历取证**）：用户 14:15 报时钟与日历图标一直没正常换过。诊断 `dyn{clock=0,cal=0,seen=0}`
@@ -442,7 +443,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v1.0.0/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v1.0.1/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'
