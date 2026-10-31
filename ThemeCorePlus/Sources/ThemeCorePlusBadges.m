@@ -201,7 +201,7 @@ static UIImage *TCPBadgeOurImageFromHost(UIView *host) {
         if (image != nil && TCPBadgeImageIsOurs(image)) return image;
     }
     if (host.layer.contents != NULL && TCPBadgeLayerIsOurs(host.layer)) {
-        id contents = (__bridge id)host.layer.contents;
+        id contents = host.layer.contents;
         if ([contents isKindOfClass:[UIImage class]]) return (UIImage *)contents;
         if (CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
             CGFloat scale = host.layer.contentsScale > 0 ? host.layer.contentsScale : [UIScreen mainScreen].scale;
