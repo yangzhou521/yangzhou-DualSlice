@@ -162,7 +162,7 @@ sh scripts/device.sh read com.apple.springboard CountdownHUDDiagnostics | tail -
 总耗时 ≈ `2*WAIT+5`。若跑在 `shell_run` 里，`timeout_seconds` 必须大于这个总数，否则会被杀在
 倒计时中途 —— **用户点了「立即注销」却没注销**，看起来就像修复没生效。
 实测：`--ask 90` 需 >185 秒（我用 150 秒，被杀）；`--ask 45` 用 115 秒刚好跑完。
-更稳：`--ask` 给短 WAIT（30~45 秒），点完的 5 秒倒计时另用 `--confirm 5` 走。
+更稳：`--ask` 也给 5 秒（2026-10-31 20:09 用户硬指令：注销倒计时一律 5 秒），点完的 5 秒倒计时另用 `--confirm 5` 走。
 
 ## 一、两种动作，两种规矩
 

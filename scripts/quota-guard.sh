@@ -1,93 +1,110 @@
 #!/bin/sh
-# quota-guard.sh —— 额度守护：查各会话是否被限流，自动切线 + 记录队列状态
+# quota-guard.sh —— 额度守护：只扫「在跑」的会话，判断是否被限流
 #
-# 背景（2026-10-31 20:4x 实测）：
-#   Apelin 的限流是**账号/网关层**的 —— 换模型无效。实测 deepseek-v4.1-flash / minimax-m3.1-flash /
-#   glm-5.2 三个不同厂商的模型在同一时刻给出**完全相同**的提示与重置时间：
+# 背景（2026-10-31 20:4x 实测）：Apelin 的限流是**账号/网关层**的 —— 换模型绕不过。
+#   实测 deepseek-v4.1-flash / minimax-m3.1-flash / glm-5.2 三个不同厂商的模型在同一时刻
+#   给出**完全相同**的提示与重置时间：
 #   「您的使用量已超出频率限制，将在 2026-11-01 01:07:36 UTC+8 重置，您也可以切换其他模型继续使用。」
-#   所以「换模型绕过限流」这条路不通，只能：① 等窗口重置；② 把有限额度集中给最关键的活；
-#   ③ 少开并发、少发长消息（每次请求都吃额度）。
+#   所以能做的只有：① 等窗口重置；② 把有限额度集中给最关键的活；③ 少开并发、少发长消息。
+#   `sweep` 切模型只是让窗口重置后能立刻干活，**不是**绕过限流。
+#
+# 为什么要「只扫在跑」：早期的版本扫全部 ~100 个会话、每个都 grep 大体积 events.jsonl，
+#   在 shell_run 里被 60 秒超时杀过一次（exit 137）。现在默认只看最近 N 分钟内有写入的会话，
+#   并且只看文件尾部 4KB。
 #
 # 用法：
-#   sh scripts/quota-guard.sh status      # 列出所有会话：模型 / 是否被限流 / 最后一次结果
-#   sh scripts/quota-guard.sh sweep       # 扫描并把被限流的会话切到备用模型（不切回）
-#   sh scripts/quota-guard.sh watch [分]  # 每分钟扫一次，打印被限流的会话（不自动切模型）
-#
-# 判据：events.jsonl 尾部出现「超出频率限制」或 Credits exhausted / reason=failed → 视为「限流中」。
-# 恢复判据：其后出现一次 reason=completed → 视为恢复。
+#   sh scripts/quota-guard.sh status [分钟]   # 列出最近 N 分钟活跃的会话（默认 60）
+#   sh scripts/quota-guard.sh sweep  [分钟]   # 把被限流的会话切到备用模型（默认 60）
+#   sh scripts/quota-guard.sh watch  [分钟]   # 只看不改，给定时长内打印被限流的会话
 set -eu
 
 SESS="${HOME}/Documents/wiki.qaq.apelin/sessions"
-STATE_DIR="${APELIN_PROJECT_ROOT:?}/.tmp/quota"
-mkdir -p "$STATE_DIR"
-
-# 备用模型（按成本从低到高；换模型只是让恢复后能立刻干活，不是绕过限流）
-FALLBACK="deepseek-flash"
 BACKUP_MODEL="${QUOTA_BACKUP_MODEL:-deepseek-flash}"
+WINDOW="${1:-60}"
+TAB=$(printf '\t')
 
-list_sessions() {
-  for d in "$SESS"/*/; do
-    [ -f "$d/session.json" ] || continue
-    sid=$(basename "$d")
-    model=$(grep -o '"model":"[^"]*"' "$d/session.json" 2>/dev/null | head -1 | sed 's/.*:"//;s/"//')
-    last=$(tail -c 4000 "$d/events.jsonl" 2>/dev/null | grep -o '"reason":"[a-z]*"' | tail -1 | sed 's/.*:"//;s/"//')
-    # 限流判据：尾部有中文限流提示，或最后一次是 failed
-    if tail -c 2000 "$d/events.jsonl" 2>/dev/null | grep -q '超出频率限制'; then
-      st="LIMITED"
-    elif [ "$last" = "failed" ]; then
-      st="FAILED"
-    elif [ "$last" = "completed" ]; then
-      st="OK"
-    else
-      st="idle"
-    fi
-    printf '%s\t%s\t%s\t%s\n' "$sid" "$model" "$st" "$last"
+# 秒数：最近 N 分钟的会话才算「在跑」
+recent_sessions() {
+  mins="$1"
+  [ -d "$SESS" ] || return 0
+  # find -mmin 比自己遍历快得多，也不会碰到无关的大文件
+  find "$SESS" -maxdepth 2 -name events.jsonl -mmin "-$mins" 2>/dev/null | head -40
+}
+
+# 输出：sid <TAB> model <TAB> state <TAB> 证据
+scan_one() {
+  ev="$1"
+  sid=$(basename "$(dirname "$ev")")
+  sj="$(dirname "$ev")/session.json"
+  model=$(grep -o '"model":"[^"]*"' "$sj" 2>/dev/null | head -1 | sed 's/.*:"//;s/"//') || model="?"
+  [ -n "${model:-}" ] || model="?"
+  tail4k=$(tail -c 4096 "$ev" 2>/dev/null) || tail4k=""
+
+  # 限流提示优先（比 reason 准：reason=failed 也可能是别的原因）
+  if printf '%s' "$tail4k" | grep -q '超出频率限制'; then
+    # 抓重置时间，方便一眼看出什么时候恢复
+    reset=$(printf '%s' "$tail4k" | grep -o '将在 [0-9-]* [0-9:]* UTC+8 重置' | tail -1 | sed 's/^将在 //;s/ 重置$//')
+    printf '%s\t%s\tLIMITED\t%s\n' "$sid" "$model" "${reset:--}"
+    return 0
+  fi
+
+  last=$(printf '%s' "$tail4k" | grep -o '"reason":"[a-z]*"' | tail -1 | sed 's/.*:"//;s/"//') || last=""
+  case "${last:-}" in
+    failed) printf '%s\t%s\tFAILED\t%s\n' "$sid" "$model" "reason=failed" ;;
+    completed) printf '%s\t%s\tOK\t%s\n' "$sid" "$model" "reason=completed" ;;
+    *) printf '%s\t%s\tidle\t%s\n' "$sid" "$model" "-" ;;
+  esac
+}
+
+scan_all() {
+  recent_sessions "$WINDOW" | while read -r ev; do
+    [ -n "$ev" ] || continue
+    scan_one "$ev"
   done
 }
 
 cmd_status() {
-  printf '%-38s %-22s %-8s %s\n' SESSION MODEL STATE LAST
-  list_sessions | sort -k3,3 | while IFS="$(printf '\t')" read -r sid model st last; do
-    printf '%-38s %-22s %-8s %s\n' "$sid" "$model" "$st" "$last"
+  printf '最近 %s 分钟内活跃的会话：\n' "$WINDOW"
+  printf '%-38s %-22s %-8s %s\n' SESSION MODEL STATE 证据
+  scan_all | sort -k3,3 | while IFS="$TAB" read -r sid model st why; do
+    printf '%-38s %-22s %-8s %s\n' "$sid" "$model" "$st" "$why"
   done
 }
 
 cmd_sweep() {
-  echo "quota-guard: 备用模型 = $BACKUP_MODEL"
-  list_sessions | while IFS="$(printf '\t')" read -r sid model st last; do
+  echo "quota-guard: 窗口 ${WINDOW} 分钟，备用模型 = $BACKUP_MODEL"
+  echo "           （切模型不是绕过限流；窗口重置后才有用）"
+  scan_all | while IFS="$TAB" read -r sid model st why; do
     case "$st" in
       LIMITED|FAILED)
-        if [ "$model" != "$BACKUP_MODEL" ]; then
-          f="$SESS/$sid/session.json"
-          cp "$f" "$f.bak-quota-$(date +%H%M%S)" 2>/dev/null || true
-          newm=$(grep -o '"model":"[^"]*"' "$f" | head -1)
-          sed "s/$newm/\"model\":\"$BACKUP_MODEL\"/" "$f" > "$f.new" 2>/dev/null || true
-          if [ -s "$f.new" ]; then mv "$f.new" "$f"; echo "  切 $sid: $model → $BACKUP_MODEL"; fi
-          rm -f "$f.new" 2>/dev/null || true
+        [ "$model" = "$BACKUP_MODEL" ] && continue
+        f="$SESS/$sid/session.json"
+        [ -r "$f" ] || continue
+        cp "$f" "$f.bak-quota" 2>/dev/null || true
+        # 只替换 model 字段的值，其余原样保留
+        sed "s/\"model\":\"[^\"]*\"/\"model\":\"$BACKUP_MODEL\"/" "$f" > "$f.new" 2>/dev/null || continue
+        if [ -s "$f.new" ]; then
+          mv "$f.new" "$f"
+          echo "  切 $sid: $model → $BACKUP_MODEL"
         fi
+        rm -f "$f.new" 2>/dev/null || true
         ;;
     esac
   done
 }
 
 cmd_watch() {
-  mins="${1:-10}"
-  echo "quota-guard: 监控 $mins 分钟，每 60 秒一次"
-  i=0
-  while [ "$i" -lt "$mins" ]; do
-    n=$(list_sessions | grep -c 'LIMITED' || true)
-    echo "[$(date +%H:%M:%S)] 被限流的会话数：$n"
-    list_sessions | grep 'LIMITED' | while IFS="$(printf '\t')" read -r sid model st last; do
-      echo "    $sid  model=$model"
-    done
-    sleep 60
-    i=$((i + 1))
+  echo "quota-guard: 窗口 ${WINDOW} 分钟"
+  scan_all | grep 'LIMITED' | while IFS="$TAB" read -r sid model st why; do
+    echo "  $sid  $model  重置: $why"
   done
+  n=$(scan_all | grep -c 'LIMITED' || true)
+  echo "被限流：${n:-0} 个"
 }
 
 case "${1:-status}" in
-  status) cmd_status ;;
-  sweep) cmd_sweep ;;
-  watch) cmd_watch "${2:-10}" ;;
-  *) echo "用法: sh scripts/quota-guard.sh [status|sweep|watch [分]]" >&2; exit 2 ;;
+  status) WINDOW="${2:-60}"; cmd_status ;;
+  sweep) WINDOW="${2:-60}"; cmd_sweep ;;
+  watch) WINDOW="${2:-60}"; cmd_watch ;;
+  *) echo "用法: sh scripts/quota-guard.sh [status|sweep|watch] [分钟数]" >&2; exit 2 ;;
 esac
