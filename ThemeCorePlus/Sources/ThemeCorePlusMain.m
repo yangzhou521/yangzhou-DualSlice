@@ -231,8 +231,9 @@ __attribute__((constructor)) static void TCPInitialize(void) {
                    TCP_VERSION, [[NSBundle mainBundle] bundleIdentifier] ?: @"?",
                    (int)[NSProcessInfo processInfo].processIdentifier);
 
-        // 桌面图标布局：由 iOS 系统自己保存（IconState.plist），插件不再插手。
-        // 精简版砍掉了 ThemeCorePlusLayout.m 的备份/恢复逻辑（它本来在做系统已经做好的事）。
+        // 桌面图标布局备份/恢复：注销或 SpringBoard 崩溃后保住之前的图标摆位。
+        // 由 ThemeCorePlusLayout.m 实现；只在 SpringBoard 进程里动手（内部有 bundleID 检查）。
+        TCPLayoutInstall();
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
                                         NULL,
