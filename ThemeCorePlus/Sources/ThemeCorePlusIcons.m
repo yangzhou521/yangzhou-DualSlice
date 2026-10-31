@@ -316,9 +316,6 @@ static UIImage *TCPClockAssetImage(TCPThemeStore *store, NSString *name) {
     return nil;
 }
 
-// 取一张素材的主色（中心像素；中心镂空就取不透明像素的平均色）—— 时钟 overlay 打底用。
-static UIColor *TCPBadgeBackdropColor(UIImage *asset);
-
 // 画一根指针（定义在下面）：素材真实范围的「底边中点」对准表盘中心，按长度缩放后绕中心转 angle。
 static void TCPDrawClockHand(CGContextRef ctx, UIImage *hand, CGPoint center,
                              CGFloat angle, CGFloat length,
@@ -345,16 +342,6 @@ static UIImage *TCPClockComposeImage(TCPThemeStore *store, CGFloat side, CGFloat
     if (ctx == NULL) { UIGraphicsEndImageContext(); return nil; }
 
     CGRect rect = CGRectMake(0, 0, side, side);
-    // 1.0.8（用户 2026-10-31 21:12「时钟日历加载上素材了但显示不正常」）：
-    // 主题表盘是 250×250 的**圆形**素材，四角透明。原来直接把它盖成 overlay，
-    // 系统自己的表盘与指针还在下面 → 透出来就是「两层叠着」。
-    // 所以先铺一层不透明底（取表盘主色），再把表盘画上去 —— overlay 四角不再透，
-    // 系统那层被完全盖住，屏幕上是干净的单个表盘。
-    UIColor *backdrop = TCPBadgeBackdropColor(face);
-    if (backdrop != nil) {
-        CGContextSetFillColorWithColor(ctx, backdrop.CGColor);
-        CGContextFillRect(ctx, rect);
-    }
     [face drawInRect:rect];
 
     UIImage *minuteHand = TCPClockAssetImage(store, @"ClockIconMinuteHand@3x.png");
@@ -378,43 +365,6 @@ static UIImage *TCPClockComposeImage(TCPThemeStore *store, CGFloat side, CGFloat
     UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return result;
-}
-
-static UIColor *TCPBadgeBackdropColor(UIImage *asset) {
-    if (asset == nil || asset.CGImage == NULL) return nil;
-    size_t w = CGImageGetWidth(asset.CGImage), h = CGImageGetHeight(asset.CGImage);
-    if (w == 0 || h == 0) return nil;
-    size_t cap = 64;
-    size_t dw = MIN(w, cap), dh = MIN(h, cap);
-    unsigned char *buffer = calloc(dw * dh, 4);
-    if (buffer == NULL) return nil;
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-    CGContextRef ctx = CGBitmapContextCreate(buffer, dw, dh, 8, dw * 4, space,
-                                             (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
-    CGColorSpaceRelease(space);
-    if (ctx == NULL) { free(buffer); return nil; }
-    CGContextDrawImage(ctx, CGRectMake(0, 0, (CGFloat)dw, (CGFloat)dh), asset.CGImage);
-    CGContextRelease(ctx);
-
-    // 先试中心像素（圆形表盘的中心就是表盘本色）。
-    unsigned char *p = buffer + ((dh / 2) * dw + (dw / 2)) * 4;
-    UIColor *color = nil;
-    if (p[3] > 200) {
-        color = [UIColor colorWithRed:p[0] / 255.0 green:p[1] / 255.0 blue:p[2] / 255.0 alpha:1.0];
-    } else {
-        double r = 0, g = 0, b = 0;
-        size_t count = 0;
-        for (size_t i = 0; i < dw * dh; i++) {
-            unsigned char *q = buffer + i * 4;
-            if (q[3] > 200) { r += q[0]; g += q[1]; b += q[2]; count++; }
-        }
-        if (count > 0) {
-            color = [UIColor colorWithRed:r / (255.0 * count) green:g / (255.0 * count)
-                                    blue:b / (255.0 * count) alpha:1.0];
-        }
-    }
-    free(buffer);
-    return color;
 }
 
 // 素材实色范围（左上为原点）；量不到返回 CGRectZero。
@@ -779,29 +729,20 @@ static void TCPClockEnsureOverlay(UIView *view, UIImage *themed) {
     if (overlay == nil) {
         overlay = [[UIImageView alloc] initWithFrame:view.bounds];
         overlay.tag = kTCPClockOverlayTag;
-        // 1.0.8（用户 2026-10-31 21:15「像是两个图标错层叠加在一起了，一个是我的素材一个是系统图标」）：
-        // 原来 contentMode = ScaleAspectFit + opaque = NO —— 素材按比例缩进 bounds，四周留边，
-        // 系统那层就从留边处透出来 → 屏幕上两个图标叠着。
-        // 改成 ScaleToFill（表盘是正方形，填满不变形）+ opaque，并清掉 view 自己的 layer.contents、
-        // 藏掉其余子视图，把系统那层彻底盖住。
-        overlay.contentMode = UIViewContentModeScaleToFill;
-        overlay.opaque = YES;
-        overlay.backgroundColor = [UIColor clearColor];
+        // 1.0.9：撤回 1.0.8 的三处错误 ——
+        //   ① 加「不透明底 + ScaleToFill」把圆表盘填成了**方形色块**（用户 21:38「显示不正常是方形的」）；
+        //   ② 清 view.layer.contents；③ 藏掉系统子视图。
+        //   ②③ 是安全模式的嫌疑（装 1.0.8 后触发），一律去掉。
+        // 回到 1.0.7 的几何：ScaleAspectFit + 透明，靠 z 序盖在系统层之上。
+        // 圆外的透明区域与系统图标同在一个圆形范围里，不会露出「第二套指针」。
+        overlay.contentMode = UIViewContentModeScaleAspectFit;
         overlay.userInteractionEnabled = NO;
+        overlay.opaque = NO;
         [view addSubview:overlay];
     }
     if (!CGRectEqualToRect(overlay.frame, view.bounds)) overlay.frame = view.bounds;
     if (overlay.image != themed) overlay.image = themed;
-
-    // 系统表盘 / 指针可能直接画在图标视图自己的 layer 上：清掉它，别让它在我们的图底下重影。
-    if (view.layer.contents != NULL) {
-        view.layer.contents = nil;
-    }
-    // 系统插进来的其它子视图（表盘层、指针层）一律藏掉，只留我们这一层。
-    for (UIView *sub in view.subviews) {
-        if (sub != overlay && !sub.hidden) sub.hidden = YES;
-    }
-    // 每拍都把它提到最上面。
+    // 系统后来又插进来的层要压回去：每拍都把它提到最上面。
     if ([view.subviews lastObject] != overlay) [view bringSubviewToFront:overlay];
 }
 
