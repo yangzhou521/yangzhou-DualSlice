@@ -1,77 +1,79 @@
 ---
 name: respring-confirm-via-island-popup
-description: 注销、装包、重启注入进程等会让屏幕黑一下或打断用户的动作，一律用灵动岛弹窗（CountdownHUD ? 模式 / respring-guard.sh --ask）把选择权交给用户，由用户在屏幕上点「立即注销」或「取消」，不在对话里等文字回复。所有对话、所有工程适用。
+description: 注销、装包、请用户开 VPN 需要用户确认时怎么在屏幕上弹窗：respring-guard.sh 的 --ask/--install 用法、--confirm 已不再跳过弹窗、vpn-guard.sh 的用法与退出码、倒计时 5 秒、以及为什么不能只在对话里等文字回复。用户 2026-10-31 21:26 硬指令「注销装包VPN弹窗」。
 ---
 
-# 需用户确认的设备动作，一律上灵动岛弹窗让用户选
+# 注销 / 装包 / VPN：一律屏幕弹窗
 
-用户 2026-10-31 14:05 定的**永久硬规矩**（所有对话、所有工程）：
+用户 2026-10-31 21:26 硬指令原话：「注销装包VPN弹窗」。
+用户 21:28 在「一次弹窗」与「两次弹窗」之间选了 **A：一次弹窗搞定装包+注销**。
 
-> 「凡是以后需要用户确认的注销事件全部以灵动岛和弹窗的形式告知用户让用户做出选择」
+**铁律：这三类事情没有任何"跳过弹窗"的路径，不许只在对话里等文字回复。**
 
-## 铁律
+## 一、注销 / 装包：`scripts/respring-guard.sh`
 
-**任何需要用户点头的动作，都不许只在对话里等文字回复——必须在屏幕上弹出来让用户点。**
+### 三种调用
 
-覆盖范围：
-- 注销 / respring / `sbreload`
-- 装 deb / 升级包（`irisin-cli install`）
-- 重启注入目标进程（`icli app kill --force` + `launch`，会让 App 闪一下）
-- 任何会让屏幕黑一下、打断用户操作的动作
+| 用法 | 行为 |
+| --- | --- |
+| `sh scripts/respring-guard.sh 5 标签` | 只警告：屏幕胶囊 + 终端，**退出码 3，什么都不做** |
+| `sh scripts/respring-guard.sh --ask 5 标签` | **弹确认框**，用户点「立即注销」→ 倒计时 → `sbreload`；取消=4 / 超时=5 |
+| `sh scripts/respring-guard.sh --ask 5 --install <deb> 标签` | **一次点击搞定装包+注销**（见下） |
 
-## 怎么做（唯一正确姿势）
+**`--confirm` 已经不再跳过弹窗**（2026-10-31 21:26 起）：它现在等价于 `--ask`，保留只为老脚本不报错。
+原因：`--confirm` 历史上被用来「用户口头答应了就直接注销」，用户明确要求改成一律弹窗。
 
-### 1. 写弹窗请求
+### 装包 + 注销一次完成（推荐用法）
 
 ```sh
-printf '%s|120|?<标签>|<sid>' "$(date +%s)" > /rootfs/var/mobile/Library/Preferences/.countdownhud-request
+sh scripts/respring-guard.sh --ask 5 --install /rootfs/var/mobile/Documents/xxx.deb "装 1.0.8"
 ```
 
-- **`?` 前缀 = 确认弹窗**（`!` 是纯文案、不带 `?` 是倒计时）
-- `120` 是等待用户回答的秒数
-- `<sid>` 带上自己的会话 id，用户点完能跳回本对话
-- **shell 写文件必须加 `/rootfs` 前缀**（roothide 真根），否则写到 jbroot 里 HUD 读不到
+流程：弹窗 → 用户点「立即注销」→ 倒计时 5 秒 → 脚本打印 `CONFIRMED` 并退出 0。
+**脚本自己不装包**（它是 mobile，`irisin-cli` 要 root），所以调用方要在同一回合接着：
 
-等价命令：`sh scripts/respring-guard.sh --ask 120 <标签>`
+1. `irisin-cli install --yes --json <deb>`（`root: true`）
+2. `sbreload`
+3. 查 `apelin_crash_list process=SpringBoard` 无新报告
 
-### 2. 用户点完，答案在
+用户全程**只点一次**。
 
-`/rootfs/var/mobile/Library/Preferences/.countdownhud-answer`
+### 倒计时时长
 
-内容形如 `<epoch>|confirm`、`<epoch>|cancel`、`<epoch>|timeout`。
+**5 秒**（用户 21:22「原来是5秒的继续5秒」）。不要擅自改成 10 秒 —— 试过一次被要求退回。
 
-CountdownHUD 1.6.1 起用户点「立即注销」后**由插件自己 spawn `sbreload`**（诊断 `exec=spawned`），
-不再依赖脚本还在前台等。取消 → `exec=-` 或 `skip-marker`，不注销。
+## 二、VPN：`scripts/vpn-guard.sh`
 
-### 3. 正文同时写清（弹窗不能替代）
+```sh
+sh scripts/vpn-guard.sh 20 "push 失败，需要开 VPN"
+```
 
-在本对话正文写「为什么 / N 秒后执行 / 下一步」。发 `apelin_notification_send` 会把 Apelin 拉回前台、
-横幅被自己的通知代理吞掉，**通知不是知情通道**。
+- 不做任何设备动作，只是把「要不要开 VPN」搬到屏幕上。
+- 退出码：`0`=确认开 VPN / `4`=取消 / `5`=超时 / `6`=请求写不出去（多半没装 CountdownHUD）。
+- 借用同一个 `?` 弹窗（按钮文案是插件固定的，所以**标签里要写清楚要确认的是什么**）。
 
-## 不许做的事
+**什么时候才弹它**：按 `notify-before-git-push`，要 push 时**先自己直接试 push**；
+通了就直接干、只发胶囊「已推送」，**不通才**弹这个窗。绝不在 push 前就让用户先开 VPN。
 
-- 不许在对话里问一句「要注销吗」就等文字回复 —— **必须有屏幕弹窗**
-- 不许 agent 自己判断「该注销了」就静默执行
-- 不许因为「用户已经在对话里说过注销」就跳过弹窗 —— 每轮都要弹，选择权每轮都是用户的
-- 不许用 `apelin_notification_send` 代替弹窗
+## 三、实现细节（改这个脚本时要知道）
 
-## 边界：注入型插件本来不必注销
+- 请求文件：`/rootfs/var/mobile/Library/Preferences/.countdownhud-request`，内容 `<epoch>|<秒数>|<标签>[|<sid>]`；
+  `!` = 纯文案、`?` = 确认弹窗。
+- 答案文件：同目录 `.countdownhud-answer`，`<epoch>|confirm|cancel|timeout`；
+  **只认 epoch ≥ 本次请求**的答复，防止读到上一次的旧答案。
+- 依赖 CountdownHUD 1.5.0+；没装时 `?` 写不出去 → 退出码 6，这时只能退回对话里说明。
+- 弹窗的「立即注销」按钮在 1.6.1+ 会由插件自己 `spawn sbreload`；
+  `--install` 模式必须同时用 `RESPRING_GUARD_NO_RESPRING=1` 的思路**避免插件抢先注销**，
+  否则会在装包之前就注销了（装了个旧包）。
 
-先判断要不要注销（见技能 `injected-tweak-restart-app`）：
+## 四、边界
 
-- App 内的注入型 tweak → `scripts/device.sh kill <bid>` + `launch <bid>` 就生效，**不走注销流程**
-- 只有注入 **SpringBoard**（桌面图标 / HUD / 控制中心）、改了**过滤器 plist**、改了**包布局**，才需要注销
+- 「使用屏幕前询问」开着时，每条 `icli` 还会额外弹 Apelin 的系统卡；这个开关只有用户能关。
+- 弹窗超时 = 什么都不做，绝不自动继续。取消 = 什么都不做。
+- 用户点完了，**正文仍要写清「为什么 / 多久 / 下一步」** —— 弹窗只解决"让他在屏幕上选择"，不替代说明。
 
-但**重启注入进程（kill + launch）同样会闪屏**，也照本规矩弹窗。
+## 相关
 
-## 注销后必查
-
-`apelin_crash_list process=SpringBoard` 无新报告才算装好。有更新的报告 = 装坏了，先
-`irisin-cli remove` 回滚。
-
-## 与其它技能的关系
-
-- `respring-cross-team-notify`（四步硬规矩）—— 本文是它第 3 步的具体化与扩展（原来只要求注销弹窗，现在装包/杀进程也要）
-- `respring-notify-countdown` —— 弹窗技术细节、`exec=` 四取值、cfprefsd 旧值判活
-- `injected-tweak-restart-app` —— 先判断到底要不要注销
-- `cross-chat-coordination` —— 弹窗前先同步其它在跑的对话
+- `respring-notify-countdown`：CountdownHUD 的技术细节与胶囊渲染判据。
+- `notify-before-git-push`：push 与 VPN 的先后顺序。
+- `notify-any-screen`：胶囊跨界面的用法。

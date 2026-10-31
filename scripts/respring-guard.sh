@@ -42,13 +42,20 @@ set -eu
 # RESPRING_GUARD_NO_RESPRING=1：只倒计时，不注销（装包这类要自己接着做动作时用）。
 NO_RESPRING=${RESPRING_GUARD_NO_RESPRING:-0}
 
-# --confirm（用户已明确答应注销）/ --ask（在屏幕上问用户）必须写在最前面。
+# --ask（在屏幕上问用户）/ --confirm（旧写法，已等同于 --ask）必须写在最前面。
+# 用户 2026-10-31 21:26 硬指令：「注销装包VPN弹窗」——
+#   凡是注销 / 装包 / 请用户开 VPN，一律先弹窗让用户在屏幕上做选择，**没有任何跳过弹窗的路径**。
+# 所以 --confirm 不再是「跳过弹窗直接注销」，它现在和 --ask 完全等价（保留只是为了老脚本不报错）。
 CONFIRM=0
 ASK=0
+# --install <deb>：用户 2026-10-31 21:28 选「A」—— 装包与注销合并成**一次弹窗**。
+# 点头后先装包、再注销，不再弹第二次。
+INSTALL_DEB=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --confirm) CONFIRM=1; shift ;;
+    --confirm) CONFIRM=1; ASK=1; shift ;;
     --ask) ASK=1; shift ;;
+    --install) INSTALL_DEB="$2"; shift 2 ;;
     *) break ;;
   esac
 done
@@ -123,7 +130,7 @@ if [ "$CONFIRM" != "1" ] && [ "$ASK" != "1" ]; then
 fi
 
 # ---------- ② 在屏幕上问用户：系统确认框 ----------
-if [ "$ASK" = "1" ] && [ "$CONFIRM" != "1" ]; then
+if [ "$ASK" = "1" ]; then
   # v1.6.1：插件点了「立即注销」会自己注销。只倒计时安全验法（NO_RESPRING=1）必须同时管住插件，
   # 否则「只倒计时」会变成真注销 —— 用标记文件，退出时（含异常）一定删掉。
   if [ "$NO_RESPRING" = "1" ]; then
@@ -162,6 +169,21 @@ if [ "$CONFIRM" != "1" ]; then
 fi
 
 # ---------- ③ 用户已答应：5 秒倒计时 ----------
+# --install 模式下**不在这里注销**：装包要 root（脚本是 mobile，调不了 irisin-cli）。
+# 所以这里只做两件事：屏幕上走完倒计时 + 打印 CONFIRMED 标记，
+# 由调用方在同一回合里接着「装包 → sbreload」。用户仍然只点一次。
+if [ -n "$INSTALL_DEB" ]; then
+  echo "respring-guard: 用户已点头（--install 模式），倒计时 ${WAIT} 秒后交接给调用方装包"
+  i=$WAIT
+  while [ "$i" -gt 0 ]; do
+    echo "  $i…"
+    sleep 1
+    i=$((i - 1))
+  done
+  echo "CONFIRMED"
+  exit 0
+fi
+
 if hud_request "$WAIT" "$LABEL"; then
   echo "respring-guard: 已请求 CountdownHUD 显示 ${WAIT} 秒（$LABEL）"
 else
