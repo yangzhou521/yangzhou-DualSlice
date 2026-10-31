@@ -140,6 +140,7 @@ NSString *TCPDynamicProbeReport(void);
 // 时钟图标的视图层（0.9.17）：时钟从不走图标取图那几站，只能挂它的 layoutSubviews 换表盘。
 void TCPInstallClockViewSite(void);
 NSString *TCPClockViewProbeReport(void);
+void TCPClockTick(void);   // 1.0.7：主动找时钟视图重画（挂的 layoutSubviews 从不触发）
 // 文件夹预览（收起状态）取证：预览图是 SBFolderIconImageView 自己合成的，mini 图标未必是
 // 独立的 SBIconImageView，所以显示层站摸不到。这里只读地把它和它的子视图记进诊断，不碰状态。
 void TCPProbeFolderViews(void);

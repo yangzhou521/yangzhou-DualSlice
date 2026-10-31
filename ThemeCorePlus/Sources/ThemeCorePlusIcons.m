@@ -316,6 +316,57 @@ static UIImage *TCPClockAssetImage(TCPThemeStore *store, NSString *name) {
     return nil;
 }
 
+// 画一根指针（定义在下面）：素材真实范围的「底边中点」对准表盘中心，按长度缩放后绕中心转 angle。
+static void TCPDrawClockHand(CGContextRef ctx, UIImage *hand, CGPoint center,
+                             CGFloat angle, CGFloat length,
+                             CGFloat *outBoxW, CGFloat *outBoxH);
+
+// 1.0.7：把「主题表盘 + 按当前时间画的指针 + 红点」合成成一张整图。
+// 为什么单独合成（而不是拿 Store 的静态表盘）：Store 里 com.apple.mobiletimer 只登记了
+// ClockIconBackgroundSquare（表盘），指针素材（ClockIconHourHand / ClockIconMinuteHand /
+// ClockIconRedDot）不在图标表里 —— 直接取图只能拿到一块表盘，没有指针。
+// 而 iOS 16.7 的 SBHClockApplicationIconImageView 从不重新 layout（诊断 clockv{look=0}），
+// 系统那层指针我们接管不了，所以指针只能自己画；自己画就得自己按时间更新 ——
+// 这张图每 30 秒重画一次（TCPClockTick），指针就是活的。
+static UIImage *TCPClockComposeImage(TCPThemeStore *store, CGFloat side, CGFloat scale) {
+    if (store == nil || side <= 0) return nil;
+    if (scale <= 0) scale = [UIScreen mainScreen].scale;
+    if (scale <= 0) scale = 3.0;
+
+    UIImage *face = TCPClockAssetImage(store, @"ClockIconBackgroundSquare@3x.png");
+    if (face == nil) face = TCPClockAssetImage(store, @"ClockIconBackgroundSquare.png");
+    if (face == nil) return nil;
+
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(side, side), NO, scale);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (ctx == NULL) { UIGraphicsEndImageContext(); return nil; }
+
+    CGRect rect = CGRectMake(0, 0, side, side);
+    [face drawInRect:rect];
+
+    UIImage *minuteHand = TCPClockAssetImage(store, @"ClockIconMinuteHand@3x.png");
+    UIImage *hourHand = TCPClockAssetImage(store, @"ClockIconHourHand@3x.png");
+    UIImage *redDot = TCPClockAssetImage(store, @"ClockIconRedDot@3x.png");
+    if (minuteHand || hourHand || redDot) {
+        NSDateComponents *c = [[NSCalendar currentCalendar]
+                               components:(NSCalendarUnitHour | NSCalendarUnitMinute)
+                                 fromDate:[NSDate date]];
+        CGPoint center = CGPointMake(CGRectGetMidX(rect), CGRectGetMidY(rect));
+        CGFloat minAngle = (CGFloat)c.minute * 6.0 * M_PI / 180.0;
+        CGFloat hourAngle = ((CGFloat)(c.hour % 12) + (CGFloat)c.minute / 60.0) * 30.0 * M_PI / 180.0;
+        if (minuteHand) TCPDrawClockHand(ctx, minuteHand, center, minAngle, side * 0.72, NULL, NULL);
+        if (hourHand) TCPDrawClockHand(ctx, hourHand, center, hourAngle, side * 0.50, NULL, NULL);
+        if (redDot) {
+            CGFloat d = side * 0.11;
+            [redDot drawInRect:CGRectMake(center.x - d * 0.5, center.y - d * 0.5, d, d)];
+        }
+    }
+
+    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return result;
+}
+
 // 素材里真正有内容的范围（左上为原点）；量不到返回 CGRectZero。
 // 指针图的画布比指针本身大得多（本机 248x547 里指针只是一根细针），
 // 不裁出真实范围就会按整张画布缩放，针会细到看不见。
@@ -498,15 +549,14 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
         }
         how = [NSString stringWithFormat:@"face+h%.0fx%.0f+m%.0fx%.0f", hw, hh, mw, mh];
     } else {
+        // 1.0.7：日历 —— 主题底图 + 系统日期数字（当墨层画，混合模式已弃用）。
+        // 旧的 multiply/screen：白底黑字的系统图压在深色主题底上 → 黑字看不见（用户「显示了底图没有显示文字」）。
         [themed drawInRect:rect];
         if (systemImage) {
-            TCPPixelStats stats = TCPPixelStatsForImage(systemImage);
-            BOOL light = !stats.valid || stats.luminance > 0.5;
-            CGContextSaveGState(ctx);
-            CGContextSetBlendMode(ctx, light ? kCGBlendModeMultiply : kCGBlendModeScreen);
-            [systemImage drawInRect:rect];
-            CGContextRestoreGState(ctx);
-            how = light ? @"mul" : @"scr";
+            TCPPixelStats base = TCPPixelStatsForImage(themed);
+            BOOL darkBase = base.valid ? (base.luminance <= 0.5) : NO;
+            TCPCompositeCalendarInk(ctx, rect, systemImage, darkBase);
+            how = [NSString stringWithFormat:@"ink:%@,lum=%.2f", darkBase ? @"w" : @"b", (double)base.luminance];
         }
     }
 
@@ -525,6 +575,82 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
                 bundleID, info.size.width, info.size.height, scale, how, (double)out.coverage];
     TCPNoteComposedImage(result, bundleID);
     return result;
+}
+
+// 1.0.7：日历的「数字层」提取（定义在下面）。
+static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *systemImage, BOOL darkBase);
+
+// 1.0.7：日历的「数字层」提取。
+// 为什么不能用混合模式（用户 2026-10-31 20:31「日历和时钟美化素材不加载」、
+// 早期版本「日历显示了底图没有显示文字」）：系统日历整图是「白底 + 黑数字」，
+// multiply 压在深色主题底上 → 白底变成主题色、黑数字还是黑 → 深底上根本看不见字；
+// screen 压在浅底上 → 白字也看不见。混合模式解决不了「墨要跟着底色换颜色」。
+// 正确做法：把系统图里「与背景色不同的部分」（也就是日期数字）取出来当**墨**，
+// 再按主题底图的明暗选黑/白把它画上去 —— 文字一定可见，底图也保持主题的样子。
+static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *systemImage, BOOL darkBase) {
+    if (ctx == NULL || systemImage == nil || systemImage.CGImage == NULL) return;
+    CGImageRef cg = systemImage.CGImage;
+    size_t sw = CGImageGetWidth(cg), sh = CGImageGetHeight(cg);
+    if (sw == 0 || sh == 0) return;
+
+    size_t cap = 96;
+    size_t dw = MIN(sw, cap), dh = MIN(sh, cap);
+    unsigned char *buffer = calloc(dw * dh, 4);
+    if (buffer == NULL) return;
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef tmp = CGBitmapContextCreate(buffer, dw, dh, 8, dw * 4, space,
+                                              (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(space);
+    if (tmp == NULL) { free(buffer); return; }
+    CGContextDrawImage(tmp, CGRectMake(0, 0, (CGFloat)dw, (CGFloat)dh), cg);
+    CGContextRelease(tmp);
+
+    // 背景色：四角像素的平均（系统日历图四边是白色底板）。
+    double br = 0, bg = 0, bb = 0;
+    size_t corners[4][2] = { {0, 0}, {dw - 1, 0}, {0, dh - 1}, {dw - 1, dh - 1} };
+    for (int i = 0; i < 4; i++) {
+        unsigned char *p = buffer + (corners[i][1] * dw + corners[i][0]) * 4;
+        br += p[0]; bg += p[1]; bb += p[2];
+    }
+    br /= 4.0; bg /= 4.0; bb /= 4.0;
+
+    // 墨 = 与背景色差异大的像素。把「差异强度」写进一张灰度图当 mask，
+    // 再用 ClipToMask 裁剪后填一个纯色（亮底填黑、深底填白）——
+    // 这样文字一定可见，主题底图也保持原样。
+    unsigned char *maskBuffer = calloc(dw * dh, 4);
+    if (maskBuffer == NULL) { free(buffer); return; }
+    for (size_t i = 0; i < dw * dh; i++) {
+        unsigned char *p = buffer + i * 4;
+        if (p[3] < 8) continue;
+        double dr = (double)p[0] - br, dg = (double)p[1] - bg, db = (double)p[2] - bb;
+        double dist = (dr * dr + dg * dg + db * db) / (255.0 * 255.0 * 3.0);
+        double a = dist > 0.02 ? MIN(1.0, dist * 3.0) : 0.0;
+        unsigned char v = (unsigned char)(a * 255.0);
+        maskBuffer[i * 4 + 0] = v;
+        maskBuffer[i * 4 + 1] = v;
+        maskBuffer[i * 4 + 2] = v;
+        maskBuffer[i * 4 + 3] = 255;
+    }
+    free(buffer);
+
+    CGColorSpaceRef maskSpace = CGColorSpaceCreateDeviceRGB();
+    // buffer 是 RGBA 排布（每像素 4 字节），bytesPerRow 必须是 dw*4。
+    // kCGImageAlphaNoneSkipLast：ClipToMask 用**亮度**当遮罩强度，最后一个字节被忽略。
+    CGContextRef maskCtx = CGBitmapContextCreate(maskBuffer, dw, dh, 8, dw * 4, maskSpace,
+                                                  (CGBitmapInfo)kCGImageAlphaNoneSkipLast);
+    CGColorSpaceRelease(maskSpace);
+    if (maskCtx == NULL) { free(maskBuffer); return; }
+    CGImageRef maskImage = CGBitmapContextCreateImage(maskCtx);
+    CGContextRelease(maskCtx);
+    if (maskImage != NULL) {
+        CGContextSaveGState(ctx);
+        CGContextClipToMask(ctx, rect, maskImage);
+        CGContextSetFillColorWithColor(ctx, (darkBase ? [UIColor whiteColor] : [UIColor blackColor]).CGColor);
+        CGContextFillRect(ctx, rect);
+        CGContextRestoreGState(ctx);
+        CGImageRelease(maskImage);
+    }
+    free(maskBuffer);
 }
 
 // —— 时钟图标的视图层（0.9.17）——
@@ -623,10 +749,15 @@ static void TCPClockViewApply(UIView *view) {
     NSMutableArray<NSString *> *trace = [NSMutableArray array];
     NSDictionary *faceInfo = TCPClockFindFace(view, 1, trace);
     CGFloat scale = view.window.screen.scale > 0 ? view.window.screen.scale : 2.0;
-    UIImage *themed = [store iconImageForBundleID:@"com.apple.mobiletimer"
-                                             size:size
-                                            scale:scale
-                                     cornerRadius:0];
+    // 1.0.7：不再用 Store 的静态表盘（Store 里 com.apple.mobiletimer 只登记了表盘、没有指针），
+    // 改用自己合成的「表盘 + 按当前时间画的指针 + 红点」—— 这样指针是活的。
+    UIImage *themed = TCPClockComposeImage(store, size.width, scale);
+    if (themed == nil) {
+        themed = [store iconImageForBundleID:@"com.apple.mobiletimer"
+                                       size:size
+                                      scale:scale
+                               cornerRadius:0];
+    }
     if (themed == nil) {
         __sync_fetch_and_add(&sClockVMiss, 1);
         sClockVLast = @"noasset";
@@ -700,9 +831,47 @@ void TCPInstallClockViewSite(void) {
     os_log(TCPLogHandle(), "TCPS_CLOCK_VIEW hooked");
 }
 
+// 1.0.7：主动刷新计数（诊断 clockv{tick=,found=}）。
+static NSInteger sClockTickCount = 0;
+static NSInteger sClockTickFound = 0;
+
 NSString *TCPClockViewProbeReport(void) {
-    return [NSString stringWithFormat:@"clockv{look=%ld,hit=%ld,miss=%ld,last=%@}",
-            (long)sClockVLook, (long)sClockVHit, (long)sClockVMiss, sClockVLast];
+    return [NSString stringWithFormat:@"clockv{look=%ld,hit=%ld,miss=%ld,tick=%ld,found=%ld,last=%@}",
+            (long)sClockVLook, (long)sClockVHit, (long)sClockVMiss,
+            (long)sClockTickCount, (long)sClockTickFound, sClockVLast];
+}
+
+// 1.0.7：主动找时钟视图并重画。
+// 为什么需要它：iOS 16.7 的 SBHClockApplicationIconImageView **从不重新 layout**
+// （1.0.6 装机实测 clockv{look=0,hit=0,miss=0,last=-}：挂的 layoutSubviews 钩子一次没触发），
+// 所以光挂回调不行 —— 必须自己去找屏幕上的时钟视图。
+// 顺带把指针变成活的：每 30 秒重画一次（时针分针精度到分钟，够用）。
+
+void TCPClockTick(void) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ TCPClockTick(); });
+        return;
+    }
+    TCPThemeStore *store = [TCPThemeStore shared];
+    if (!store.active || !store.iconsEnabled) return;
+    Class cls = NSClassFromString(@"SBHClockApplicationIconImageView");
+    if (cls == Nil) return;
+
+    NSMutableArray *stack = [NSMutableArray array];
+    for (UIWindow *window in [UIApplication sharedApplication].windows) [stack addObject:window];
+    NSUInteger guard = 0;
+    NSInteger found = 0;
+    while (stack.count > 0 && guard++ < 4000) {
+        UIView *view = [stack lastObject];
+        [stack removeLastObject];
+        if ([view isKindOfClass:cls]) {
+            found++;
+            @try { TCPClockViewApply(view); } @catch (__unused NSException *e) { }
+        }
+        [stack addObjectsFromArray:view.subviews];
+    }
+    sClockTickCount++;
+    sClockTickFound = found;
 }
 
 // —— 文件夹预览（收起状态）取证 ——
@@ -788,6 +957,79 @@ static NSString *TCPFolderCacheMethods(void) {
     return names.count > 0 ? [names componentsJoinedByString:@","] : @"nohit";
 }
 
+// 1.0.7 取证：SBFolderIconImageCache 的**全部**方法名（带参数个数）。
+// 1.0.6 只列了零参数方法，结果 cm=nohit —— 拼图方法都是带参数的，
+// 于是既不知道该挂哪个方法、也不知道参数长什么样。这一版全列出来，下一版照着写。
+static NSString *TCPFolderCacheAllMethods(void) {
+    Class cls = NSClassFromString(@"SBFolderIconImageCache");
+    if (cls == Nil) return @"nocls";
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(cls, &count);
+    if (methods == NULL || count == 0) return @"nomethods";
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (unsigned int i = 0; i < count; i++) {
+        NSString *name = NSStringFromSelector(method_getName(methods[i]));
+        NSUInteger args = method_getNumberOfArguments(methods[i]);   // 含 self+SEL
+        if (names.count < 24) {
+            [names addObject:[NSString stringWithFormat:@"%@/%lu", name, (unsigned long)args]];
+        }
+    }
+    free(methods);
+    return names.count > 0 ? [names componentsJoinedByString:@","] : @"nohit";
+}
+
+// 1.0.7 取证：文件夹图标对象（SBFolderIcon）与它里面的 leaf 图标。
+// 收起时的 mini 预览就是这些 leaf 图标拼出来的；要用主题图重拼，
+// 就得先知道每个 mini 对应哪个 bundleID —— 这一版把类名、数量、bundleID 全记进诊断。
+// 取法：视图上的 _folderIcon（KVC 读，拿不到就 nil）；leaf 图标用几个候选选择器试。
+static NSString *TCPFolderLeavesReport(void) {
+    Class viewClass = NSClassFromString(@"SBFolderIconImageView");
+    if (viewClass == Nil) return @"nocls";
+    __block NSString *result = @"nofolder";
+    NSMutableArray *stack = [NSMutableArray array];
+    for (UIWindow *window in [UIApplication sharedApplication].windows) [stack addObject:window];
+    NSUInteger guard = 0;
+    while (stack.count > 0 && guard++ < 4000) {
+        UIView *view = [stack lastObject];
+        [stack removeLastObject];
+        if ([view isKindOfClass:viewClass]) {
+            id folderIcon = nil;
+            @try { folderIcon = [view valueForKey:@"_folderIcon"]; } @catch (NSException *e) { (void)e; }
+            if (folderIcon == nil) {
+                @try { folderIcon = [view valueForKey:@"folderIcon"]; } @catch (NSException *e) { (void)e; }
+            }
+            if (folderIcon == nil) { result = @"noicon"; }
+            else {
+                NSMutableArray<NSString *> *ids = [NSMutableArray array];
+                id leaves = nil;
+                for (NSString *sel in @[ @"leafIcons", @"allIcons", @"icons", @"childIcons" ]) {
+                    SEL s = NSSelectorFromString(sel);
+                    if (![folderIcon respondsToSelector:s]) continue;
+                    leaves = ((id (*)(id, SEL))objc_msgSend)(folderIcon, s);
+                    if ([leaves isKindOfClass:[NSArray class]] && ((NSArray *)leaves).count > 0) break;
+                    leaves = nil;
+                }
+                if (leaves == nil) {
+                    result = [NSString stringWithFormat:@"%@:noleafsel", NSStringFromClass([folderIcon class])];
+                } else {
+                    for (id leaf in (NSArray *)leaves) {
+                        if (ids.count >= 6) break;
+                        NSString *bid = TCPIconBundleIdentifier(leaf);
+                        [ids addObject:bid ?: @"?"];
+                    }
+                    result = [NSString stringWithFormat:@"%@:n=%lu[%@]",
+                              NSStringFromClass([folderIcon class]),
+                              (unsigned long)((NSArray *)leaves).count,
+                              [ids componentsJoinedByString:@","]];
+                }
+            }
+            break;
+        }
+        [stack addObjectsFromArray:view.subviews];
+    }
+    return result;
+}
+
 void TCPFolderCacheRefresh(void) {
     if (![NSThread isMainThread]) return;
     TCPThemeStore *store = [TCPThemeStore shared];
@@ -867,10 +1109,13 @@ void TCPProbeFolderViews(void) {
 }
 
 NSString *TCPFolderProbeReport(void) {
-    return [NSString stringWithFormat:@"folderv{n=%ld,s=[%@],m=%@,cache=%@,cm=%@}", (long)sFolderViewCount,
+    // 1.0.7：加 allm（缓存类全部方法）与 lv（文件夹 leaf 图标取证）两段。
+    return [NSString stringWithFormat:@"folderv{n=%ld,s=[%@],m=%@,cache=%@,cm=%@,allm=%@,lv=%@}",
+            (long)sFolderViewCount,
             sFolderViewSamples.count > 0
                 ? [sFolderViewSamples componentsJoinedByString:@";"] : @"-",
-            sFolderMethods, sFolderCacheLast, TCPFolderCacheMethods()];
+            sFolderMethods, sFolderCacheLast, TCPFolderCacheMethods(),
+            TCPFolderCacheAllMethods(), TCPFolderLeavesReport()];
 }
 
 // —— 视图层：屏幕上到底挂了什么 ——

@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 1.0.6
+  VERSION: 1.0.7
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v1.0.6)
+    name: Release (themecoreplus-v1.0.7)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,10 +185,31 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v1.0.6
-          name: ThemeCorePlus v1.0.6
+          tag_name: themecoreplus-v1.0.7
+          name: ThemeCorePlus v1.0.7
           body: |
-            主题美化 +（ThemeCorePlus）v1.0.6 —— MarkTheme 式主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v1.0.7 —— MarkTheme 式主题引擎，作者 yangzhou。
+
+            **v1.0.7**：修用户 2026-10-31 20:31 报的三个问题（角标变形+双层、文件夹 mini 图标、时钟日历不主题化）。
+            ① 角标：圆形素材被拉成异形 + 系统红底叠成两层。
+               变形根因：素材 SBBadgeBG 是 25×25 正方形圆形，多位数字时走
+               `resizableImageWithCapInsets` 横向拉伸中间段 → 圆被拉成 32×25 的椭圆。
+               改法：不再拉伸，改成 iOS 那套圆头胶囊（两端圆头用素材原样等比裁切，中间填素材本色）。
+               双层根因：1.0.3 要求「底板自己就是我们的图的宿主」才搬图，而本机结构是
+               SBIconBadgeView → SBDarkeningImageView(底板) → UIImageView(我们的图)，
+               于是搬图一次都没跑（诊断 lift=0、bg=…:shown）。改法：只要底板子树里找得到我们的图就搬，
+               并把我们的层摆在 ourHost 的真实位置（不是底板的位置）。
+            ② 时钟：iOS 16.7 的 SBHClockApplicationIconImageView **从不重新 layout**
+               （1.0.6 装机实测 clockv{look=0,hit=0,miss=0}），所以挂的 layoutSubviews 钩子一次没触发。
+               改法：每 30 秒主动去找屏幕上的时钟视图并重画（诊断 clockv{tick=,found=}）；
+               表盘与指针自己合成（主题表盘 + 按当前时间画的时针分针 + 红点），指针是活的。
+            ③ 日历：弃用 multiply/screen 混合模式（白底黑字的系统图压在深色主题底上 → 黑字看不见，
+               即用户说的「显示了底图没有显示文字」）。改法：把系统图里与背景色不同的部分提取成「墨」，
+               按主题底图明暗选黑/白画上去，文字一定可见。
+            ④ 文件夹收起时的 mini 图标：1.0.6 诊断显示拼图缓存类的方法全是带参数的（cm=nohit），
+               且 cache=nocache（那几个「重算缓存」的方法名一个都不存在），所以软调用那套是空转。
+               本版加取证：folderv{} 新增 allm=（缓存类全部方法名+参数个数）与
+               lv=（文件夹对象类名、leaf 图标数量与各自 bundleID），下一版照此写死正确的接管点。
 
             **v1.0.6**：修复时钟图标不主题化（增强 CALayer 识别路径）。
             iOS 16.7 的 SBHClockApplicationIconImageView 表盘可能是 CALayer 自绘（layer.contents = CGImage），
@@ -479,7 +500,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v1.0.6/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v1.0.7/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'

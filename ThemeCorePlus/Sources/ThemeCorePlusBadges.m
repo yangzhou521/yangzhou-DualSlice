@@ -12,6 +12,7 @@
 //
 #import "ThemeCorePlusHooks.h"
 #import "ThemeCorePlusStore.h"
+#include <stdlib.h>   // 1.0.7：圆头胶囊取素材本色时用 calloc/free
 
 UIImage *TCPThemedBadgeBackground(CGFloat scale) {
     TCPThemeStore *store = [TCPThemeStore shared];
@@ -213,6 +214,22 @@ static UIImage *TCPBadgeOurImageFromHost(UIView *host) {
     return nil;
 }
 
+// 1.0.7：在 root 的整棵子树里找我们那张整图。本机结构（1.0.6 诊断实测）是
+//   SBIconBadgeView → backgroundView(SBDarkeningImageView) → UIImageView（我们的图）
+// 我们的图不在底板自己身上，而在它**里面的子 image view** —— 1.0.3 只查 host 自身
+// （ourHost == bgView 才搬），于是 lift 一次都没跑（诊断 lift=0、bg=…:shown，双层复发）。
+// 角标子树只有两三层，递归代价可忽略；找不到我们的图就返回 nil，调用方一个字节都不动。
+static UIImage *TCPBadgeOurImageInSubtree(UIView *root) {
+    if (root == nil) return nil;
+    UIImage *direct = TCPBadgeOurImageFromHost(root);
+    if (direct != nil) return direct;
+    for (UIView *sub in root.subviews) {
+        UIImage *found = TCPBadgeOurImageInSubtree(sub);
+        if (found != nil) return found;
+    }
+    return nil;
+}
+
 
 // 把角标收拾成一层：只清「系统底板」的底色，绝不动我们那张图所在的节点。
 // 本机结构（0.9.22 诊断实测）：SBIconBadgeView → backgroundView(SBDarkeningImageView)，
@@ -220,12 +237,23 @@ static UIImage *TCPBadgeOurImageFromHost(UIView *host) {
 // 所以「target == ourHost」不能整条跳过，否则系统纯色底板永远留在原地。
 // 判据很硬：**树里一张我们的图都没有就什么都不做** —— 宁可多留一层，也绝不把角标清成空白。
 // 1.0.3：把我们的整图搬到自己的兄弟层，再把系统底板整个藏掉。
-// 只搬「底板本身就是我们那张图的宿主」这一种（本机就是这种：SBIconBadgeView 只有一个子视图）。
-// 搬完 must 保证「我们的图仍在树里」—— 拿不到图就一个字节都不动，绝不把角标弄成空白。
+// 1.0.7 放宽：图在底板的子树里就算（本机就是「图在底板里面的子 image view」），
+// 不再要求 ourHost == bgView —— 那是 1.0.3 lift 永远跑不起来的原因（诊断 lift=0）。
+// 搬完必须保证「我们的图仍在树里」—— 拿不到图就一个字节都不动，绝不把角标弄成空白。
 static BOOL TCPBadgeLiftOurImage(UIView *view, UIView *host) {
     if (view == nil || host == nil || host == view) return NO;
-    UIImage *image = TCPBadgeOurImageFromHost(host);
+    UIImage *image = TCPBadgeOurImageInSubtree(host);
     if (image == nil) return NO;   // 拿不到我们的图就一个字节都不动，绝不把角标弄成空白
+
+    // 我们的图实际挂在哪只视图上（底板里面的子 image view）—— overlay 要摆在**它**的位置，
+    // 而不是底板的位置：底板是系统那个铺满的暗化层，尺寸往往和角标本体不一样，
+    // 按底板摆会让我们的图偏位/变形。本机 1.0.6 结构：
+    //   SBIconBadgeView → SBDarkeningImageView(底板) → UIImageView(我们的图)
+    UIView *ourHost = nil;
+    for (UIView *sub in host.subviews) {
+        if (TCPBadgeOurImageFromHost(sub) != nil) { ourHost = sub; break; }
+    }
+    if (ourHost == nil) ourHost = host;
 
     UIImageView *overlay = objc_getAssociatedObject(view, TCPBadgeOverlayKey);
     if (![overlay isKindOfClass:[UIImageView class]]) {
@@ -237,12 +265,17 @@ static BOOL TCPBadgeLiftOurImage(UIView *view, UIView *host) {
         sBadgeLiftCount++;
     }
     overlay.image = image;
-    overlay.contentMode = host.contentMode;
-    overlay.frame = host.frame;
+    overlay.contentMode = ourHost.contentMode;
+    // 位置：ourHost 换算到 view 的坐标系。拿不到就用 host 的 frame 兜底。
+    CGRect frame = host.frame;
+    if (ourHost != host && ourHost.superview != nil) {
+        frame = [ourHost convertRect:ourHost.bounds toView:view];
+    }
+    overlay.frame = frame;
     overlay.hidden = NO;
     if (overlay.superview == view && view.subviews.lastObject != overlay) [view bringSubviewToFront:overlay];
     host.hidden = YES;
-    sBadgeSysHost = NSStringFromClass([host class]);
+    sBadgeSysHost = NSStringFromClass([ourHost class]);
     return YES;
 }
 
@@ -263,11 +296,21 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
                 if (!bg.hidden) {
                     bg.hidden = YES;
                     sBadgeSysHidden++;
-                    // 数字变了 → 系统把新图设回底板，同步到我们这层（静态时省掉这次查找）
-                    UIImage *fresh = TCPBadgeOurImageFromHost(bg);
+                    // 数字变了 → 系统把新图设回底板（1.0.7：在底板的**子 image view** 上，
+                    // 不是底板自身），同步到我们这层（静态时省掉这次查找）
+                    UIImage *fresh = TCPBadgeOurImageInSubtree(bg);
                     if (fresh != nil && fresh != overlay.image) overlay.image = fresh;
                 }
-                overlay.frame = bg.frame;
+                // 位置跟 ourHost 走（我们那张图挂在哪，overlay 就摆哪）
+                UIView *ourHost = nil;
+                for (UIView *sub in bg.subviews) {
+                    if (TCPBadgeOurImageFromHost(sub) != nil) { ourHost = sub; break; }
+                }
+                if (ourHost != nil && ourHost.superview != nil) {
+                    overlay.frame = [ourHost convertRect:ourHost.bounds toView:view];
+                } else {
+                    overlay.frame = bg.frame;
+                }
             }
             if (overlay.hidden) overlay.hidden = NO;
             if (view.subviews.lastObject != overlay) [view bringSubviewToFront:overlay];
@@ -344,7 +387,13 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
     // 它下一帧把红底重新写进 layer.contents，我们却已经挂了「收拾干净」标记 → 双层永久留下。
     // 终局做法：把我们的图搬到自己的一层上，再把底板整个 hidden，系统爱怎么画都露不出来。
     BOOL liftedNow = NO;
-    if (ourHost != nil && bgView != nil && ourHost == bgView) {
+    // 1.0.7 放宽条件（用户 2026-10-31 20:31「角标双层叠加、圆形素材被拉成异形」）：
+    // 1.0.3 要求 ourHost == bgView，但本机 1.0.6 实测结构是
+    //   SBIconBadgeView → backgroundView(SBDarkeningImageView) → UIImageView（我们的图）
+    // 我们的图挂在底板**里面的子 image view** 上，ourHost != bgView，于是 lift 一次都没跑
+    // （诊断 lift=0、bg=SBDarkeningImageView:shown，双层永久留着）。
+    // 现在只要「底板的子树里找得到我们那张图」就搬 —— 那才是真正的判据。
+    if (bgView != nil && TCPBadgeOurImageInSubtree(bgView) != nil) {
         // 搬成功时底板已经被藏，下面 targets 循环里对 ourHost 的清理自然变成空转
         liftedNow = TCPBadgeLiftOurImage(view, bgView);
     }
@@ -494,10 +543,102 @@ NSString *TCPBadgeProbeReport(void) {
             (long)sBadgeLayCalls];
 }
 
-// 圆头拉伸时两头要留多宽：按素材自己的尺寸算，素材两头是什么形状（圆弧、尖角、异形）都原样保留。
-static CGFloat TCPBadgeCapInset(UIImage *asset) {
-    if (asset.size.height <= 0) return 0;
-    return MIN(asset.size.height * 0.45, MAX(0.0, asset.size.width / 2.0 - 0.5));
+// 1.0.7（用户 2026-10-31 20:31「第三方角标圆形素材变形显示异常，是异形不是圆形的」）：
+// 素材 SBBadgeBG 是 25×25 的**正方形圆形**（诊断 asset=25x25）。原来多位数字时走
+// `resizableImageWithCapInsets` 横向拉伸中间段 → 25×25 的圆被拉成 32×25 的椭圆，
+// 屏幕上就是「异形不是圆形」。iOS 自带的圆头胶囊做法是**中间段平铺、两端不变形**，
+// 所以这里照做：两端各画一个完整的圆头（原始素材的左右半边，等比不缩放），
+// 中间用素材本体的颜色填满 —— 圆还是圆，只是整体变宽。
+//
+// 取素材的「本色」：中心像素；中心透明（素材中心是镂空的）就取整张图里不透明像素的平均色。
+static UIColor *TCPBadgeAssetFillColor(UIImage *asset) {
+    if (asset == nil || asset.CGImage == NULL) return nil;
+    size_t w = CGImageGetWidth(asset.CGImage), h = CGImageGetHeight(asset.CGImage);
+    if (w == 0 || h == 0) return nil;
+    size_t cap = 64;
+    size_t dw = MIN(w, cap), dh = MIN(h, cap);
+    unsigned char *buffer = calloc(dw * dh, 4);
+    if (buffer == NULL) return nil;
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(buffer, dw, dh, 8, dw * 4, space,
+                                             (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(space);
+    if (ctx == NULL) { free(buffer); return nil; }
+    CGContextDrawImage(ctx, CGRectMake(0, 0, (CGFloat)dw, (CGFloat)dh), asset.CGImage);
+    CGContextRelease(ctx);
+
+    // 先试中心像素。
+    size_t cx = dw / 2, cy = dh / 2;
+    unsigned char *p = buffer + (cy * dw + cx) * 4;
+    if (p[3] > 200) {
+        UIColor *color = [UIColor colorWithRed:p[0] / 255.0 green:p[1] / 255.0 blue:p[2] / 255.0 alpha:1.0];
+        free(buffer);
+        return color;
+    }
+    // 中心是镂空的 → 取不透明像素的平均色。
+    double r = 0, g = 0, b = 0;
+    size_t count = 0;
+    for (size_t i = 0; i < dw * dh; i++) {
+        unsigned char *q = buffer + i * 4;
+        if (q[3] > 200) { r += q[0]; g += q[1]; b += q[2]; count++; }
+    }
+    free(buffer);
+    if (count == 0) return nil;
+    return [UIColor colorWithRed:r / (255.0 * count) green:g / (255.0 * count) blue:b / (255.0 * count) alpha:1.0];
+}
+
+// 圆头胶囊：两端圆头用素材原样（等比、不缩放、不拉伸），中间用素材本色填。
+// width <= 素材宽度时退化成「素材按自然比例铺满高度、居中」，形状完全不变。
+static void TCPDrawBadgePill(UIImage *asset, CGRect rect) {
+    if (asset == nil || rect.size.width <= 0 || rect.size.height <= 0) return;
+    CGFloat side = rect.size.height;
+    CGFloat naturalWidth = asset.size.height > 0 ? asset.size.width : side;
+    if (rect.size.width <= naturalWidth + 0.5) {
+        // 放得下：素材按自然比例铺满高度，居中（圆的还是圆的）
+        CGFloat w = naturalWidth;
+        [asset drawInRect:CGRectMake(rect.origin.x + (rect.size.width - w) / 2.0, rect.origin.y, w, side)];
+        return;
+    }
+    // 放不下（多位数字）：两端各一个完整圆头，中间填本色。
+    CGFloat cap = MIN(side, asset.size.width);
+    // 先填中间（用素材本色），两端圆头再盖上去。
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (ctx != NULL && rect.size.width > cap * 2.0) {
+        UIColor *fill = TCPBadgeAssetFillColor(asset);
+        if (fill != nil) {
+            CGContextSaveGState(ctx);
+            CGContextSetFillColorWithColor(ctx, fill.CGColor);
+            CGContextFillRect(ctx, CGRectMake(rect.origin.x + cap, rect.origin.y,
+                                              rect.size.width - cap * 2.0, side));
+            CGContextRestoreGState(ctx);
+        }
+    }
+    // 左圆头：素材的左边 cap 宽，等比缩到 side 高；右圆头同理。
+    // UIImage 没有「裁剪后绘制」的方法，所以从 CGImage 裁出那两段再画。
+    CGImageRef cg = asset.CGImage;
+    if (cg != NULL) {
+        size_t pw = CGImageGetWidth(cg), ph = CGImageGetHeight(cg);
+        if (pw > 0 && ph > 0) {
+            CGFloat capPx = MIN((CGFloat)pw, (CGFloat)cap / MAX(0.0001, side) * (CGFloat)ph);
+            if (capPx < 1) capPx = 1;
+            size_t capI = (size_t)capPx;
+            if (capI > pw) capI = pw;
+            CGRect pxLeft = CGRectMake(0, 0, (CGFloat)capI, (CGFloat)ph);
+            CGRect pxRight = CGRectMake((CGFloat)(pw - capI), 0, (CGFloat)capI, (CGFloat)ph);
+            CGImageRef leftCG = CGImageCreateWithImageInRect(cg, pxLeft);
+            CGImageRef rightCG = CGImageCreateWithImageInRect(cg, pxRight);
+            if (leftCG != NULL) {
+                UIImage *leftImg = [UIImage imageWithCGImage:leftCG scale:asset.scale orientation:UIImageOrientationUp];
+                [leftImg drawInRect:CGRectMake(rect.origin.x, rect.origin.y, cap, side)];
+                CGImageRelease(leftCG);
+            }
+            if (rightCG != NULL) {
+                UIImage *rightImg = [UIImage imageWithCGImage:rightCG scale:asset.scale orientation:UIImageOrientationUp];
+                [rightImg drawInRect:CGRectMake(rect.origin.x + rect.size.width - cap, rect.origin.y, cap, side)];
+                CGImageRelease(rightCG);
+            }
+        }
+    }
 }
 
 // 底板：系统给了盒子（它自己的角标图尺寸）时，把素材**按它自己的形状**渲染进那个盒子：
@@ -520,10 +661,10 @@ UIImage *TCPThemedBadgeBackgroundInBox(CGFloat scale, CGSize box) {
     if (box.width <= naturalWidth + 0.5) {
         TCPDrawAssetAspectFitted(asset, CGRectMake(0, 0, box.width, box.height));
     } else {
-        CGFloat cap = TCPBadgeCapInset(asset);
-        UIImage *stretchable = [asset resizableImageWithCapInsets:UIEdgeInsetsMake(0, cap, 0, cap)
-                                                     resizingMode:UIImageResizingModeStretch];
-        [stretchable drawInRect:CGRectMake(0, 0, box.width, box.height)];
+        // 1.0.7：不再用 resizableImageWithCapInsets 横向拉伸中间段 ——
+        // 圆形素材被拉成椭圆（用户「角标素材变形了是异形不是圆形的」）。
+        // 改成 iOS 那套圆头胶囊：两端圆头原样，中间填本色。
+        TCPDrawBadgePill(asset, CGRectMake(0, 0, box.width, box.height));
     }
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
@@ -593,10 +734,9 @@ UIImage *TCPThemedBadgeTextImage(NSString *text, UIFont *font, CGFloat scale, CG
         // 一个数字：素材按自然比例铺满高度，形状原样（正方形素材 → 还是正圆）。
         [asset drawInRect:CGRectMake((width - naturalWidth) / 2.0, 0, naturalWidth, side)];
     } else {
-        CGFloat cap = TCPBadgeCapInset(asset);
-        UIImage *stretchable = [asset resizableImageWithCapInsets:UIEdgeInsetsMake(0, cap, 0, cap)
-                                                     resizingMode:UIImageResizingModeStretch];
-        [stretchable drawInRect:canvas];
+        // 多个数字：1.0.7 改用圆头胶囊（两端圆头原样 + 中间本色），不再横向拉伸中间段 ——
+        // 25×25 的圆形素材被拉成 32×25 的椭圆，就是用户说的「变形、是异形不是圆形的」。
+        TCPDrawBadgePill(asset, canvas);
     }
     CGRect textRect = CGRectMake((width - textSize.width) / 2.0,
                                  (side - textSize.height) / 2.0,

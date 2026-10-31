@@ -279,5 +279,34 @@ __attribute__((constructor)) static void TCPInitialize(void) {
                 TCPRunCensusAndWrite();
             });
         }
+
+        // 1.0.7：时钟图标主动刷新。
+        // 为什么不能只靠钩子：iOS 16.7 的 SBHClockApplicationIconImageView 从不重新 layout
+        // （1.0.6 装机实测 clockv{look=0}），所以挂的 layoutSubviews 钩子一次都没触发。
+        // 这里每 30 秒自己去找屏幕上的时钟视图并重画一次 —— 指针按当前时间重画，因此是活的。
+        if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"]) {
+            for (NSNumber *delay in @[ @3.0, @12.0 ]) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                             (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
+                               dispatch_get_main_queue(), ^{
+                    TCPClockTick();
+                });
+            }
+            // 文件级静态持有：dispatch_source_t 在 ARC 下是对象，放局部变量会被释放并取消
+            // （0.9.17 那次 tick=0 就是这个原因）。
+            static dispatch_source_t sClockTimer = nil;
+            if (sClockTimer == nil) {
+                sClockTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                                    dispatch_get_main_queue());
+                if (sClockTimer != nil) {
+                    dispatch_source_set_timer(sClockTimer,
+                                              dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30.0 * NSEC_PER_SEC)),
+                                              (uint64_t)(30.0 * NSEC_PER_SEC),
+                                              (uint64_t)(2.0 * NSEC_PER_SEC));
+                    dispatch_source_set_event_handler(sClockTimer, ^{ TCPClockTick(); });
+                    dispatch_resume(sClockTimer);
+                }
+            }
+        }
     }
 }
