@@ -78,18 +78,31 @@ else
   say "③ 崩溃      : 读不到 $CRASHDIR"; [ "$rc" = 0 ] && rc=9
 fi
 
-# ④ 插件在不在跑：tick 两次读数
+# ④ 插件在不在跑：tick 两次读数。
+# ⚠️ tick 有 60 秒写盘节流（状态没变时最多旧 60 秒），间隔太短必然误判「不动」。
+#    所以先等 FALLBACK 秒重读一次；仍不动才判死。默认 7 秒快判不行就补 70 秒；
+#    SAFEMODE_CHECK_FAST=1 可强制只做快判（自己知道在测什么时才用）。
+TICK_WAIT=${SAFEMODE_CHECK_TICK_WAIT:-7}
 t1=$(sh "$PROJ/scripts/device.sh" read com.apple.springboard ThemeCorePlusLayout 2>/dev/null |
   sed -n 's/.*tick=\([0-9]*\).*/\1/p' | head -1)
-sleep 7
+sleep "$TICK_WAIT"
 t2=$(sh "$PROJ/scripts/device.sh" read com.apple.springboard ThemeCorePlusLayout 2>/dev/null |
   sed -n 's/.*tick=\([0-9]*\).*/\1/p' | head -1)
 if [ -z "$t1" ]; then
   say "④ 插件      : 没有 ThemeCorePlusLayout 键 ← 这个进程没跑过带布局代码的版本（或注入没生效）"
   [ "$rc" = 0 ] && rc=3
 elif [ "$t1" = "$t2" ]; then
-  say "④ 插件      : tick=$t1 → $t2 不动 ← 定时器没活（或进程没在跑）"
-  [ "$rc" = 0 ] && rc=3
+  # 快判不动 → 按 60 秒节流再等 70 秒，别拿 7 秒的读数下结论
+  say "④ 插件      : tick=$t1 → $t2 不动，再等 70 秒（tick 有 60 秒写盘节流）…"
+  sleep 70
+  t3=$(sh "$PROJ/scripts/device.sh" read com.apple.springboard ThemeCorePlusLayout 2>/dev/null |
+    sed -n 's/.*tick=\([0-9]*\).*/\1/p' | head -1)
+  if [ -n "$t3" ] && [ "$t3" != "$t1" ]; then
+    say "④ 插件      : tick=$t1 → $t3 在涨（活；快判只是撞上节流）"
+  else
+    say "④ 插件      : tick=$t1 → ${t3:-?} 70 秒仍不动 ← 定时器真的没活（或进程没在跑）"
+    [ "$rc" = 0 ] && rc=3
+  fi
 else
   say "④ 插件      : tick=$t1 → $t2 在涨（活）"
 fi
