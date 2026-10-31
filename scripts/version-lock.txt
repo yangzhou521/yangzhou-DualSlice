@@ -32,11 +32,11 @@ deb_sha256=
 #             于是「找到类但没有名字匹配的方法」被伪装成「什么都没找到」（probe 保持初始值 `-`）。
 #             Release themecoreplus-v0.9.25，deb 142772 B，sha256 108b7a92…，
 #             CI run 41170666488（提交 96225051，success；前一个 run 41170405550 失败于 Layout.m:453 少一个 `]`）。
-#   0.9.26 = 角标新版本（6c78afa4）：在 0.9.24 基础上补一步 —— ourHost 本身是装着我们那张图的
-#             UIImageView 时，连 `layer.contents` 一起清（UIKit 按 image 重渲染，我们的图不丢）；
-#             新增计数 → 诊断 `sys{…,host=N}`。只改 ThemeCorePlusBadges.m。
-#             Release themecoreplus-v0.9.26，deb 143352 B，deb sha256 03e0dfd6…，
-#             包内 dylib sha256 65d95c9e…（573216 B），CI run 41171106635（commit 8fedd90a，success）。
+#   0.9.26 = 角标 contents 清理（6c78afa4）：ourHost 是装着我们那张图的 UIImageView 时连 layer.contents
+#             一起清 + 诊断 sys{…,host=N}。**用户 2026-10-31 13:20 明确「桌面角标加载正常了，保持现状
+#             不要再动它」→ 0.9.26 撤出待装清单，不装**（当前屏幕上的角标效果是 0.9.23 的，用户满意）。
+#             Release 已发布（run 41171106635 success，deb 143352 B，sha256 03e0dfd6…）但不装；
+#             角标线全面停手，0.9.24/0.9.26 都不装。若日后双层复发再议。
 #   0.9.27 = 图标加载修复（157b2985 在出：Icons.m/Store.m 指纹接线 + 像素统计 memo）。
 #   HUD 1.6.1 = countdownhud-v1.6.1（3e983c10）：弹窗点「立即注销」后由**插件自己** spawn
 #             `<jbroot>/usr/bin/sbreload`（dladdr 推根，退 /usr/bin、/var/jb/usr/bin，再退 SIGTERM 让 launchd 拉起）；
