@@ -158,6 +158,10 @@ static void TCPReload(BOOL refreshImages) {
     TCPInstallClockViewSite();
     TCPRelayoutIcons();
 
+    // 文件夹预览那张拼图（收起状态的 mini 图标）由 SBFolderIconImageCache 缓存：
+    // 主题换上来之后它不会自己重算，于是「打开是主题图标、收起还是原图标」。这里叫它重算一次。
+    TCPFolderCacheRefresh();
+
     // 每次重载记一行「这一轮解析成什么样」，另起一行贴素材快照：面板「运行日志」里看到的就是
     // 这些。出问题时不用看屏幕也能知道插件在干什么、素材认出了几个。
     TCPThemeStore *store = [TCPThemeStore shared];

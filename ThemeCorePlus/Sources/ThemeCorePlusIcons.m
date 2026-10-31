@@ -538,6 +538,10 @@ static void (*sClockLayoutOrig)(id, SEL) = NULL;
 static NSInteger sClockVLook = 0, sClockVHit = 0, sClockVMiss = 0;
 static NSString *sClockVLast = @"-";
 
+// 覆盖层的身份标记：我们自己的 UIImageView 用它认领，找「表盘」时要跳过它，
+// 否则下一拍会把自己盖上去的图当成系统表盘。
+static const NSInteger kTCPClockOverlayTag = 0x7C1C0C4;
+
 // 在视图里找「表盘」：尺寸（点）与本视图大致相等的 UIImageView，或 layer.contents 有图的 CALayer。
 // iOS 16.7 的 SBHClockApplicationIconImageView 表盘可能是 CALayer 自绘（不是 UIImageView）。
 // 返回一个封装：type="imgv" 时 value 是 UIImageView；type="layer" 时 value 是 CALayer。
@@ -545,6 +549,8 @@ static NSDictionary *TCPClockFindFace(UIView *view, NSInteger depth, NSMutableAr
     CGSize bounds = view.bounds.size;
     if (bounds.width < 8) return nil;
     for (UIView *sub in view.subviews) {
+        if (sub.tag == kTCPClockOverlayTag) continue;   // 我们自己盖上去的那张，不算表盘
+
         if (trace != nil && trace.count < 8) {
             NSString *line = [NSString stringWithFormat:@"%@|%.0fx%.0f",
                               NSStringFromClass([sub class]), sub.bounds.size.width, sub.bounds.size.height];
@@ -592,6 +598,22 @@ static UIImageView *TCPClockFindFaceView(UIView *view, NSInteger depth, NSMutabl
     return nil;
 }
 
+static void TCPClockEnsureOverlay(UIView *view, UIImage *themed) {
+    UIImageView *overlay = (UIImageView *)[view viewWithTag:kTCPClockOverlayTag];
+    if (overlay == nil) {
+        overlay = [[UIImageView alloc] initWithFrame:view.bounds];
+        overlay.tag = kTCPClockOverlayTag;
+        overlay.contentMode = UIViewContentModeScaleAspectFit;
+        overlay.userInteractionEnabled = NO;
+        overlay.opaque = NO;
+        [view addSubview:overlay];
+    }
+    if (!CGRectEqualToRect(overlay.frame, view.bounds)) overlay.frame = view.bounds;
+    if (overlay.image != themed) overlay.image = themed;
+    // 系统后来又插进来的层要压回去：每拍都把它提到最上面。
+    if ([view.subviews lastObject] != overlay) [view bringSubviewToFront:overlay];
+}
+
 static void TCPClockViewApply(UIView *view) {
     TCPThemeStore *store = [TCPThemeStore shared];
     if (!store.active || !store.iconsEnabled) return;
@@ -600,14 +622,6 @@ static void TCPClockViewApply(UIView *view) {
 
     NSMutableArray<NSString *> *trace = [NSMutableArray array];
     NSDictionary *faceInfo = TCPClockFindFace(view, 1, trace);
-    if (faceInfo == nil) {
-        __sync_fetch_and_add(&sClockVMiss, 1);
-        // 1.0.6：noface 时把子视图树记下来（最多 8 条），并标注是不是连 CALayer 都没找到。
-        sClockVLast = [NSString stringWithFormat:@"noface|%.0fx%.0f[%@]",
-                       size.width, size.height,
-                       trace.count > 0 ? [trace componentsJoinedByString:@";"] : @"nosub"];
-        return;
-    }
     CGFloat scale = view.window.screen.scale > 0 ? view.window.screen.scale : 2.0;
     UIImage *themed = [store iconImageForBundleID:@"com.apple.mobiletimer"
                                              size:size
@@ -618,7 +632,20 @@ static void TCPClockViewApply(UIView *view) {
         sClockVLast = @"noasset";
         return;
     }
-    
+    if (faceInfo == nil) {
+        // iOS 16.7 实测：SBHClockApplicationIconImageView 的子视图是 0 个（诊断 nosub）——
+        // 表盘和指针是它自己画（drawRect / 自己的 CALayer），既不是 UIImageView 也不是子视图的
+        // layer，前两条路都摸不到。1.0.6 起走第三条路：把主题的时钟图标作为自己的 UIImageView
+        // 盖在最上面。底下系统怎么画都不影响（那张图不透明），每拍再提一次到最前。
+        TCPClockEnsureOverlay(view, themed);
+        __sync_fetch_and_add(&sClockVHit, 1);
+        sClockVLast = [NSString stringWithFormat:@"overlay|layers=%lu|contents=%@|%.0fx%.0f@%.0f",
+                       (unsigned long)(view.layer.sublayers.count),
+                       view.layer.contents ? @"y" : @"n",
+                       themed.size.width, themed.size.height, scale];
+        return;
+    }
+
     NSString *faceType = faceInfo[@"type"];
     if ([@"imgv" isEqualToString:faceType]) {
         // 路径 A：UIImageView（旧版本/iOS 15 及以下）
@@ -632,15 +659,16 @@ static void TCPClockViewApply(UIView *view) {
         // 路径 B：CALayer（iOS 16+ 自绘表盘）
         CALayer *faceLayer = faceInfo[@"value"];
         UIView *host = faceInfo[@"host"];
+        CGImageRef themedCG = themed.CGImage;
         // 避免重复设置同一张图
         CFTypeRef currentContents = (__bridge CFTypeRef)faceLayer.contents;
         if (currentContents) {
             CFTypeID currentType = CFGetTypeID(currentContents);
-            if (currentType == CGImageGetTypeID() && currentContents == (__bridge CFTypeRef)themed.CGImage) {
+            if (currentType == CGImageGetTypeID() && currentContents == (CFTypeRef)themedCG) {
                 return;
             }
         }
-        faceLayer.contents = (__bridge id)themed.CGImage;
+        faceLayer.contents = (__bridge id)themedCG;
         __sync_fetch_and_add(&sClockVHit, 1);
         sClockVLast = [NSString stringWithFormat:@"layer:%@|host:%@|%.0fx%.0f@%.0f",
                        NSStringFromClass([faceLayer class]),
@@ -730,6 +758,68 @@ static NSString *TCPFolderIconImageViewMethods(void) {
     return names.count > 0 ? [names componentsJoinedByString:@","] : @"nohit";
 }
 
+// —— 文件夹预览拼图的缓存（收起状态的 mini 图标）——
+//
+// 收起时那张「3×3 mini 图标」的图不是几个独立的图标视图，而是 SBFolderIconImageCache
+// 合出来并缓存的一张图（诊断：_SBIconGridWrapperView 手里 61×61 的图 = stock）。
+// 所以「打开文件夹是主题图标、收起还是原图标」最可能的原因不是我们没挂上站，而是这张拼图
+// 在我们出图之前就合好并缓存了，之后没人叫它重算。
+// 这里做两件事：① 把缓存类自己声明的相关方法名记进诊断（下一版据此写死正确的重算方法）；
+// ② 软调用一组常见的「重算/清缓存」零参数方法，主题生效后让拼图重算一次。
+// 全是 respondsToSelector + 参数个数检查 + @try：方法名哪个版本变了只是不做事，不会崩。
+static NSString *sFolderCacheLast = @"-";
+
+static NSString *TCPFolderCacheMethods(void) {
+    Class cls = NSClassFromString(@"SBFolderIconImageCache");
+    if (cls == Nil) return @"nocls";
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(cls, &count);
+    for (unsigned int i = 0; methods != NULL && i < count; i++) {
+        if (method_getNumberOfArguments(methods[i]) != 2) continue;   // 只关心零参数（self+SEL）
+        NSString *name = NSStringFromSelector(method_getName(methods[i]));
+        if ([name containsString:@"image"] || [name containsString:@"reload"] ||
+            [name containsString:@"invalid"] || [name containsString:@"refresh"] ||
+            [name containsString:@"update"] || [name containsString:@"purge"]) {
+            if (names.count < 12) [names addObject:name];
+        }
+    }
+    if (methods != NULL) free(methods);
+    return names.count > 0 ? [names componentsJoinedByString:@","] : @"nohit";
+}
+
+void TCPFolderCacheRefresh(void) {
+    if (![NSThread isMainThread]) return;
+    TCPThemeStore *store = [TCPThemeStore shared];
+    if (!store.active || !store.iconsEnabled) { sFolderCacheLast = @"inactive"; return; }
+    Class cls = NSClassFromString(@"SBFolderIconImageCache");
+    if (cls == Nil) { sFolderCacheLast = @"nocls"; return; }
+    id cache = nil;
+    for (NSString *name in @[ @"sharedInstance", @"sharedCache", @"defaultCache",
+                              @"sharedImageCache" ]) {
+        SEL sel = NSSelectorFromString(name);
+        if (![cls respondsToSelector:sel]) continue;
+        cache = ((id (*)(id, SEL))objc_msgSend)((id)cls, sel);
+        if (cache != nil) break;
+    }
+    if (cache == nil) { sFolderCacheLast = @"nocache"; return; }
+    NSMutableArray<NSString *> *done = [NSMutableArray array];
+    for (NSString *name in @[ @"reloadImagesForAllFolderIcons", @"reloadImagesForAllIcons",
+                              @"reloadAllImages", @"invalidateAllImages", @"invalidate",
+                              @"removeAllImages", @"purgeCache", @"clearCache" ]) {
+        SEL sel = NSSelectorFromString(name);
+        Method m = class_getInstanceMethod([cache class], sel);
+        if (m == NULL || method_getNumberOfArguments(m) != 2) continue;   // 只调零参数版本
+        @try {
+            ((void (*)(id, SEL))objc_msgSend)(cache, sel);
+            [done addObject:name];
+        } @catch (NSException *e) {
+            [done addObject:[name stringByAppendingString:@"!ex"]];
+        }
+    }
+    sFolderCacheLast = done.count > 0 ? [done componentsJoinedByString:@","] : @"nomethod";
+}
+
 void TCPProbeFolderViews(void) {
     if (![NSThread isMainThread]) return;
     Class folderClass = NSClassFromString(@"SBFolderIconImageView");
@@ -772,13 +862,15 @@ void TCPProbeFolderViews(void) {
         }
         [stack addObjectsFromArray:view.subviews];
     }
+    // 采完样再叫缓存重算：主题刚上来时那张拼图是缓存的旧图，重算之后下一轮普查才看得到变化。
+    TCPFolderCacheRefresh();
 }
 
 NSString *TCPFolderProbeReport(void) {
-    return [NSString stringWithFormat:@"folderv{n=%ld,s=[%@],m=%@}", (long)sFolderViewCount,
+    return [NSString stringWithFormat:@"folderv{n=%ld,s=[%@],m=%@,cache=%@,cm=%@}", (long)sFolderViewCount,
             sFolderViewSamples.count > 0
                 ? [sFolderViewSamples componentsJoinedByString:@";"] : @"-",
-            sFolderMethods];
+            sFolderMethods, sFolderCacheLast, TCPFolderCacheMethods()];
 }
 
 // —— 视图层：屏幕上到底挂了什么 ——

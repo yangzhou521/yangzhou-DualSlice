@@ -144,6 +144,8 @@ NSString *TCPClockViewProbeReport(void);
 // 独立的 SBIconImageView，所以显示层站摸不到。这里只读地把它和它的子视图记进诊断，不碰状态。
 void TCPProbeFolderViews(void);
 NSString *TCPFolderProbeReport(void);
+// 让 SBFolderIconImageCache 重算收起状态的拼图（主题生效后调用，否则那张图一直是启动时的旧图）。
+void TCPFolderCacheRefresh(void);
 // 普查用：屏幕上某张角标图是不是我们合成的（只读）。
 BOOL TCPBadgeIsOurImage(UIImage *image);
 // 桌面图标布局的备份/恢复（用户 2026-10-31 05:30）：注销或 SpringBoard 崩溃后保住之前的图标布局。
