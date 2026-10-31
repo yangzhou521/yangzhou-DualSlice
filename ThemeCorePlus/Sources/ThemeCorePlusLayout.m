@@ -2,22 +2,32 @@
 //  ThemeCorePlusLayout.m —— 桌面图标布局的备份与恢复。
 //
 //  用户 2026-10-31 05:30：「保存图标布局，注销后和 SpringBoard 崩溃后，保留之前 App 桌面图标的布局」。
+//  用户 2026-10-31 09:07 再报「图标不保存」—— 0.9.17 的诊断一直是 lay{tick=0}，见下面第 3 条。
 //
 //  病灶：桌面布局存在 /var/mobile/Library/SpringBoard/IconState.plist，只有 SpringBoard
-//  正常收尾时才会写盘。注销（sbreload）来得急、崩溃更不用说，那一份没写下去 ——
-//  下次启动 SpringBoard 拿到的就是上一次的旧布局，或者自己重排一遍。
+//  自己保存时才会写盘。注销（sbreload）来得急、崩溃更不用说，那一份可能停在几分钟前 ——
+//  下次启动 SpringBoard 拿到的就是旧布局。
 //
-//  做法两步，都不碰 UIKit，所以在 dyld 构造函数阶段做是安全的：
-//    1) 恢复：SpringBoard 启动最早的时刻（构造函数）把备份放回原位。此刻 SBIconModel
-//       还没建、还没读这个文件，所以放回去的就是它读到的。
-//    2) 备份：系统每次自己保存布局（-[SBIconModel saveIconState] 一族）之后立刻同步一份；
-//       另有 20 秒一次的 mtime 兜底，万一某个系统版本不走那个方法也跟得上。
+//  三步，都不碰 UIKit，所以在 dyld 构造函数阶段做是安全的：
+//    1) 恢复：SpringBoard 启动最早的时刻（构造函数）比较「系统那份」与「备份」——
+//       系统那份读得出来、而且与备份内容一致 → 一个字节都不动（keepsource）；
+//       系统那份不见了 / 读不出来 → 用备份回填；备份更新（崩溃前系统没来得及写）→ 用备份回填。
+//    2) 系统保存布局时跟着存一份（-saveIconState 一族，哪个存在挂哪个，诊断 site= 里能看到）。
+//    3) 5 秒一拍的主线程定时器（0.9.18 修）：
+//       · 源文件比备份新 → 跟存；
+//       · 活的 SBIconModel 摆位签名变了（用户动过图标）而系统还没写盘 → 主动让它写，再跟存。
+//
+//  0.9.17 及以前 tick 恒为 0 的原因：dispatch_source_t 在 ARC 下是对象，
+//  原来把它存在 TCPLayoutInstall() 的局部变量里 —— 函数返回即被释放，源随之被取消，
+//  handler 一次都没跑过（恢复能跑是因为它是同步调用，所以 sav 只有启动那一次）。
+//  现在源存在文件级静态变量 sLayoutTimer 里，活到进程结束。
 //
 //  备份位置：/var/mobile/Library/ThemeCorePlus/IconState.backup.plist
 //  （SpringBoard 以 mobile 身份运行，这个目录它写得了；CountdownHUD 也在这个目录下写过请求文件。）
 //
 #import "ThemeCorePlusHooks.h"
 #import <objc/runtime.h>
+#import <objc/message.h>
 
 static NSString *const TCPLayoutSourcePath = @"/var/mobile/Library/SpringBoard/IconState.plist";
 static NSString *const TCPLayoutBackupDir  = @"/var/mobile/Library/ThemeCorePlus";
@@ -26,7 +36,38 @@ static NSString *const TCPLayoutBackupPath = @"/var/mobile/Library/ThemeCorePlus
 static volatile int sLayoutRestored = 0;
 static volatile int sLayoutSaved = 0;
 static volatile int sLayoutTicks = 0;
+static volatile int sLayoutForced = 0;
 static NSString *sLayoutLast = @"-";
+
+// 挂上的保存站（诊断 site= 用的就是这里）。
+#define TCPLayoutMaxSlots 6
+typedef struct {
+    Class cls;
+    SEL sel;
+    IMP orig;
+} TCPLayoutSlot;
+static TCPLayoutSlot sLayoutSlots[TCPLayoutMaxSlots];
+static int sLayoutSlotCount = 0;
+static NSString *sLayoutSite = @"none";
+
+// 定时器必须由本文件长期持有（见文件头第 3 条）。
+static dispatch_source_t sLayoutTimer = NULL;
+
+// 活的模型摆位签名：只用来判断「用户动过图标」，不做任何写入。
+static NSString *sLayoutSignature = nil;
+
+static id TCPLayoutLockObject(void) {
+    static id lock = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ lock = [[NSObject alloc] init]; });
+    return lock;
+}
+
+static void TCPLayoutNote(NSString *text) {
+    @synchronized (TCPLayoutLockObject()) {
+        sLayoutLast = text ?: @"-";
+    }
+}
 
 static BOOL TCPLayoutCopy(NSString *from, NSString *to) {
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -44,10 +85,22 @@ static void TCPLayoutBackup(NSString *why) {
                         error:NULL];
     if (TCPLayoutCopy(TCPLayoutSourcePath, TCPLayoutBackupPath)) {
         __sync_fetch_and_add(&sLayoutSaved, 1);
-        sLayoutLast = [NSString stringWithFormat:@"saved:%@", why];
+        TCPLayoutNote([NSString stringWithFormat:@"saved:%@", why]);
     } else {
-        sLayoutLast = [NSString stringWithFormat:@"savefail:%@", why];
+        TCPLayoutNote([NSString stringWithFormat:@"savefail:%@", why]);
     }
+}
+
+// 源文件比备份新才存（定时器每拍都调，没变就不写盘）。
+static void TCPLayoutBackupIfNewer(NSString *why) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSDictionary *source = [fm attributesOfItemAtPath:TCPLayoutSourcePath error:NULL];
+    NSDictionary *backup = [fm attributesOfItemAtPath:TCPLayoutBackupPath error:NULL];
+    NSDate *sourceDate = source[NSFileModificationDate];
+    NSDate *backupDate = backup[NSFileModificationDate];
+    if (sourceDate == nil) return;
+    if (backupDate != nil && [sourceDate compare:backupDate] != NSOrderedDescending) return;
+    TCPLayoutBackup(why);
 }
 
 // 备份能不能当布局用：必须是一份读得出来的 plist。坏文件绝不往 SpringBoard 嘴里塞 ——
@@ -62,39 +115,197 @@ static BOOL TCPLayoutUsable(NSString *path) {
     return plist != nil;
 }
 
+static BOOL TCPLayoutSameContents(void) {
+    NSData *source = [NSData dataWithContentsOfFile:TCPLayoutSourcePath];
+    NSData *backup = [NSData dataWithContentsOfFile:TCPLayoutBackupPath];
+    if (source == nil || backup == nil) return NO;
+    return [source isEqualToData:backup];
+}
+
+static BOOL TCPLayoutNewer(NSString *path, NSString *than) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSDate *a = [fm attributesOfItemAtPath:path error:NULL][NSFileModificationDate];
+    NSDate *b = [fm attributesOfItemAtPath:than error:NULL][NSFileModificationDate];
+    if (a == nil) return NO;
+    if (b == nil) return YES;
+    return [a compare:b] == NSOrderedDescending;
+}
+
 // 把备份放回原位（只在 SpringBoard 启动最早的时刻调用一次）。
 //
-// 0.9.17 改：**只在「系统那份布局不见了 / 读不出来」时才回填**。
-// 原来是无条件覆盖 —— 用户 2026-10-31 08:37 报「桌面图标注销没有保存功能」：
-// 备份停在 05:23，此后每次注销启动都把 05:23 的旧布局糊回 IconState.plist，
-// 用户改过的摆位（以及新装的图标）每注销一次丢一次。回填是给「崩溃/文件损坏」兜底的，
-// 不是每次开机都强制回滚；系统自己有文件、而且读得出来，就一个字节都不许动。
+// 0.9.17 起不再无条件覆盖（用户 2026-10-31 08:37 报「图标注销没有保存」就是无条件覆盖造成的：
+// 旧备份每次启动都把用户改过的摆位糊回去）。0.9.18 加一条对称的：**备份比系统那份新**
+// （崩溃前系统没来得及写盘）才用备份回填 —— 内容相同则一个字节都不动。
 static void TCPLayoutRestore(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
-    if (![fm fileExistsAtPath:TCPLayoutBackupPath]) { sLayoutLast = @"nobackup"; return; }
-    if ([fm fileExistsAtPath:TCPLayoutSourcePath]) {
-        if (TCPLayoutUsable(TCPLayoutSourcePath)) {
-            // 系统那份好着 —— 以它为准，顺手把备份刷新成这一份（下次真出事回填的就是最新的）。
-            sLayoutLast = @"keepsource";
-            TCPLayoutBackup(@"startup");
+    if (![fm fileExistsAtPath:TCPLayoutBackupPath]) { TCPLayoutNote(@"nobackup"); return; }
+    if (!TCPLayoutUsable(TCPLayoutBackupPath)) { TCPLayoutNote(@"backupbad"); return; }
+
+    BOOL hasSource = [fm fileExistsAtPath:TCPLayoutSourcePath];
+    if (hasSource && TCPLayoutUsable(TCPLayoutSourcePath)) {
+        if (TCPLayoutSameContents()) { TCPLayoutNote(@"keepsource"); return; }
+        if (TCPLayoutNewer(TCPLayoutBackupPath, TCPLayoutSourcePath)) {
+            if (TCPLayoutCopy(TCPLayoutBackupPath, TCPLayoutSourcePath)) {
+                __sync_fetch_and_add(&sLayoutRestored, 1);
+                TCPLayoutNote(@"restored:newer");
+            } else {
+                TCPLayoutNote(@"restorefail");
+            }
             return;
         }
-        sLayoutLast = @"sourcebad";
+        // 系统那份更新 —— 以它为准，顺手把备份刷新成这一份（下次真出事回填的就是最新的）。
+        TCPLayoutBackup(@"startup");
+        TCPLayoutNote(@"keepsource");
+        return;
     }
-    if (!TCPLayoutUsable(TCPLayoutBackupPath)) { sLayoutLast = @"backupbad"; return; }
+    if (hasSource) TCPLayoutNote(@"sourcebad");
+
     if (TCPLayoutCopy(TCPLayoutBackupPath, TCPLayoutSourcePath)) {
         __sync_fetch_and_add(&sLayoutRestored, 1);
-        sLayoutLast = @"restored";
+        TCPLayoutNote(@"restored");
     } else {
-        sLayoutLast = @"restorefail";
+        TCPLayoutNote(@"restorefail");
     }
 }
 
-// 系统自己保存布局时，跟着存一份。
-static void (*tcpLayoutSaveOrig)(id, SEL) = NULL;
+// ── 保存站 ────────────────────────────────────────────────────────────────
+
 static void tcpLayoutSaveHook(id self, SEL _cmd) {
-    if (tcpLayoutSaveOrig != NULL) tcpLayoutSaveOrig(self, _cmd);
+    IMP orig = NULL;
+    for (int i = 0; i < sLayoutSlotCount; i++) {
+        if (sel_isEqual(sLayoutSlots[i].sel, _cmd)) { orig = sLayoutSlots[i].orig; break; }
+    }
+    if (orig != NULL) ((void (*)(id, SEL))orig)(self, _cmd);
     TCPLayoutBackup(@"saveIconState");
+}
+
+// 挂保存站。构造函数里 SBIconModel / SBIconController 可能还没被 dyld 载进来，
+// 所以定时器每一拍都会再试一次，挂上就不再试。
+//
+// 只挂「零参数」的保存方法：钩子签名是 (id, SEL)，带参数的版本（saveIconStateAndWait: 之类）
+// 被系统调用时原参数会被我们丢掉，反而会坏事 —— 那种一律不碰。
+static void TCPLayoutHookSave(void) {
+    if (sLayoutSlotCount > 0) return;
+    NSArray<NSString *> *names = @[ @"saveIconState", @"_saveIconState", @"persistIconState" ];
+    NSArray<NSString *> *classNames = @[ @"SBIconModel", @"SBIconController" ];
+    NSMutableArray<NSString *> *hooked = [NSMutableArray array];
+
+    for (NSString *className in classNames) {
+        Class cls = objc_getClass(className.UTF8String);
+        if (cls == Nil) continue;
+        for (NSString *name in names) {
+            if (sLayoutSlotCount >= TCPLayoutMaxSlots) break;
+            SEL sel = NSSelectorFromString(name);
+            Method method = class_getInstanceMethod(cls, sel);
+            if (method == NULL) continue;
+            if (method_getNumberOfArguments(method) != 2) continue;   // self + _cmd，多一个都不挂
+            IMP orig = NULL;
+            MSHookMessageEx(cls, sel, (IMP)tcpLayoutSaveHook, (IMP *)&orig);
+            if (orig == NULL) continue;
+            sLayoutSlots[sLayoutSlotCount].cls = cls;
+            sLayoutSlots[sLayoutSlotCount].sel = sel;
+            sLayoutSlots[sLayoutSlotCount].orig = orig;
+            sLayoutSlotCount++;
+            [hooked addObject:[NSString stringWithFormat:@"-%@:%@", className, name]];
+        }
+    }
+    sLayoutSite = hooked.count ? [hooked componentsJoinedByString:@","] : @"none";
+}
+
+// ── 活的模型 ──────────────────────────────────────────────────────────────
+
+static id TCPLayoutIconModel(void) {
+    Class controllerClass = objc_getClass("SBIconController");
+    if (controllerClass == Nil) return nil;
+    id controller = nil;
+    for (NSString *selName in @[ @"sharedInstance", @"sharedIconController" ]) {
+        SEL sel = NSSelectorFromString(selName);
+        if (![controllerClass respondsToSelector:sel]) continue;
+        controller = ((id (*)(id, SEL))objc_msgSend)(controllerClass, sel);
+        if (controller != nil) break;
+    }
+    if (controller == nil) return nil;
+    SEL modelSel = NSSelectorFromString(@"iconModel");
+    if (![controller respondsToSelector:modelSel]) return nil;
+    return ((id (*)(id, SEL))objc_msgSend)(controller, modelSel);
+}
+
+// 摆位签名：每个图标的标识 + 位置。用户动过图标它才会变。
+static NSString *TCPLayoutSignature(id model) {
+    @try {
+        SEL leavesSel = NSSelectorFromString(@"leafIcons");
+        if (![model respondsToSelector:leavesSel]) return nil;
+        id leaves = ((id (*)(id, SEL))objc_msgSend)(model, leavesSel);
+        if (leaves == nil) return nil;
+
+        NSMutableArray<NSString *> *parts = [NSMutableArray array];
+        for (id icon in leaves) {
+            NSString *ident = nil;
+            for (NSString *key in @[ @"leafIdentifier", @"uniqueIdentifier" ]) {
+                @try {
+                    id value = [icon valueForKey:key];
+                    if ([value isKindOfClass:[NSString class]]) { ident = value; break; }
+                } @catch (NSException *e) {}
+            }
+            if (ident == nil) ident = [icon description] ?: @"?";
+            NSString *pos = nil;
+            for (NSString *key in @[ @"indexPath", @"gridPosition" ]) {
+                @try {
+                    id value = [icon valueForKey:key];
+                    if (value != nil) { pos = [value description]; break; }
+                } @catch (NSException *e) {}
+            }
+            [parts addObject:[NSString stringWithFormat:@"%@@%@", ident, pos ?: @"-"]];
+        }
+        [parts sortUsingSelector:@selector(compare:)];
+        return [parts componentsJoinedByString:@"|"];
+    } @catch (NSException *e) {
+        return nil;
+    }
+}
+
+// 让系统自己把当前布局写进 IconState.plist（走我们挂上的那站，会顺带跟存备份）。
+static BOOL TCPLayoutAskSystemToSave(id model) {
+    for (int i = 0; i < sLayoutSlotCount; i++) {
+        SEL sel = sLayoutSlots[i].sel;
+        if (![model respondsToSelector:sel]) continue;
+        @try {
+            ((void (*)(id, SEL))objc_msgSend)(model, sel);
+            return YES;
+        } @catch (NSException *e) {}
+    }
+    SEL fallback = NSSelectorFromString(@"saveIconState");
+    if ([model respondsToSelector:fallback]) {
+        @try {
+            ((void (*)(id, SEL))objc_msgSend)(model, fallback);
+            return YES;
+        } @catch (NSException *e) {}
+    }
+    return NO;
+}
+
+// ── 每 5 秒一拍（主线程） ─────────────────────────────────────────────────
+
+static void TCPLayoutTick(void) {
+    __sync_fetch_and_add(&sLayoutTicks, 1);
+
+    TCPLayoutHookSave();                 // 类晚到也能补挂
+
+    TCPLayoutBackupIfNewer(@"timer");    // 系统自己写过 → 跟存
+
+    id model = TCPLayoutIconModel();
+    if (model == nil) return;
+    NSString *signature = TCPLayoutSignature(model);
+    if (signature == nil) return;
+    NSString *previous = sLayoutSignature;
+    sLayoutSignature = signature;
+    if (previous == nil) return;                         // 第一次只记基线
+    if ([previous isEqualToString:signature]) return;     // 没动过
+
+    if (TCPLayoutAskSystemToSave(model)) {
+        __sync_fetch_and_add(&sLayoutForced, 1);
+        TCPLayoutBackupIfNewer(@"changed");
+    }
 }
 
 void TCPLayoutInstall(void) {
@@ -109,46 +320,29 @@ void TCPLayoutInstall(void) {
     // 1) 恢复。构造函数阶段，早于 SBIconModel 读布局。
     TCPLayoutRestore();
 
-    // 2) 系统保存布局后同步备份。方法名各版本不一样，挂上第一个存在的。
-    Class modelClass = objc_getClass("SBIconModel");
-    if (modelClass != Nil) {
-        NSArray<NSString *> *names = @[ @"saveIconState", @"saveIconStateAndWait",
-                                        @"persistIconState", @"_saveIconState" ];
-        for (NSString *name in names) {
-            SEL selector = NSSelectorFromString(name);
-            if (class_getInstanceMethod(modelClass, selector) == NULL) continue;
-            MSHookMessageEx(modelClass, selector, (IMP)tcpLayoutSaveHook, (IMP *)&tcpLayoutSaveOrig);
-            break;
-        }
-    }
+    // 2) 系统保存布局后同步备份（类没载进来也没关系，定时器每拍补挂）。
+    TCPLayoutHookSave();
 
-    // 3) 兜底：5 秒比一次 mtime，系统改了布局而上面那站没挂上时也能跟上。
-    //    两次 stat 而已，代价可以忽略；窗口越小，崩溃前丢掉的那点改动越少。
-    dispatch_source_t timer =
-        dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
-                               dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
-    if (timer != NULL) {
-        dispatch_source_set_timer(timer,
-                                  dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
-                                  5 * NSEC_PER_SEC,
-                                  2 * NSEC_PER_SEC);
-        dispatch_source_set_event_handler(timer, ^{
-            __sync_fetch_and_add(&sLayoutTicks, 1);
-            NSFileManager *fm = [NSFileManager defaultManager];
-            NSDictionary *source = [fm attributesOfItemAtPath:TCPLayoutSourcePath error:NULL];
-            NSDictionary *backup = [fm attributesOfItemAtPath:TCPLayoutBackupPath error:NULL];
-            NSDate *sourceDate = source[NSFileModificationDate];
-            NSDate *backupDate = backup[NSFileModificationDate];
-            if (sourceDate != nil &&
-                (backupDate == nil || [sourceDate compare:backupDate] == NSOrderedDescending)) {
-                TCPLayoutBackup(@"timer");
-            }
-        });
-        dispatch_resume(timer);
+    // 3) 5 秒一拍：mtime 兜底 + 「动过图标就主动让系统写盘」。
+    //    主队列上跑，所以碰 SBIconModel 是安全的；第一次触发在 5 秒后，不拖慢启动。
+    if (sLayoutTimer == NULL) {
+        sLayoutTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
+                                             dispatch_get_main_queue());
+        if (sLayoutTimer != NULL) {
+            dispatch_source_set_timer(sLayoutTimer,
+                                      dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
+                                      5 * NSEC_PER_SEC,
+                                      1 * NSEC_PER_SEC);
+            dispatch_source_set_event_handler(sLayoutTimer, ^{
+                TCPLayoutTick();
+            });
+            dispatch_resume(sLayoutTimer);
+        }
     }
 }
 
 NSString *TCPLayoutDiagnostics(void) {
-    return [NSString stringWithFormat:@"lay{rst=%d,sav=%d,tick=%d,last=%@}",
-            (int)sLayoutRestored, (int)sLayoutSaved, (int)sLayoutTicks, sLayoutLast];
+    return [NSString stringWithFormat:@"lay{rst=%d,sav=%d,tick=%d,force=%d,site=%@,last=%@}",
+            (int)sLayoutRestored, (int)sLayoutSaved, (int)sLayoutTicks, (int)sLayoutForced,
+            sLayoutSite, sLayoutLast];
 }
