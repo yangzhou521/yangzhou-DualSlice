@@ -60,7 +60,7 @@
 #import <math.h>
 #import <os/log.h>
 
-static NSString *const CHVersion = @"1.5.0";
+static NSString *const CHVersion = @"1.6.0";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 static const NSTimeInterval CHPollInterval = 0.5;
@@ -90,16 +90,33 @@ static os_log_t CHLog(void) {
 
 #pragma mark - HUD 窗口
 
+// v1.6.0：这两个提前声明 —— CHWindow 的 hitTest 要用 gPill 的矩形和 gLinkSession。
+// gLinkSession 为空 = 这条请求没有点击目标，hitTest 一律返回 nil（与 1.5.0 行为一致）。
+static UIView *gPill;
+static NSString *gLinkSession;
+
 // 高于系统 alert（2000），保证盖在 App 与灵动岛之上；并且不吃触摸。
 @interface CHWindow : UIWindow
 @end
 
 @implementation CHWindow
+// v1.6.0：胶囊上挂了一个「跳到发消息的对话」的点击目标时，**只在胶囊那块矩形里**吃触摸，
+// 其余地方照旧返回 nil 穿透（胶囊之外整个屏幕都不受影响）。没有链接目标的老请求
+// （脚本不带 sid）行为与 1.5.0 完全一致：任何地方都不吃触摸。
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    return nil;
+    if (gLinkSession.length == 0 || self.hidden || gPill == nil) {
+        return nil;
+    }
+    if (!CGRectContainsPoint(gPill.frame, point)) {
+        return nil;
+    }
+    return gPill;
 }
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
-    return NO;
+    if (gLinkSession.length == 0 || self.hidden || gPill == nil) {
+        return NO;
+    }
+    return CGRectContainsPoint(gPill.frame, point);
 }
 @end
 
@@ -120,7 +137,6 @@ static os_log_t CHLog(void) {
 @end
 
 static CHWindow *gWindow = nil;
-static UIView *gPill = nil;
 static UILabel *gLabel = nil;
 static NSTimer *gTimer = nil;
 static NSUInteger gRemaining = 0;
@@ -130,6 +146,7 @@ static unsigned long gLastSeconds = 0;
 static BOOL gPlainNotice = NO;   // v1.2.0：「!」开头的标签＝纯文案，不显示「N 秒后」，不跳数字
 static NSUInteger gHaptics = 0;      // v1.4.0：累计震了几次（诊断串 haptic=）
 static NSString *gHapticToken = nil; // v1.4.0：已经为哪条请求震过（同一请求只震一次）
+static unsigned long gTaps = 0;      // v1.6.0：胶囊被点了几次（诊断串 taps=）
 
 // v1.5.0：注销确认弹窗的状态（诊断串里要报，所以和别的 static 放一起）。
 static BOOL gAskMode = NO;              // 这次是弹窗而不是胶囊 → mode=alert
@@ -407,7 +424,7 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
 }
 
 static void CHWriteDiagnostics(void) {
-    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@",
+    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@;link=%@;taps=%lu",
                          CHVersion, gShows, gLastSeconds,
                          gLabelText.length ? gLabelText : @"-",
                          gFontSize,
@@ -416,11 +433,61 @@ static void CHWriteDiagnostics(void) {
                          gAskMode ? @"alert" : (gPlainNotice ? @"plain" : @"count"),
                          gSelfWindowDetail, gIslandWindowDetail,
                          (unsigned long)gHaptics,
-                         (unsigned long)gAlerts, gAnswerDetail];
+                         (unsigned long)gAlerts, gAnswerDetail,
+                         gLinkSession.length ? gLinkSession : @"none",
+                         (unsigned long)gTaps];
     CFPreferencesSetAppValue(CFSTR("CountdownHUDDiagnostics"),
                              (__bridge CFStringRef)summary,
                              kCFPreferencesCurrentApplication);
     CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+}
+
+#pragma mark - 点击胶囊：跳到发消息的那个对话（v1.6.0）
+
+// 手势的 target 必须是对象，所以借一个小类把点击转给 C 函数。
+static void CHHandlePillTap(void);
+
+@interface CHTapTarget : NSObject
+- (void)chTap:(UITapGestureRecognizer *)recognizer;
+@end
+
+@implementation CHTapTarget
+- (void)chTap:(UITapGestureRecognizer *)recognizer {
+    CHHandlePillTap();
+}
+@end
+
+static CHTapTarget *gTapTarget = nil;
+
+static void CHHandlePillTap(void) {
+    if (gLinkSession.length == 0) {
+        return;
+    }
+    NSString *urlString = [NSString stringWithFormat:@"apelin://conversation/%@", gLinkSession];
+    NSURL *url = [NSURL URLWithString:urlString];
+    gTaps += 1;
+    os_log(CHLog(), "pill tapped -> %{public}@ (taps=%lu)",
+           urlString, (unsigned long)gTaps);
+
+    // 先收胶囊再去跳转：HUD 窗口层级 20000000，比任何 App 都高，
+    // 不收起就会一直压在刚打开的 Apelin 上面，直到倒计时自己淡出。
+    if (gTimer != nil) {
+        [gTimer invalidate];
+        gTimer = nil;
+    }
+    if (gWindow != nil) {
+        gWindow.hidden = YES;
+    }
+    gPill.alpha = 1.0;
+    CHWriteDiagnostics();
+
+    if (url != nil) {
+        [[UIApplication sharedApplication] openURL:url
+                                           options:@{}
+                                 completionHandler:^(BOOL success) {
+            os_log(CHLog(), "open %{public}@ -> %d", urlString, (int)success);
+        }];
+    }
 }
 
 #pragma mark - 摆放与绘制
@@ -474,14 +541,15 @@ static BOOL CHEnsureWindow(void) {
     CHWindow *w = [[CHWindow alloc] initWithWindowScene:scene];
     w.windowLevel = CHWindowLevel;
     w.backgroundColor = [UIColor clearColor];
-    w.userInteractionEnabled = NO;
+    // v1.6.0：窗口本身开着交互，但 hitTest 里只在「有链接目标 + 点在胶囊里」时返回胶囊，
+    // 其余一律 nil 穿透 —— 所以不会因为这一改就吃掉屏幕上的触摸。
+    w.userInteractionEnabled = YES;
     w.hidden = YES;
 
-    // 带 rootViewController 的窗口才是「完整」窗口：胶囊加在它内容层之上，
-    // 而且这一层不吃触摸（hitTest 在 CHWindow 里就返回 nil 了）。
+    // 带 rootViewController 的窗口才是「完整」窗口：胶囊加在它内容层之上。
     UIViewController *host = [[UIViewController alloc] init];
     host.view.backgroundColor = [UIColor clearColor];
-    host.view.userInteractionEnabled = NO;
+    host.view.userInteractionEnabled = YES;
     w.rootViewController = host;
 
     if (gPill == nil) {
@@ -489,7 +557,15 @@ static BOOL CHEnsureWindow(void) {
         gPill.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.86];
         gPill.layer.cornerRadius = CHFallbackPillHeight / 2.0;
         gPill.layer.masksToBounds = YES;
-        gPill.userInteractionEnabled = NO;
+        gPill.userInteractionEnabled = YES; // v1.6.0：要能点（真正吃不吃由 CHWindow 的 hitTest 决定）
+
+        if (gTapTarget == nil) {
+            gTapTarget = [[CHTapTarget alloc] init];
+        }
+        UITapGestureRecognizer *tap =
+            [[UITapGestureRecognizer alloc] initWithTarget:gTapTarget action:@selector(chTap:)];
+        tap.cancelsTouchesInView = NO;
+        [gPill addGestureRecognizer:tap];
 
         gLabel = [[UILabel alloc] initWithFrame:gPill.bounds];
         gLabel.textAlignment = NSTextAlignmentCenter;
@@ -553,7 +629,7 @@ static void CHHide(void) {
                      }];
 }
 
-static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain) {
+static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain, NSString *link) {
     if (seconds == 0 || seconds > 600) {
         seconds = plain ? 8 : 5;
     }
@@ -575,6 +651,7 @@ static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain) {
     gLabelText = [label copy];
     gPlainNotice = plain;
     gAskMode = NO;   // v1.5.0：走胶囊就不是弹窗了（诊断串 mode= 要跟着变回来）
+    gLinkSession = [link copy]; // v1.6.0：点胶囊跳到这个对话（空 = 不可点）
     gShows += 1;
 
     CHLayOut();
@@ -803,6 +880,17 @@ static BOOL CHFireWeakHaptic(void) {
     }
 }
 
+// v1.6.0：第 4 段是可选的对话 session id（Apelin 的 UUID 形如 8-4-4-4-12 的十六进制）。
+// 只认这个形状，别的乱内容一律当「没有链接」，免得拼出奇怪的 URL。
+static BOOL CHLooksLikeSessionID(NSString *text) {
+    if (text.length < 8 || text.length > 64) {
+        return NO;
+    }
+    NSCharacterSet *allowed =
+        [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF-"];
+    return [text rangeOfCharacterFromSet:[allowed invertedSet]].location == NSNotFound;
+}
+
 static BOOL CHHandleRequest(NSString *content) {
     NSArray<NSString *> *parts = [content componentsSeparatedByString:@"|"];
     NSUInteger seconds = 5;
@@ -855,6 +943,17 @@ static BOOL CHHandleRequest(NSString *content) {
             seconds = 60;
         }
     }
+    // v1.6.0：第 4 段 = 发这条消息的对话 session id。有它，胶囊就是可点的：
+    // 点一下跳进那个对话（apelin://conversation/<sid>）。没有就维持 1.5.0 的老样子（不吃触摸）。
+    // 弹窗（`?`）模式下不挂链接 —— 那一层是全屏窗口，挂上去只会多出误触。
+    NSString *link = nil;
+    if (!ask && parts.count >= 4) {
+        NSString *candidate =
+            [parts[3] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (CHLooksLikeSessionID(candidate)) {
+            link = candidate;
+        }
+    }
     // v1.4.0：要动设备的动作（注销 / 装包 / 杀进程，也就是非 `!` 的倒计时）先把最弱的震动
     // 打出去 —— 而且是**同一请求只震一次**（同一个 content 在重试时不再震），然后才画胶囊：
     // 先震，屏幕上再出现「N 秒后…」。
@@ -881,7 +980,10 @@ static BOOL CHHandleRequest(NSString *content) {
                 gHapticToken = [content copy];
             }
         }
-        shown = ask ? CHShowAlert(seconds, label) : CHStartCountdown(seconds, label, plain);
+        if (ask) {
+            gLinkSession = nil; // v1.6.0：弹窗模式不挂点击目标
+        }
+        shown = ask ? CHShowAlert(seconds, label) : CHStartCountdown(seconds, label, plain, link);
     };
     if ([NSThread isMainThread]) {
         run();

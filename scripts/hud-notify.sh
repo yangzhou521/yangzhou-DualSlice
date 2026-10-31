@@ -12,8 +12,11 @@
 # 用法（仓库根目录，shell_run 直接跑）：
 #   sh scripts/hud-notify.sh "完成：ThemeControl 设置面板"        # 默认 8 秒
 #   sh scripts/hud-notify.sh 12 "完成：修好注销前同步"           # 12 秒
+#   HUD_SID=<对话 id> sh scripts/hud-notify.sh 8 "完成：…"       # 1.6.0 起：胶囊可点，点一下跳到该对话
 #
 # 手机上看到的形如：胶囊里一行绿字「完成：ThemeControl 设置面板」。
+# 带 HUD_SID 时（CountdownHUD ≥ 1.6.0）胶囊只在自身矩形里吃触摸，点一下用
+# apelin://conversation/<id> 打开那条对话；不带就是老样子（不吃任何触摸）。
 #
 set -eu
 
@@ -41,9 +44,26 @@ if [ ! -d "$REQ_DIR" ]; then
   exit 3
 fi
 
+# v1.6.0：可选的对话 id —— 有它胶囊才可点（点一下跳回发消息的对话）。
+# 只认 UUID 那种形状（十六进制 + 连字符），别的内容一律当没有，免得拼出奇怪的 URL。
+SID="${HUD_SID:-}"
+case "$SID" in
+  ''|*[!0-9a-fA-F-]*) SID="" ;;
+esac
+if [ -n "$SID" ] && { [ "${#SID}" -lt 8 ] || [ "${#SID}" -gt 64 ]; }; then
+  SID=""
+fi
+
 EPOCH=$(date +%s)
-if printf '%s|%s|!%s\n' "$EPOCH" "$WAIT" "$TEXT" > "$REQ" 2>/dev/null; then
-  echo "hud-notify: 已请求胶囊显示 ${WAIT} 秒：$TEXT"
+if [ -n "$SID" ]; then
+  printf '%s|%s|!%s|%s\n' "$EPOCH" "$WAIT" "$TEXT" "$SID" > "$REQ" 2>/dev/null && OK=1 || OK=0
+  SHOWN="${WAIT} 秒（可点 → 对话 $SID）：$TEXT"
+else
+  printf '%s|%s|!%s\n' "$EPOCH" "$WAIT" "$TEXT" > "$REQ" 2>/dev/null && OK=1 || OK=0
+  SHOWN="${WAIT} 秒：$TEXT"
+fi
+if [ "$OK" = 1 ]; then
+  echo "hud-notify: 已请求胶囊显示 $SHOWN"
 else
   echo "hud-notify: 写 $REQ 失败（没装 CountdownHUD，或权限不对）" >&2
   exit 3
