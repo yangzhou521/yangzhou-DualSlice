@@ -119,9 +119,33 @@ static void TCPBadgeSetCleaned(UIView *view, BOOL cleaned) {
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
+// 0.9.24：没收拾干净就留着重试，但要设上限 —— 否则回到「每次布局全扫一遍」的发热。
+// 两条失败路径各用**独立**的计数键，而且只在「自己的成功条件」达成时才归零：
+//   · 等不到我们的图（!sawOurs）→ 看到我们的图才算成功；
+//   · 看到了却清不动（cleared==0）→ 真清动了才算成功。
+// 绝不在 setText:/didMoveToWindow 里清零：系统每轮布局都可能重挂文字/重上屏，
+// 在那里清零等于让闸门永远是开着的（owner 2026-10-31 12:23 指出的坑）。
+static const void *TCPBadgeMissImageKey = &TCPBadgeMissImageKey;   // 连续几张没等到我们的图
+static const void *TCPBadgeStuckKey = &TCPBadgeStuckKey;           // 连续几次没清动
+
+static NSInteger TCPBadgeBumpKey(UIView *view, const void *key) {
+    if (view == nil) return 0;
+    NSInteger n = [objc_getAssociatedObject(view, key) integerValue] + 1;
+    objc_setAssociatedObject(view, key, @(n), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return n;
+}
+
+static void TCPBadgeResetKey(UIView *view, const void *key) {
+    if (view == nil) return;
+    objc_setAssociatedObject(view, key, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+#define TCP_BADGE_GIVE_UP 8
+
 // 把角标收拾成一层：只清「系统底板」的底色，绝不动我们那张图所在的节点。
-// 本机结构（probe 实测）：SBIconBadgeView → backgroundView(SBDarkeningImageView，系统红底)
-// → UIImageView(我们的整图)。所以 backgroundView 是**祖先**，不能藏，只能清色。
+// 本机结构（0.9.22 诊断实测）：SBIconBadgeView → backgroundView(SBDarkeningImageView)，
+// **只有这 1 个子视图**，我们的整图就套在它身上（census 里每格 badge 都是 1 个 subview）。
+// 所以「target == ourHost」不能整条跳过，否则系统纯色底板永远留在原地。
 // 判据很硬：**树里一张我们的图都没有就什么都不做** —— 宁可多留一层，也绝不把角标清成空白。
 static void TCPBadgeHideSystemBackground(UIView *view) {
     if (view == nil || !sBadgeComposedServed || sBadgeHiding) return;
@@ -152,9 +176,15 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
     }
     if (!sawOurs) {
         sBadgeSysWait++;   // 图还没换上来（或这一格没主题素材），先不动
+        // 连续 TCP_BADGE_GIVE_UP 次等不到我们的图 → 放弃这一格，免得每帧走一遍子树
+        if (TCPBadgeBumpKey(view, TCPBadgeMissImageKey) >= TCP_BADGE_GIVE_UP) {
+            TCPBadgeSetCleaned(view, YES);
+        }
         sBadgeHiding = NO;
         return;
     }
+    // 看到我们的图了 → 「等不到图」那条计数归零（它只等这一个成功条件）
+    TCPBadgeResetKey(view, TCPBadgeMissImageKey);
 
     // 底板候选：KVC 的 backgroundView，以及类名带 Darkening 的直接子视图。
     NSMutableArray<UIView *> *targets = [NSMutableArray array];
@@ -171,32 +201,39 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
     NSUInteger cleared = 0;
     NSMutableArray<NSString *> *names = [NSMutableArray array];
     for (UIView *target in targets) {
-        // 这层就是我们的图（或装着它）—— 一个字节都不许动
-        if (target == ourHost || TCPBadgeLayerIsOurs(target.layer)) continue;
+        // 0.9.24：本机每格角标只有 1 个子视图，就是 backgroundView(SBDarkeningImageView)，
+        // 我们的整图套在它身上 → 「target == ourHost」不能整条跳过，否则系统纯色底板永远留着。
+        BOOL isOurHost = (target == ourHost);
+        // 装着我们的图、又不是我们的宿主 → 一个字节都不许动（原有语义保留）
+        if (!isOurHost && TCPBadgeLayerIsOurs(target.layer)) continue;
         BOOL touched = NO;
+        // 底色两种写法一律清：只改颜色、不动图，对「图与底板是同一只 view」也安全
         UIColor *color = target.backgroundColor;
         if (color != nil && CGColorGetAlpha(color.CGColor) > 0.01) {
             target.backgroundColor = [UIColor clearColor];
             touched = YES;
-        }
-        if ([target isKindOfClass:[UIImageView class]]) {
-            UIImage *image = ((UIImageView *)target).image;
-            if (image != nil && !TCPBadgeImageIsOurs(image)) {
-                ((UIImageView *)target).image = nil;
-                touched = YES;
-            }
         }
         CALayer *layer = target.layer;
         if (layer.backgroundColor != NULL && CGColorGetAlpha(layer.backgroundColor) > 0.01) {
             layer.backgroundColor = NULL;
             touched = YES;
         }
-        // SBDarkeningImageView 的红底/暗化底是画在 layer.contents 里的：只清 backgroundColor 时
-        // 它自己那张图还在，屏幕上就是「我们的角标 + 系统红底」两层（用户 2026-10-31 04:53
-        // 「一个图标二层、一个图标一层」）。contents 不是我们的图就一并清掉。
-        if (layer.contents != NULL && !TCPBadgeLayerIsOurs(layer)) {
-            layer.contents = nil;
-            touched = YES;
+        // 清图 / 清 contents 只对「不是我们那张图宿主」的目标做（碰 ourHost 会把我们自己的图清掉）
+        if (!isOurHost) {
+            if ([target isKindOfClass:[UIImageView class]]) {
+                UIImage *image = ((UIImageView *)target).image;
+                if (image != nil && !TCPBadgeImageIsOurs(image)) {
+                    ((UIImageView *)target).image = nil;
+                    touched = YES;
+                }
+            }
+            // SBDarkeningImageView 的红底/暗化底是画在 layer.contents 里的：只清 backgroundColor 时
+            // 它自己那张图还在，屏幕上就是「我们的角标 + 系统红底」两层（用户 2026-10-31 04:53
+            // 「一个图标二层、一个图标一层」）。contents 不是我们的图就一并清掉。
+            if (layer.contents != NULL && !TCPBadgeLayerIsOurs(layer)) {
+                layer.contents = nil;
+                touched = YES;
+            }
         }
         if (touched) cleared++;
         if (names.count < 6) {
@@ -233,7 +270,14 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
     sBadgeSysTree = names.count > 0 ? [names componentsJoinedByString:@","] : @"-";
 
     // 收拾完了：挂标记，后面每一次布局都在上面那个早退处返回（0.9.18）。
-    TCPBadgeSetCleaned(view, YES);
+    // 0.9.24：**只有真清动过**才挂标记；cleared == 0 说明系统底板这一刻还没画上来（它是延迟画的），
+    // 挂上去就等于永久放弃这一格 —— 那正是「一个图标二层、一个图标一层」的来源。
+    if (cleared > 0) {
+        TCPBadgeResetKey(view, TCPBadgeStuckKey);   // 清动了 → 「清不动」计数归零
+        TCPBadgeSetCleaned(view, YES);
+    } else if (TCPBadgeBumpKey(view, TCPBadgeStuckKey) >= TCP_BADGE_GIVE_UP) {
+        TCPBadgeSetCleaned(view, YES);   // 连续 8 次仍清不动 → 放弃这一格，别没完没了地扫
+    }
     sBadgeHiding = NO;
 }
 
@@ -472,6 +516,8 @@ static void TCPBadgeConfigHook(id self, SEL _cmd, NSString *text, BOOL highlight
     sBadgeConfigCalls++;
     // 文字换了 → 角标要重新收拾一遍（0.9.18：布局那条路默认早退，只有这里放行）。
     TCPBadgeSetCleaned((UIView *)self, NO);
+    // 0.9.24：这里**不清零**任何失败计数 —— 系统每轮布局都可能重挂文字，
+    // 在这里清零等于让「连续 N 次清不动才放弃」的闸门永远开着（owner 2026-10-31 12:23 指出）。
     TCPBadgeHideSystemBackground(self);
 }
 

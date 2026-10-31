@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.23
+  VERSION: 0.9.24
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.23)
+    name: Release (themecoreplus-v0.9.24)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,10 +185,27 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.23
-          name: ThemeCorePlus v0.9.23
+          tag_name: themecoreplus-v0.9.24
+          name: ThemeCorePlus v0.9.24
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.23 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.24 —— MarkTheme 式的主题引擎，作者 yangzhou。
+
+            v0.9.24（**角标双层修复**）：诊断 `sys{…,tree=SBDarkeningImageView}` 一直没有 `*`，
+            即系统纯色底板从来没被清动过。根因是本机每格角标只有 1 个子视图
+            （`backgroundView` = `SBDarkeningImageView`），我们的整图就套在它身上，
+            而清理逻辑第一句就把 `target == ourHost` 整条跳过 → 底板永远留在屏幕上。
+
+            1. `target == ourHost` 只跳过「清 `image` / 清 `layer.contents`」（碰这两样会清掉
+               我们自己的图），`backgroundColor` 与 `layer.backgroundColor` 照清。
+            2. 只有真清动过（`cleared > 0`）才挂「已收拾」标记；没清动就留给下一次布局重试
+               —— 原来无条件挂标记，导致「第一次扫时系统底板还没画上来」的格子永久双层，
+               正是「一个图标二层、一个图标一层」的来源。
+            3. 重试有上限（连续 8 次仍无进展就放弃这一格），且「等不到我们的图」与
+               「看到了却清不动」用**两个独立计数**，各自只在自身成功条件达成时归零，
+               绝不在 `setText:` / `didMoveToWindow` 清零（那两处在滚动时频繁触发，
+               一清零闸门就永开，等于恢复每帧全扫的发热）。
+            4. 验收：`sys{…,tree=…*…}` 出现 `*` = 真清动过；仍双层则说明底板与我们那张图
+               在同一张 `layer.contents` 里，需下一轮改「图另挂兄弟视图 + 整只隐藏」。
 
             v0.9.23（**纯诊断版**，逻辑与 0.9.22 完全相同，只为了让「挂不上站」可读）：
 
@@ -368,7 +385,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.23/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.24/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'
