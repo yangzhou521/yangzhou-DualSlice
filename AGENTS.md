@@ -159,7 +159,8 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   tag `countdownhud-v1.6.0`，deb 20780 B），`/Library/MobileSubstrate/DynamicLibraries/CountdownHUD.dylib`
   里能搜到 `apelin://conversation/`、`link=…;taps=`；SpringBoard 仍在跑 **v1.5.0**（诊断无 `link=`/`taps=`）。
   用户 09:2x 下令「谁要注销才能继续工作的队员就可以停止下去了」→ **本线暂停，不许 sbreload**。
-  注销加载后按这个顺序验：
+  注销加载后按这个顺序验（**已做成脚本**：`sh scripts/verify-countdownhud.sh --sid <对话 id>`，
+  自动跑 ①~⑤，`--no-tap` 跳过点屏幕，`--selftest` 不碰设备只验解析）：
   ① 诊断出现 `v1.6.0`（shows 归零 = SpringBoard 换了新代码）；
   ② `HUD_SID=<对话 id> sh scripts/hud-notify.sh 15 "完成：点击测试"` → 诊断 `link=<sid>`、`mode=plain`；
   ③ 点胶囊（岛矩形约 `125,18,125,37`，中心 ≈ 187,36）→ `taps=1`，Apelin 被拉起并落到那条对话；
