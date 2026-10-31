@@ -715,26 +715,37 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 注销回来后由它合并全员信息、整合、统一排程；各线只执行并向它汇报，不互相协调、不重复协调
 （硬规矩 + 技能 `respring-hub-merge-dispatch`）。
 
-| 优先级 | 任务 | 对话 | 改码范围 | 版本号 |
-| --- | --- | --- | --- | --- |
-| ① | 图标布局不能保存 | `18b20213` | `ThemeCorePlusLayout.m` + 版本锁 | 0.9.25 |
-| ② | 图标不能正确加载 | `157b2985` | `ThemeCorePlusIcons.m` + `Store.m` | 0.9.27 |
-| ③ | 角标不能正确显示 | `6c78afa4` | `ThemeCorePlusBadges.m` | 0.9.26 |
-| — | HUD 1.6.1（点确认自己注销） | `3e983c10` | `CountdownHUD.m` + `scripts/respring-guard.sh` 的 `--ask` 段 | 1.6.1（已发布未装） |
+| 优先级 | 任务 | 对话 | 改码范围 | 版本号 | 出包状态 |
+| --- | --- | --- | --- | --- | --- |
+| ① | 图标布局不能保存 | `18b20213` | `ThemeCorePlusLayout.m` + 版本锁 | 0.9.25 | ✅ sha `108b7a92…` run 41170666488 |
+| ② | 图标不能正确加载 | `157b2985` | `ThemeCorePlusIcons.m` + `Store.m` | 0.9.27 | 🔄 改码中（根因已定位） |
+| ③ | 角标不能正确显示 | `6c78afa4` | `ThemeCorePlusBadges.m` | 0.9.26 | ✅ sha `03e0dfd6…` run 41171106635 |
+| 复核 | 图标线复核与验收 | `5781b4c7` | 只读，不改码 | — | 🔄 读 157b2985 的 diff |
+| — | HUD 1.6.1（点确认自己注销） | `3e983c10` | `CountdownHUD.m` + `scripts/respring-guard.sh` 的 `--ask` 段 | 1.6.1 | ✅ sha `a65102d9…` run 41168223032 |
 
 **一文件一写者**：`Layout.m` / `Icons.m` / `Badges.m` / `CountdownHUD.m` / `version-lock.txt` 各归一线上表那条，
 越界前先在群里问。
 
-**注销窗口统一由调度台排**：出包的线只报「run 号 + deb 文件名 + deb sha256 + dylib sha256」，
-**不自己装、不自己注销**；调度台收齐后把 **0.9.24（角标）+ 0.9.25（布局）+ 0.9.27（图标）+ HUD 1.6.1**
-合并成**一次**装机 + **一次**注销（走 `respring-cross-team-notify` 四步：全员通知 → 正文知情 →
-弹窗让用户决定 → 用户当轮明确点头才 `--confirm`），别让用户被黑屏好几次。
+**两个注销窗口（顺序固定，别撞）**：
+- **第 1 轮 = HUD 1.6.1**，`3e983c10` 走，**等用户当轮点头**。其它线这期间**不发弹窗、不装包、不注销**。
+- **第 2 轮 = ThemeCorePlus 0.9.25 + 0.9.26 + 0.9.27**，**调度台排**（等 0.9.27 出包）→ 一次装三个 →
+  弹窗 → 用户点头 → 一次注销 → 各线只读验收。
+  （0.9.24 已被 0.9.26 取代，不单独装。）
+
+**装包/注销权统一在调度台**：出包的线只报「run 号 + deb 文件名 + deb sha256 + dylib sha256」，
+**不自己装、不自己注销、不发弹窗**；`scripts/version-lock.txt` 的 owner = `f8fbdbd5`。
+
+**三个验收字段组互不重叠，可分开归因**：图标看 `census{layer{ours>0}}` / `file{hit>0}`；
+角标看 `sys{…tree=…*…}` / `sys{host=N}`；布局看 `probe=` 的 `cand[model=N,ctrl=M]`。
+
+**注销流程**：走 `respring-cross-team-notify` 四步（全员通知 → 正文知情 → 弹窗让用户决定 →
+用户当轮明确点头才 `--confirm`），别让用户被黑屏好几次。
 
 **三条任务的现有证据（0.9.23 实测，`v0.9.23` 在跑、tick 在涨、无新崩溃）**：
 - 布局：`lay{…site=none,model=-,last=noinstance,probe=-,hooked=0}` —— 一个站都没挂上；
-  **`probe=-` ≠「类没找到」**：0.9.23 的三种 probe 字面量一个都没写出 → 早退发生在**写 probe 之前**
-  （`classes.count==0` 的 return 更靠前）。`hooked=0` 可信；`sav=` 是备份写盘次数、`site=` 旧值是
-  prefs 跨进程残留，两者都不能当「曾挂上站」的证据。
+  **真根因（0.9.25 的提交说明里定案）**：`TCPLayoutHookSave()` 只在 hooked/skipped 非空时才写 probe，
+  于是「找到了类、但一个方法名都没匹配上」退化成 `probe=-`，看起来像什么都没枚举到。
+  `hooked=0` 可信；`sav=` 是备份写盘次数、`site=` 旧值是 prefs 跨进程残留，两者都不能当「曾挂上站」的证据。
 - 图标：`file{look=58,hit=0}`（58 个素材全 miss）、`icon{look=4,miss=4,hit=0}`、
   `census{layer{ours=0},disp{ours=6}}`（`Icons.m` 纯指针比对必然不等）、
   `pix{screen{ours=0,stock=0}}`（主题图一张没上屏）、`dyn{seen=0}` + `clockv{last=noface}`（时钟日历没认出来）。
