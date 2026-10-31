@@ -11,6 +11,7 @@
 //
 #import "ThemeCorePlusHooks.h"
 #import "ThemeCorePlusStore.h"
+#include <stdlib.h>
 
 // 从 icon 对象身上问出 bundle id。SBIcon 的子类各有各的写法，按可靠性依次问。
 // 全部用 objc_msgSend 直接发消息，绝不写 [SBApplicationIcon xxx]：那会让链接期多出一个
@@ -181,18 +182,33 @@ static TCPPixelStats TCPPixelStatsForImage(UIImage *image) {
     TCPPixelStats stats = { 0, 0, 0, NO };
     if (image == nil || image.CGImage == NULL) return stats;
 
-    const size_t side = 24;   // 24×24 足够分清「透明 / 纯色 / 有内容」，又不会拖慢刷新
-    unsigned char buffer[side * side * 4];
+    // 0.9.29：原来固定按 24×24 拉平整张图（CGContextDrawImage 的默认插值会把细节糊掉），
+    // 现在按原图**像素**尺寸等比缩到最长边 ≤256 再统计 —— 仍只是一两百次像素循环，开销可忽略，
+    // 但「透明」判定不再被 24×24 的糊化误导（一张只剩细描边的图在 24×24 里会被糊成半透明）。
+    const size_t cap = 256;
+    size_t pw = (size_t)CGImageGetWidth(image.CGImage);
+    size_t ph = (size_t)CGImageGetHeight(image.CGImage);
+    if (pw == 0 || ph == 0) return stats;
+    size_t side = MAX(pw, ph);
+    size_t w = pw, h = ph;
+    if (side > cap) {
+        w = MAX((size_t)1, (size_t)llround((double)pw * (double)cap / (double)side));
+        h = MAX((size_t)1, (size_t)llround((double)ph * (double)cap / (double)side));
+    }
+    size_t bytes = w * h * 4;
+    if (bytes > 4u * 1024u * 1024u) return stats;
+    unsigned char *buffer = (unsigned char *)calloc(bytes, 1);
+    if (buffer == NULL) return stats;
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-    CGContextRef ctx = CGBitmapContextCreate(buffer, side, side, 8, side * 4, space,
+    CGContextRef ctx = CGBitmapContextCreate(buffer, w, h, 8, w * 4, space,
                                              kCGImageAlphaPremultipliedLast);
     CGColorSpaceRelease(space);
-    if (ctx == NULL) return stats;
+    if (ctx == NULL) { free(buffer); return stats; }
     CGContextSetInterpolationQuality(ctx, kCGInterpolationLow);
-    CGContextDrawImage(ctx, CGRectMake(0, 0, side, side), image.CGImage);
+    CGContextDrawImage(ctx, CGRectMake(0, 0, (CGFloat)w, (CGFloat)h), image.CGImage);
     CGContextRelease(ctx);
 
-    const size_t total = side * side;
+    const size_t total = w * h;
     size_t clear = 0, flat = 0, lumaSum = 0;
     for (size_t i = 0; i < total; i++) {
         const unsigned char *px = buffer + i * 4;
@@ -203,6 +219,7 @@ static TCPPixelStats TCPPixelStatsForImage(UIImage *image) {
         int dg = (int)px[1] - (int)px[2];
         if (abs(dr) < 8 && abs(dg) < 8 && (lum > 244 || lum < 12)) flat++;
     }
+    free(buffer);
     stats.valid = YES;
     stats.coverage = (CGFloat)(total - clear) / (CGFloat)total;
     stats.flat = (CGFloat)flat / (CGFloat)total;
@@ -228,11 +245,18 @@ static NSString *sComposedLast = nil;
 // 指针复用冲突概率极低（UIImage 生命周期短），NSCache 自动淘汰兜底；只影响「是否重复统计」，不影响行为。
 static NSCache<NSValue *, NSNumber *> *sComposedMemo = nil;
 static dispatch_once_t sComposedMemoOnce;
+// 0.9.29：「主屏图标不显示、文件夹里有」的取证。上面那份 gen{last=} 只记**最后一张**，
+// 而最后被合成的那张往往恰是正常的（gen 一直是 cov=0.84），于是「某一批 App 合成出来是透明的」
+// 这件事从没被记下来。这里把凡是 cov<0.10（几乎全透明 = 用户看到的就是空白）的合成结果
+// 按 bundleID 去重记下来，诊断里 pix 段以 blank=[bundleID:cov…] 的形式出现。
+static NSMutableArray<NSString *> *sTransparentSamples = nil;
+static NSInteger sTransparentCount = 0;
 static void TCPNoteComposedImage(UIImage *image, NSString *bundleID) {
     if (image == nil) return;
     dispatch_once(&sComposedMemoOnce, ^{
         sComposedMemo = [[NSCache alloc] init];
         sComposedMemo.countLimit = 1024;
+        sTransparentSamples = [NSMutableArray array];
     });
     NSValue *memoKey = [NSValue valueWithPointer:(__bridge const void *)image];
     if ([sComposedMemo objectForKey:memoKey] != nil) return;
@@ -247,10 +271,23 @@ static void TCPNoteComposedImage(UIImage *image, NSString *bundleID) {
     if (stats.coverage < sComposedMinCoverage) sComposedMinCoverage = stats.coverage;
     if (stats.coverage < 0.2) sComposedClear++;
     sComposedLuminance = stats.luminance;
+    // 透明样本（只记小样本，限 10 条；同一 App 只记一次，免得一张图在四个站点各记一遍）
+    if (stats.coverage < 0.10) {
+        sTransparentCount++;
+        NSString *sample = [NSString stringWithFormat:@"%@:%.2f", bundleID ?: @"?",
+                            (double)stats.coverage];
+        NSString *prefix = [NSString stringWithFormat:@"%@:", bundleID ?: @"?"];
+        BOOL seen = NO;
+        for (NSString *old in sTransparentSamples) {
+            if ([old hasPrefix:prefix]) { seen = YES; break; }
+        }
+        if (!seen && sTransparentSamples.count < 10) [sTransparentSamples addObject:sample];
+    }
     sComposedLast = [NSString stringWithFormat:@"%@:%.0fx%.0f@%.0f,cov=%.2f,lum=%.2f",
                      bundleID ?: @"?", image.size.width, image.size.height, image.scale,
                      (double)stats.coverage, (double)stats.luminance];
 }
+
 
 #pragma mark - 时钟 / 日历：主题底 + 系统动态层
 
@@ -774,6 +811,12 @@ void TCPRunScreenCensus(void) {
     sCensusRunning = YES;
 
     sCensusViews = 0; sCensusOurs = 0; sCensusStock = 0;
+    // 0.9.29：像素自检也挂在这轮普查里跑，计数器每轮归零（否则会一直累加到看不出这一轮的实况）。
+    sPixelViews = 0; sPixelThemed = 0; sPixelNil = 0; sPixelClear = 0; sPixelFlat = 0;
+    sPixelScreenTotal = 0; sPixelScreenThemed = 0; sPixelScreenStock = 0;
+    sPixelMinOpaque = 1.0; sPixelMaxImageViews = 0; sPixelStackDup = 0;
+    sPixelBlankSamples = [NSMutableArray array];
+    sPixelLayerSamples = [NSMutableArray array];
     sCensusLayerOurs = 0; sCensusLayerStock = 0; sCensusLayerTotal = 0;
     sCensusDisplayedOurs = 0; sCensusDisplayedTotal = 0;
     sCensusSamples = [NSMutableArray array];
@@ -848,6 +891,10 @@ void TCPRunScreenCensus(void) {
                                  ((UIImage *)value).size.width, ((UIImage *)value).size.height]];
                         }
                     }
+                    // 0.9.29：普查时顺手做一次像素自检（每轮视图只做一次）。
+                    // 以前 TCPInspectIconView 只在「改设置刷新」那条路上调，注销后启动一次都不跑，
+                    // 于是诊断里 pix{n=0} —— 「图标到底是不是透明白」这件事从来没被量过。
+                    if (ours) TCPInspectIconView(view);
                     // 图标视图自己 layer.contents 里画进屏幕的那张图是谁的
                     id contents = view.layer.contents;
                     if (contents != nil) {
@@ -940,7 +987,8 @@ NSString *TCPScreenCensusReport(void) {
 NSString *TCPIconPixelProbeReport(void) {
     return [NSString stringWithFormat:
             @"gen{n=%ld,clear=%ld,minCov=%.2f,lum=%.2f,last=%@};"
-            @"pix{n=%ld,themed=%ld,screen{total=%ld,ours=%ld,stock=%ld},clear=%ld,flat=%ld,nil=%ld,minOpaque=%.2f,maxImgViews=%ld,dup=%ld,blank=[%@],lay=[%@]}",
+            @"pix{n=%ld,themed=%ld,screen{total=%ld,ours=%ld,stock=%ld},clear=%ld,flat=%ld,nil=%ld,minOpaque=%.2f,maxImgViews=%ld,dup=%ld,blank=[%@],lay=[%@]};"
+            @"tclear{n=%ld,blank=[%@]}",
             (long)sComposedCount, (long)sComposedClear, (double)sComposedMinCoverage,
             (double)sComposedLuminance, sComposedLast ?: @"-",
             (long)sPixelViews, (long)sPixelThemed, (long)sPixelScreenTotal,
@@ -949,7 +997,9 @@ NSString *TCPIconPixelProbeReport(void) {
             (long)sPixelMaxImageViews,
             (long)sPixelStackDup,
             sPixelBlankSamples.count > 0 ? [sPixelBlankSamples componentsJoinedByString:@","] : @"-",
-            sPixelLayerSamples.count > 0 ? [sPixelLayerSamples componentsJoinedByString:@";"] : @"-"];
+            sPixelLayerSamples.count > 0 ? [sPixelLayerSamples componentsJoinedByString:@";"] : @"-",
+            (long)sTransparentCount,
+            sTransparentSamples.count > 0 ? [sTransparentSamples componentsJoinedByString:@","] : @"-"];
 }
 
 
