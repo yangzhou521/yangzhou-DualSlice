@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.27
+  VERSION: 0.9.28
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.27)
+    name: Release (themecoreplus-v0.9.28)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,18 +185,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.27
-          name: ThemeCorePlus v0.9.27
+          tag_name: themecoreplus-v0.9.28
+          name: ThemeCorePlus v0.9.28
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.27 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.28 —— MarkTheme 式的主题引擎，作者 yangzhou。
 
-            v0.9.27（**图标加载假阴性修复**）：0.9.23 以来 `census{layer{ours=0}}` 一直报「我们的图标层占 0」，
-            但 `census{icon{ours=6}}`、`disp{ours=6}` 显示图标其实已经换成主题图——这是 CA 复制
-            `layer.contents` 的 CGImage 后指针变了，原 `isRenderedCGImage:` 只比 CGImage 指针集合，
-            复制过的图认不出。现在在渲染登记处把每张合成图算成 12×12 灰度指纹存进
-            `renderedFingerprints`（带限量淘汰），`isRenderedCGImage:` 先比指针、命中不了再按指纹认一遍
-            （≥40pt 的图标才记指纹，小图不参与普查）。同时给合成图的像素统计加 memo（同一张图只量一次），
-            去掉每次取图都跑 24×24 统计的卡顿发热。不动角标共用的 `namedMap`/`cachedImageAtPath:` 链。
+            v0.9.28（**图标加载假阴性修复 · 续**）：0.9.27 按内容指纹认 CA 复制过的 CGImage 这条路是对的，
+            但它多留了一张以 UIImage 裸指针为键的指纹缓存 —— 要认的偏偏是 CA 复制出来的 CGImage，
+            两者永远对不上；UIImage 释放后指针还会被复用，反而可能把系统图认成我们的（假阳性）。
+            0.9.28 删掉这张缓存（`fingerprintCache` 声明/初始化/清理三处一并删），判定改为：先比 CGImage 指针，
+            不中再现场算 12×12 灰度指纹比内容。渲染登记处仍把每张合成图（≥40pt）的指纹存进
+            `renderedFingerprints`（>600 淘汰一半）。不动角标共用的 `namedMap`/`cachedImageAtPath:` 链。
 
             v0.9.26（**角标：ourHost 的 contents 也清**，0.9.24 的续作）：0.9.24 只清 `ourHost`
             的底色（backgroundColor / layer.backgroundColor），若系统红底其实画在
@@ -420,7 +419,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.27/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.28/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'

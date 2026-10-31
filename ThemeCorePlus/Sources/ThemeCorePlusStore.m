@@ -284,7 +284,8 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 // 指纹在渲染时算一次（12×12 灰度），判定时按指纹再比一遍，指针不中不代表不是我们的。
 @property (nonatomic, strong) NSMutableSet<NSData *> *renderedFingerprints;
 // 同一张图在一次次普查里会被反复问：算过就记住，别每次都把它缩到 12×12 一遍（主线程，会卡桌面）。
-@property (nonatomic, strong) NSCache<NSValue *, NSData *> *fingerprintCache;
+// 0.9.28：这张缓存已删 —— 它的键是 UIImage 的裸指针，而我们要认的是 CA 复制出来的 CGImage，
+// 两者永远对不上；UIImage 释放后指针还会被复用，反而带来假阳性。每次现场算（12×12 灰度，很便宜）。
 @property (nonatomic, strong) NSMutableArray<NSString *> *missSamples;
 // 反过来：实际被换成主题图的 bundle id。诊断里能看出「换了哪几个 App」，不用靠肉眼。
 @property (nonatomic, strong) NSMutableArray<NSString *> *hitSamples;
@@ -331,8 +332,6 @@ enum {
         _renderedImagePointers = [NSMutableSet set];
         _renderedCGPointers = [NSMutableSet set];
         _renderedFingerprints = [NSMutableSet set];
-        _fingerprintCache = [[NSCache alloc] init];
-        _fingerprintCache.countLimit = 512;
         _missSamples = [NSMutableArray array];
         _hitSamples = [NSMutableArray array];
         _featureFlags = TCPFeatureIcons | TCPFeatureFolders | TCPFeatureBadges | TCPFeatureFiles;
@@ -427,7 +426,6 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         [self.renderedImagePointers removeAllObjects];
         [self.renderedCGPointers removeAllObjects];
         [self.renderedFingerprints removeAllObjects];
-        [self.fingerprintCache removeAllObjects];
         // 遮罩体检（0.9.4，修「图标空白」）：把遮罩的 alpha 覆盖量一遍 —— 玻璃 / 细环那类遮罩
         // 几乎全透明，拿去裁图标只会把主体裁没。低于门槛的**不使用**，让图标保持素材原样。
         CGFloat coverage = 1.0;
@@ -1003,8 +1001,6 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
                 if (pxW >= 40.0) {
                     NSData *fp = TCPFingerprintOfCGImage(rendered.CGImage);
                     if (fp) {
-                        [self.fingerprintCache setObject:fp
-                                                  forKey:[NSValue valueWithPointer:(__bridge const void *)rendered]];
                         if (self.renderedFingerprints.count > 600) {
                             // 限量淘汰：保留一半，避免无限增长（发热比像素统计更狠）。
                             NSMutableArray<NSData *> *all = [[self.renderedFingerprints allObjects] mutableCopy];
@@ -1048,10 +1044,10 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
         // 第一道：未经 CA 复制的，指针直接中。
         if ([self.renderedCGPointers containsObject:[NSValue valueWithPointer:ptr]]) return YES;
         // 第二道（0.9.27）：CA 复制过 CGImage 的，指针变了但像素内容相同。
-        // 先查指纹缓存（这张图本身作为 UIImage 被我们合成过、普查刚问过）；
-        // 查不到再现场算它的指纹 —— 复制出来的 CGImage 没有对应的 UIImage 指针，只能按内容认。
-        NSData *fp = [self.fingerprintCache objectForKey:[NSValue valueWithPointer:ptr]];
-        if (fp == nil) fp = TCPFingerprintOfCGImage((CGImageRef)ptr);
+        // 0.9.28：删掉「按 UIImage 指针键查指纹缓存」那一步 —— 复制出来的 CGImage 在原 UIImage
+        // 被释放后指针会被复用，拿它当键既查不中（假阴性）又可能把别人的指纹认成我们的（假阳性）；
+        // 指纹缓存本身已无用，一律现场按内容算。
+        NSData *fp = TCPFingerprintOfCGImage((CGImageRef)ptr);
         if (fp && [self.renderedFingerprints containsObject:fp]) return YES;
         return NO;
     }
