@@ -143,17 +143,150 @@ static void TCPBadgeResetKey(UIView *view, const void *key) {
 
 #define TCP_BADGE_GIVE_UP 8
 
+// —— 1.0.3：不再跟系统赛跑，改成「搬图 + 藏底板」——
+// 用户 2026-10-31 17:17 报「桌面角标现在又是双层显示了」。1.0.1 的代码逐字节没变过，
+// 变的只是时序：SBDarkeningImageView 的红底/暗化底是**延迟画**的，而且它会把自己的图
+// 重新写进 layer.contents。我们清一次 → 挂「已收拾」标记 → 系统再画回来 → 再没人检查，
+// 双层就永久留在屏幕上（诊断里 skip 一直涨、hid 早就不动了，正是这个形态）。
+// 所以：把我们的整图搬到一只**自己的兄弟 UIImageView** 上，再把系统底板整个 hidden。
+// 系统之后爱怎么画都露不出来；每次布局只用一次指针读复检它有没有被重新显示出来。
+static const void *TCPBadgeOverlayKey = &TCPBadgeOverlayKey;   // 我们自己的那一层（兄弟视图）
+static const void *TCPBadgeRetryKey = &TCPBadgeRetryKey;       // 复检重做次数（防发热）
+static const void *TCPBadgeBgKey = &TCPBadgeBgKey;             // 底板视图缓存（省掉每帧 KVC）
+#define TCP_BADGE_RETRY_MAX 4
+static NSInteger sBadgeLiftCount = 0;    // 搬图次数（诊断 lift=）
+static NSString *sBadgeSysBg = nil;      // 底板取证：类名、显隐、它自己画的是什么
+static NSString *sBadgeSysHost = nil;    // 我们的图挂在哪只视图上（诊断 our=）
+
+// 底板视图：KVC 的 backgroundView，退而认类名带 Darkening 的直接子视图。
+// 只读、不改，两处（早退复检与正常收拾）共用。
+static UIView *TCPBadgeBackgroundView(UIView *view) {
+    if (view == nil) return nil;
+    // 缓存：复检路径每帧都要问一次，KVC 未知键会走 forwardInvocation，太贵。
+    UIView *cached = objc_getAssociatedObject(view, TCPBadgeBgKey);
+    if ([cached isKindOfClass:[UIView class]] && cached.superview == view) return cached;
+    id bg = nil;
+    @try { bg = [view valueForKey:@"backgroundView"]; } @catch (NSException *exception) { (void)exception; }
+    if (![bg isKindOfClass:[UIView class]]) {
+        bg = nil;
+        for (UIView *sub in view.subviews) {
+            if ([NSStringFromClass([sub class]) containsString:@"Darkening"]) { bg = sub; break; }
+        }
+    }
+    if (![bg isKindOfClass:[UIView class]]) return nil;
+    objc_setAssociatedObject(view, TCPBadgeBgKey, bg, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return (UIView *)bg;
+}
+
+static NSString *TCPBadgeContentsTag(CALayer *layer) {
+    if (layer == nil || layer.contents == NULL) return @"nil";
+    return TCPBadgeLayerIsOurs(layer) ? @"ours" : @"sys";
+}
+
+static NSString *TCPBadgeImageTag(UIView *view) {
+    if (![view isKindOfClass:[UIImageView class]]) return @"-";
+    UIImage *image = ((UIImageView *)view).image;
+    if (image == nil) return @"nil";
+    return TCPBadgeImageIsOurs(image) ? @"ours" : @"sys";
+}
+
+// 从一只视图上把我们那张整图取出来（两种挂法都认）：
+//   ① SBIconBadgeView 的 backgroundView 是 UIImageView，我们的图在它的 image 上；
+//   ② 不是 UIImageView 时，我们的图直接画在它的 layer.contents 上。
+// 取不到（那是系统自己的图/什么都没有）就返回 nil —— 调用方据此「一个字节都不动」。
+static UIImage *TCPBadgeOurImageFromHost(UIView *host) {
+    if (host == nil) return nil;
+    if ([host isKindOfClass:[UIImageView class]]) {
+        UIImage *image = ((UIImageView *)host).image;
+        if (image != nil && TCPBadgeImageIsOurs(image)) return image;
+    }
+    if (host.layer.contents != NULL && TCPBadgeLayerIsOurs(host.layer)) {
+        id contents = (__bridge id)host.layer.contents;
+        if ([contents isKindOfClass:[UIImage class]]) return (UIImage *)contents;
+        if (CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
+            CGFloat scale = host.layer.contentsScale > 0 ? host.layer.contentsScale : [UIScreen mainScreen].scale;
+            return [UIImage imageWithCGImage:(__bridge CGImageRef)contents
+                                       scale:scale
+                                 orientation:UIImageOrientationUp];
+        }
+    }
+    return nil;
+}
+
+
 // 把角标收拾成一层：只清「系统底板」的底色，绝不动我们那张图所在的节点。
 // 本机结构（0.9.22 诊断实测）：SBIconBadgeView → backgroundView(SBDarkeningImageView)，
 // **只有这 1 个子视图**，我们的整图就套在它身上（census 里每格 badge 都是 1 个 subview）。
 // 所以「target == ourHost」不能整条跳过，否则系统纯色底板永远留在原地。
 // 判据很硬：**树里一张我们的图都没有就什么都不做** —— 宁可多留一层，也绝不把角标清成空白。
+// 1.0.3：把我们的整图搬到自己的兄弟层，再把系统底板整个藏掉。
+// 只搬「底板本身就是我们那张图的宿主」这一种（本机就是这种：SBIconBadgeView 只有一个子视图）。
+// 搬完 must 保证「我们的图仍在树里」—— 拿不到图就一个字节都不动，绝不把角标弄成空白。
+static BOOL TCPBadgeLiftOurImage(UIView *view, UIView *host) {
+    if (view == nil || host == nil || host == view) return NO;
+    UIImage *image = TCPBadgeOurImageFromHost(host);
+    if (image == nil) return NO;   // 拿不到我们的图就一个字节都不动，绝不把角标弄成空白
+
+    UIImageView *overlay = objc_getAssociatedObject(view, TCPBadgeOverlayKey);
+    if (![overlay isKindOfClass:[UIImageView class]]) {
+        overlay = [[UIImageView alloc] initWithFrame:host.frame];
+        overlay.userInteractionEnabled = NO;
+        overlay.hidden = NO;
+        objc_setAssociatedObject(view, TCPBadgeOverlayKey, overlay, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [view addSubview:overlay];
+        sBadgeLiftCount++;
+    }
+    overlay.image = image;
+    overlay.contentMode = host.contentMode;
+    overlay.frame = host.frame;
+    overlay.hidden = NO;
+    if (overlay.superview == view && view.subviews.lastObject != overlay) [view bringSubviewToFront:overlay];
+    host.hidden = YES;
+    sBadgeSysHost = NSStringFromClass([host class]);
+    return YES;
+}
+
 static void TCPBadgeHideSystemBackground(UIView *view) {
     if (view == nil || !sBadgeComposedServed || sBadgeHiding) return;
     if (![view isKindOfClass:[UIView class]]) return;
     if (objc_getAssociatedObject(view, TCPBadgeCleanedKey) != nil) {
-        sBadgeSysSkip++;   // 这一格已经收拾干净，布局再进来就是空转
-        return;
+        // 0.9.18 的早退：收拾过就不再扫（桌面滚动时最热的回调）。
+        // 1.0.3 补一条**极轻量**的复检：系统底板是延迟画的，SBDarkeningImageView 还会把自己的
+        // 红底重新写进 layer.contents；早退之后就没人再看它，双层就是这么复发的
+        // （用户 2026-10-31 17:17「桌面角标现在又是双层显示了」）。
+        UIImageView *overlay = objc_getAssociatedObject(view, TCPBadgeOverlayKey);
+        UIView *bg = TCPBadgeBackgroundView(view);
+        if ([overlay isKindOfClass:[UIImageView class]] && overlay.superview == view) {
+            // 搬过图的格子：就地「把底板重新藏回去、让我们的层跟上底板」，不撤标记、不扫子树。
+            // 这样系统每帧重画都不会让双层留在屏幕上，成本只有一次指针读。
+            if (bg != nil) {
+                if (!bg.hidden) {
+                    bg.hidden = YES;
+                    sBadgeSysHidden++;
+                    // 数字变了 → 系统把新图设回底板，同步到我们这层（静态时省掉这次查找）
+                    UIImage *fresh = TCPBadgeOurImageFromHost(bg);
+                    if (fresh != nil && fresh != overlay.image) overlay.image = fresh;
+                }
+                overlay.frame = bg.frame;
+            }
+            if (overlay.hidden) overlay.hidden = NO;
+            if (view.subviews.lastObject != overlay) [view bringSubviewToFront:overlay];
+            sBadgeSysSkip++;
+            return;
+        }
+        // 没搬过图：只有「底板自己画了东西、又不是我们的图」才值得重扫一遍（有次数上限，防发热）
+        BOOL need = NO;
+        if (bg != nil && !bg.hidden) {
+            if (bg.layer.contents != NULL && !TCPBadgeLayerIsOurs(bg.layer)) need = YES;
+            else if (bg.backgroundColor != nil && CGColorGetAlpha(bg.backgroundColor.CGColor) > 0.01) need = YES;
+        }
+        NSInteger retries = [objc_getAssociatedObject(view, TCPBadgeRetryKey) integerValue];
+        if (!need || retries >= TCP_BADGE_RETRY_MAX) {
+            sBadgeSysSkip++;   // 这一格已经收拾干净，布局再进来就是空转
+            return;
+        }
+        objc_setAssociatedObject(view, TCPBadgeRetryKey, @(retries + 1), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        TCPBadgeSetCleaned(view, NO);   // 撤标记，下面照常重做一遍
     }
     sBadgeHiding = YES;
     sBadgeSysLook++;
@@ -170,10 +303,17 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
 
     BOOL sawOurs = TCPBadgeLayerIsOurs(view.layer);
     UIView *ourHost = nil;   // 握着我们那张图的 image view
+    UIView *skipOverlay = objc_getAssociatedObject(view, TCPBadgeOverlayKey);   // 我们自己搬出来的那层
     for (UIView *sub in all) {
+        if (sub == skipOverlay) continue;   // 它不算「系统把我们图挂在哪」
         if ([sub isKindOfClass:[UIImageView class]] &&
             TCPBadgeImageIsOurs(((UIImageView *)sub).image)) { sawOurs = YES; ourHost = sub; break; }
         if (TCPBadgeLayerIsOurs(sub.layer)) { sawOurs = YES; ourHost = sub; break; }
+    }
+    // 我们自己那层还在、还有图 = 我们的图确实在屏幕上（底板被系统清空时也不会误判成「图还没换上来」）
+    if (!sawOurs && [skipOverlay isKindOfClass:[UIImageView class]] &&
+        ((UIImageView *)skipOverlay).image != nil) {
+        sawOurs = YES;
     }
     if (!sawOurs) {
         sBadgeSysWait++;   // 图还没换上来（或这一格没主题素材），先不动
@@ -186,17 +326,27 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
     }
     // 看到我们的图了 → 「等不到图」那条计数归零（它只等这一个成功条件）
     TCPBadgeResetKey(view, TCPBadgeMissImageKey);
+    sBadgeSysHost = ourHost != nil ? NSStringFromClass([ourHost class]) : @"-";
 
     // 底板候选：KVC 的 backgroundView，以及类名带 Darkening 的直接子视图。
     NSMutableArray<UIView *> *targets = [NSMutableArray array];
-    id bgView = nil;
-    @try { bgView = [view valueForKey:@"backgroundView"]; } @catch (NSException *exception) { (void)exception; }
-    if ([bgView isKindOfClass:[UIView class]]) [targets addObject:(UIView *)bgView];
+    UIView *bgView = TCPBadgeBackgroundView(view);
+    if (bgView != nil) [targets addObject:bgView];
     for (UIView *sub in view.subviews) {
         if (![sub isKindOfClass:[UIView class]]) continue;
         if ([NSStringFromClass([sub class]) containsString:@"Darkening"] && ![targets containsObject:sub]) {
             [targets addObject:sub];
         }
+    }
+
+    // 1.0.3（用户 2026-10-31 17:17「桌面角标现在又是双层显示了」）：本机这一格角标只有 1 个子视图，
+    // 我们的整图就套在系统底板 SBDarkeningImageView 身上 —— 清底色、清 contents 都是跟系统赛跑，
+    // 它下一帧把红底重新写进 layer.contents，我们却已经挂了「收拾干净」标记 → 双层永久留下。
+    // 终局做法：把我们的图搬到自己的一层上，再把底板整个 hidden，系统爱怎么画都露不出来。
+    BOOL liftedNow = NO;
+    if (ourHost != nil && bgView != nil && ourHost == bgView) {
+        // 搬成功时底板已经被藏，下面 targets 循环里对 ourHost 的清理自然变成空转
+        liftedNow = TCPBadgeLiftOurImage(view, bgView);
     }
 
     NSUInteger cleared = 0;
@@ -235,7 +385,7 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
                 layer.contents = nil;
                 touched = YES;
             }
-        } else if ([target isKindOfClass:[UIImageView class]] &&
+        } else if (!target.hidden && [target isKindOfClass:[UIImageView class]] &&
                    TCPBadgeImageIsOurs(((UIImageView *)target).image)) {
             // 0.9.26：ourHost 是装着我们那张图的 UIImageView。它的 layer.contents 由 UIKit 从
             // `image` 渲染，所以**清掉 contents 不会丢我们的图**（下一帧会照 image 重画），
@@ -257,8 +407,9 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
     // 诊断 tree=SBDarkeningImageView 没有 * 就是那层根本没被清动）。
     NSMutableSet<UIView *> *keep = [NSMutableSet set];
     for (UIView *p = ourHost; p != nil && p != view; p = p.superview) [keep addObject:p];
+    UIView *ourOverlay = objc_getAssociatedObject(view, TCPBadgeOverlayKey);
     for (UIView *sub in view.subviews) {
-        if (sub == ourHost || [keep containsObject:sub]) continue;
+        if (sub == ourHost || sub == ourOverlay || [keep containsObject:sub]) continue;
         if (TCPBadgeLayerIsOurs(sub.layer)) continue;
         if (!sub.hidden) {
             sub.hidden = YES;
@@ -279,12 +430,18 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
 
     // 取证：底板节点是谁、清没清掉（带 * = 清过，带 ! = 被藏），装完机不看屏幕也知道做对没有。
     sBadgeSysTree = names.count > 0 ? [names componentsJoinedByString:@","] : @"-";
+    // 1.0.3 取证：底板到底藏没藏、它自己画的是不是我们的图（一眼分辨「藏底板」这条路走没走通）
+    sBadgeSysBg = [NSString stringWithFormat:@"%@:%@,img=%@,c=%@",
+                   bgView != nil ? NSStringFromClass([bgView class]) : @"-",
+                   bgView == nil ? @"-" : (bgView.hidden ? @"hidden" : @"shown"),
+                   TCPBadgeImageTag(bgView), TCPBadgeContentsTag(bgView.layer)];
 
     // 收拾完了：挂标记，后面每一次布局都在上面那个早退处返回（0.9.18）。
     // 0.9.24：**只有真清动过**才挂标记；cleared == 0 说明系统底板这一刻还没画上来（它是延迟画的），
     // 挂上去就等于永久放弃这一格 —— 那正是「一个图标二层、一个图标一层」的来源。
-    if (cleared > 0) {
+    if (cleared > 0 || liftedNow) {
         TCPBadgeResetKey(view, TCPBadgeStuckKey);   // 清动了 → 「清不动」计数归零
+        TCPBadgeResetKey(view, TCPBadgeRetryKey);   // 重扫有效 → 复检额度也归零（下次还能再收拾）
         TCPBadgeSetCleaned(view, YES);
     } else if (TCPBadgeBumpKey(view, TCPBadgeStuckKey) >= TCP_BADGE_GIVE_UP) {
         TCPBadgeSetCleaned(view, YES);   // 连续 8 次仍清不动 → 放弃这一格，别没完没了地扫
@@ -297,6 +454,9 @@ void TCPBadgeResetStations(void) {
     sBadgeTupleLook = sBadgeTupleHit = 0;
     sBadgeTextLook = sBadgeTextHit = 0;
     sBadgeHostClears = 0;
+    sBadgeLiftCount = 0;
+    sBadgeSysBg = nil;
+    sBadgeSysHost = nil;
     sBadgeComposedServed = NO;
 }
 
@@ -321,15 +481,15 @@ BOOL TCPBadgeBackgroundServed(void) {
 NSString *TCPBadgeProbeReport(void) {
     return [NSString stringWithFormat:
             @"%@;bg{look=%ld,hit=%ld};tup{look=%ld,hit=%ld};txt{look=%ld,hit=%ld};gate=%@;"
-            @"sys{look=%ld,hid=%ld,wait=%ld,skip=%ld,host=%ld,tree=%@};v{lay=%ld,cfg=%ld,mv=%ld,lo=%ld}",
+            @"sys{look=%ld,hid=%ld,wait=%ld,skip=%ld,host=%ld,lift=%ld,tree=%@,bg=%@,our=%@};v{lay=%ld,cfg=%ld,mv=%ld,lo=%ld}",
             sBadgeProbe ?: @"badge=-",
             (long)sBadgeBackLook, (long)sBadgeBackHit,
             (long)sBadgeTupleLook, (long)sBadgeTupleHit,
             (long)sBadgeTextLook, (long)sBadgeTextHit,
             TCPBadgeBackgroundServed() ? @"text-only" : @"composed",
             (long)sBadgeSysLook, (long)sBadgeSysHidden, (long)sBadgeSysWait,
-            (long)sBadgeSysSkip, (long)sBadgeHostClears,
-            sBadgeSysTree ?: @"-",
+            (long)sBadgeSysSkip, (long)sBadgeHostClears, (long)sBadgeLiftCount,
+            sBadgeSysTree ?: @"-", sBadgeSysBg ?: @"-", sBadgeSysHost ?: @"-",
             (long)sBadgeLayoutCalls, (long)sBadgeConfigCalls, (long)sBadgeMoveCalls,
             (long)sBadgeLayCalls];
 }
