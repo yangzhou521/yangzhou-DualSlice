@@ -10,10 +10,14 @@
 
 owner=6c78afa4-a447-48cd-879b-db11ef2ebb5e
 version=0.9.24
-dylib_sha256=d953366ab0629ef8d8df508d8095038205be55337500477d59f1736545936304
+dylib_sha256=0a7f540218697ff54bd68954394767cf2fd092d60b82032617e0336a4ba744bd
+# 上面这个指纹取自 0.9.24 的 deb 内 Library/MobileSubstrate/DynamicLibraries/ThemeCorePlus.dylib
+# （2026-10-31 12:29 由 owner 6c78afa4 解包实测，573040 B）。装机后若 ellekit 会重签/改写这份 dylib，
+# 机上 ${jbroot}/usr/lib/TweakInject/ThemeCorePlus.dylib 的 sha256 会与此不同 —— 那时以机上值为准更新本行，
+# 别把「重签导致的差异」当成有人回滚。
 # 注意：CI 每次运行都重建资产，同版本号的 deb 字节会变（sha256/体积都变）。
 # 所以「哪个版本」以 version= 与 dpkg 为准，dylib_sha256 只记「当前机上这一份」的指纹，
 # 换了包就由 owner 在验过无崩溃后更新这一行；对不上 = 有人装过别的包，先问 owner。
-deb_sha256=544144b935c7938cd497ecc40b9bc46cd8a7bcb9a102a0ae494163635a82f8a5
-updated=2026-10-31 12:26
+deb_sha256=da13ecbc519a05be55a85997aba53776ff99486fac1d73b1d6fc92f13fc1f664
+updated=2026-10-31 12:30
 note=0.9.24 = 角标双层修复（ourHost 的底色从没被清过 → 现在两种写法都照清，只跳过清图/清 contents；cleared>0 才挂已收拾标记；两条独立失败计数，各 8 次放弃）。0.9.23 = 0.9.22 的纯诊断版（probe=/hooked=），Release 已发不覆盖。0.9.22 已实测修好安全模式（无新崩溃）。0.9.21 作废永不复用。

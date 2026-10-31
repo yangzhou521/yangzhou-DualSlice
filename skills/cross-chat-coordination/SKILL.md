@@ -255,6 +255,18 @@ apelin_conversation_list project: <folder|projectID>     # 逐个工程再列一
 3. **要「不说也知道别人在干嘛」** → `sh scripts/fleet-live.sh [分钟数]`：直接读
    `sessions/<sid>/events.jsonl` 的最后活动时间与最后一条意图，**不依赖任何人写任何东西**。
    这是目前唯一「实证派」的全队视图（本项目 `scripts/fleet-live.sh`，云端同名）。
+   **状态列怎么读（2026-10-31 12:28 修过一次误判）**：「在跑」= 最后一条工作事件晚于这一回合的
+   `finished`；「收工」= 真的停在 `finished` 上；「失败」= `finished.reason=failed`（多半是额度/限流）。
+   旧版本只看「有没有 finished」，而跑过多轮的对话文件尾必然有上一回合的 finished →
+   **正在干活的会被误报成「收工」，正好把最该看见的那条藏起来**。看到「收工」但你觉得它应该还在跑，
+   先 `apelin_conversation_read` 核一遍再下结论。
+4. **对账三问（每轮开工/收工各过一遍）**：
+   | 问 | 命令 | 判据 |
+   | --- | --- | --- |
+   | 还有谁在跑？ | `sh scripts/fleet-live.sh 30` | 「在跑」的那些就是要协调的对象 |
+   | 它到底在干嘛？ | `apelin_conversation_read <sid> wait_seconds:30` | 看最后一条 message 与 pendingApprovals |
+   | 我答应它的事做了吗？ | 翻自己的广播与回执 | 有承诺就必须有下文，没有就补一句「这条我还没做」 |
+   **对账 ≠ 等通知**：别人不会主动来问你，你得自己去看；等对方来找你 = 空转。
 4. **要让用户知道** → 回复正文 + `scripts/hud-notify.sh`（胶囊）+ `apelin_notification_send`，
    见技能 `task-done-notify`。用户要的是**他自己看得见**，不是机器人之间的暗号。
 5. **规矩不变**：自己的活第一、第一时间回执、动设备前打招呼、交接三段式、绝不 stop 别人、绝不改别人文件。

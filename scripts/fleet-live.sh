@@ -57,13 +57,38 @@ for d in "$SESS"/*/; do
     [ "$epoch" -ge "$CUT" ] || continue
     mins=$(( (NOW - epoch) / 60 ))
 
-    # 状态：这一回合是怎么收的
+    # 状态判据：**看最后一个事件，不是看有没有 finished**。
+    # 一个对话跑过很多回合，文件尾必然有上一回合的 finished —— 原来那句
+    # `grep finished | tail -1` 会把正在跑的对话也判成「收工」（2026-10-31 12:27 实测：
+    # 6c78afa4 正在跑 shell_run，表里却写「收工」，等于把最该看见的那条藏起来了）。
+    # 正确做法：把「回合结束」事件剔掉，看剩下最后一个事件是什么；
+    # 只有它在文件末尾时才是真收工。
+    last_ev=$(printf '%s\n' "$flat" | grep -o '"\(toolCallStarted\|messageFinished\|finished\|reconnecting\|started\)"' | tail -1)
     fin=$(printf '%s\n' "$flat" | grep -o '"finished":{"reason":"[^"]*"' | tail -1 |
           sed 's/.*"reason":"//;s/"//')
+    fin_epoch=""
+    if [ -n "$fin" ]; then
+        # finished 那一行的时间戳：只有它 ≥ 最后一个工具调用，才说明「真的停在收工」
+        finline=$(printf '%s\n' "$flat" | grep '"finished"' | tail -1)
+        fts=$(printf '%s' "$finline" | sed -n 's/.*"date":"\([0-9T:-]*Z\)".*/\1/p')
+        [ -n "$fts" ] && fin_epoch=$(date -u -d "$fts" +%s 2>/dev/null)
+    fi
+    # 最后一个工具调用 / 消息的时间戳，用来判断「谁在后」
+    ts_ev=$(printf '%s\n' "$flat" | grep -o '"date":"[0-9T:-]*Z"' | tail -1 | sed 's/.*"date":"//;s/"//')
+    ev_epoch=$(date -u -d "$ts_ev" +%s 2>/dev/null)
+
     case "$fin" in
-        failed)  state="失败" ;;
-        "")      state="在跑" ;;
-        *)       state="收工" ;;
+        failed) state="失败" ;;
+        "")
+            state="在跑" ;;
+        *)
+            # 有 finished，但只有它确实晚于最后一条工作事件才算收工；否则就是「又开工了」
+            if [ -n "$fin_epoch" ] && [ -n "$ev_epoch" ] && [ "$ev_epoch" -gt "$fin_epoch" ]; then
+                state="在跑"
+            else
+                state="收工"
+            fi
+            ;;
     esac
 
     # 最后一个工具调用那一行：名字 + 它自己写的中文 reason
