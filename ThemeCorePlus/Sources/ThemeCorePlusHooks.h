@@ -136,6 +136,8 @@ NSString *TCPDynamicProbeReport(void);
 // 时钟图标的视图层（0.9.17）：时钟从不走图标取图那几站，只能挂它的 layoutSubviews 换表盘。
 void TCPInstallClockViewSite(void);
 NSString *TCPClockViewProbeReport(void);
+// 普查用：屏幕上某张角标图是不是我们合成的（只读）。
+BOOL TCPBadgeIsOurImage(UIImage *image);
 // 桌面图标布局的备份/恢复（用户 2026-10-31 05:30）：注销或 SpringBoard 崩溃后保住之前的图标布局。
 // 由 ThemeCorePlusLayout.m 实现；只在 SpringBoard 进程里动手。
 void TCPLayoutInstall(void);

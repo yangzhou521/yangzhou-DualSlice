@@ -87,6 +87,9 @@ static BOOL TCPBadgeImageIsOurs(UIImage *image) {
     return NO;
 }
 
+// 给普查用：屏幕上那层角标图是不是我们合成的（只读，不改任何东西）。
+BOOL TCPBadgeIsOurImage(UIImage *image) { return TCPBadgeImageIsOurs(image); }
+
 static BOOL TCPBadgeLayerIsOurs(CALayer *layer) {
     id contents = layer.contents;
     if (contents == nil) return NO;

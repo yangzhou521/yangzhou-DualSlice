@@ -692,6 +692,7 @@ static NSInteger sCensusIconViews = 0;      // 图标视图数（私有类 SBIco
 static NSInteger sCensusIconOurs = 0;       // 其中交出的是我们的图
 static NSInteger sCensusIconStock = 0;
 static NSMutableArray<NSString *> *sCensusIconSamples = nil;
+static NSMutableArray<NSString *> *sCensusBadgeTree = nil;
 static BOOL sCensusRunning = NO;
 
 // 定义在文件后面的显示层小工具，这里先声明。
@@ -767,6 +768,7 @@ void TCPRunScreenCensus(void) {
     sCensusSamples = [NSMutableArray array];
     sCensusIconViews = 0; sCensusIconOurs = 0; sCensusIconStock = 0;
     sCensusIconSamples = [NSMutableArray array];
+    sCensusBadgeTree = [NSMutableArray array];
 
     NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
     // 用 windowScene 拿窗口（UIApplication.windows 在 iOS 15+ 已废弃）。
@@ -871,19 +873,57 @@ void TCPRunScreenCensus(void) {
         }
     }
 
+    // 角标子树（0.9.17）：用户报「角标二层」，光看 sys{hid=} 分不清屏幕上到底还留着哪一层。
+    // 这里把每个角标视图的子视图摊开：类名、尺寸、有没有被藏、图多大、那张图是不是我们的。
+    NSMutableArray<NSString *> *badgeTree = [NSMutableArray array];
+    for (UIWindow *window in windows) {
+        NSMutableArray *stack = [NSMutableArray arrayWithArray:window.subviews];
+        NSUInteger guard = 0;
+        while (stack.count > 0 && guard++ < 3000 && badgeTree.count < 6) {
+            UIView *view = stack.lastObject;
+            [stack removeLastObject];
+            if ([NSStringFromClass([view class]) containsString:@"Badge"]) {
+                NSMutableArray<NSString *> *kids = [NSMutableArray array];
+                for (UIView *sub in view.subviews) {
+                    if (kids.count >= 8) break;
+                    NSString *k = [NSString stringWithFormat:@"%@|%.0fx%.0f%@",
+                                   NSStringFromClass([sub class]),
+                                   sub.bounds.size.width, sub.bounds.size.height,
+                                   sub.hidden ? @"|hid" : @""];
+                    if ([sub isKindOfClass:[UIImageView class]] && ((UIImageView *)sub).image != nil) {
+                        UIImage *img = ((UIImageView *)sub).image;
+                        k = [k stringByAppendingFormat:@"|img%.0fx%.0f%@",
+                             img.size.width, img.size.height,
+                             TCPBadgeIsOurImage(img) ? @"*" : @""];
+                    }
+                    [kids addObject:k];
+                }
+                [badgeTree addObject:[NSString stringWithFormat:@"%@|%.0fx%.0f|%lu:[%@]",
+                                      NSStringFromClass([view class]),
+                                      view.bounds.size.width, view.bounds.size.height,
+                                      (unsigned long)view.subviews.count,
+                                      kids.count > 0 ? [kids componentsJoinedByString:@","] : @"-"]];
+            }
+            [stack addObjectsFromArray:view.subviews];
+        }
+    }
+    [sCensusBadgeTree removeAllObjects];
+    [sCensusBadgeTree addObjectsFromArray:badgeTree];
+
     sCensusRan++;
     sCensusRunning = NO;
 }
 
 NSString *TCPScreenCensusReport(void) {
     return [NSString stringWithFormat:
-            @"census{ran=%ld,views=%ld,ours=%ld,stock=%ld,layer{total=%ld,ours=%ld,stock=%ld},disp{total=%ld,ours=%ld},icon{views=%ld,ours=%ld,stock=%ld},is=[%@],s=[%@]}",
+            @"census{ran=%ld,views=%ld,ours=%ld,stock=%ld,layer{total=%ld,ours=%ld,stock=%ld},disp{total=%ld,ours=%ld},icon{views=%ld,ours=%ld,stock=%ld},is=[%@],s=[%@],badge=[%@]}",
             (long)sCensusRan, (long)sCensusViews, (long)sCensusOurs, (long)sCensusStock,
             (long)sCensusLayerTotal, (long)sCensusLayerOurs, (long)sCensusLayerStock,
             (long)sCensusDisplayedTotal, (long)sCensusDisplayedOurs,
             (long)sCensusIconViews, (long)sCensusIconOurs, (long)sCensusIconStock,
             sCensusIconSamples.count > 0 ? [sCensusIconSamples componentsJoinedByString:@";"] : @"-",
-            sCensusSamples.count > 0 ? [sCensusSamples componentsJoinedByString:@";"] : @"-"];
+            sCensusSamples.count > 0 ? [sCensusSamples componentsJoinedByString:@";"] : @"-",
+            sCensusBadgeTree.count > 0 ? [sCensusBadgeTree componentsJoinedByString:@";"] : @"-"];
 }
 
 NSString *TCPIconPixelProbeReport(void) {
