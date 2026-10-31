@@ -13,7 +13,7 @@
 #   sh scripts/errand-in-app.sh com.apple.Preferences 60 "主题美化 +" "生效主题"  # 依次点两个
 #
 # 输出（一次调用就把证据带回来）：
-#   - 目标 App 的截图路径（落在 /tmp，要给你看时再 cp 进工程用 file_show）
+#   - 目标 App 的截图路径（落在工程内 .tmp/，要给你看时用 file_show）
 #   - `icli ui tree` 的界面元素树（这是本机唯一可用的读树手段：
 #     `icli screen describe` 与 `icli screen ocr` 在这台机器上恒失败）
 #   - 最后一行永远是回程结果：`回到 Apelin: <前台 bundle-id>（外出 N 秒）`
@@ -46,7 +46,10 @@ if ! command -v uiopen >/dev/null 2>&1; then
 fi
 
 STAMP=$(date +%Y%m%d-%H%M%S)
-SHOT=${TMPDIR:-/tmp}/apelin-errand-$STAMP.jpg
+# 临时文件只写项目内（本机 /tmp 常写不进，见 AGENTS.md 硬规矩）
+TMPD="${APELIN_PROJECT_ROOT:-$PWD}/.tmp"
+mkdir -p "$TMPD" || { echo "建不了临时目录 $TMPD" >&2; exit 4; }
+SHOT="$TMPD/apelin-errand-$STAMP.jpg"
 START=$(date +%s)
 
 # 起 App：uiopen --bundleid（不弹卡）。回程也一样。

@@ -30,10 +30,12 @@ fi
 
 echo "== 技能包 =="
 if [ "$MODE" = diff ]; then
-  if diff -r "$HOME/Documents/wiki.qaq.apelin/skills" "$ROOT/skills" >/tmp/sync-all-skills.diff 2>&1; then
+  # 临时文件只写项目内（本机 /tmp 常写不进，见 AGENTS.md 硬规矩）
+  TMPD="$ROOT/.tmp"; mkdir -p "$TMPD"
+  if diff -r "$HOME/Documents/wiki.qaq.apelin/skills" "$ROOT/skills" >"$TMPD/sync-all-skills.diff" 2>&1; then
     echo "   本机与仓库一致"
   else
-    echo "   有差异（本机 vs 仓库）：" >&2; sed 's/^/   /' /tmp/sync-all-skills.diff >&2; RC=1
+    echo "   有差异（本机 vs 仓库）：" >&2; sed 's/^/   /' "$TMPD/sync-all-skills.diff" >&2; RC=1
   fi
 else
   sh "$ROOT/scripts/sync-skills.sh" push

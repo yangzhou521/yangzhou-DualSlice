@@ -45,14 +45,18 @@ CUT=$((NOW - WIN * 60))
 
 [ -d "$SESS" ] || { echo "fleet-live: 找不到 $SESS"; exit 1; }
 
+# 临时文件只写项目内（本机 /tmp 常写不进，见 AGENTS.md 硬规矩）
+TMPD="${APELIN_PROJECT_ROOT:-$PWD}/.tmp"
+mkdir -p "$TMPD" || { echo "fleet-live: 建不了临时目录 $TMPD" >&2; exit 1; }
+
 # 收集「需要处理」的行，供 alerts / ping 用
-ALERTS="/tmp/.fleet-alerts.$$"
+ALERTS="$TMPD/.fleet-alerts.$$"
 trap 'rm -f "$MARK" "$ALERTS"' EXIT INT TERM
 : > "$ALERTS"
 
 # 先用 mtime 把不活跃的对话整个跳过：events.jsonl 动辄几万行，
 # 全量 tail+反转义要 30 秒，只碰「这个窗口内写过字」的能压到几秒。
-MARK="/tmp/.fleet-live-mark.$$"
+MARK="$TMPD/.fleet-live-mark.$$"
 trap 'rm -f "$MARK" "$ALERTS"' EXIT INT TERM
 touch -d "-${WIN} minutes" "$MARK" 2>/dev/null || touch "$MARK"
 

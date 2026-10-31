@@ -97,6 +97,13 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
 - 面板：「面板能开、开关能拨，但插件没反应」九成是三处不一致——specifier 里的 `defaults`、插件读的偏好域、Darwin 通知名必须是同一个包 id。默认值永远不写盘，关掉就是原行为。
 - 偏好域写成目标 App 自己的 bundle id，`icli prefs read` 才读得到（沙箱里跨域写不进去）。
 
+## 8.5 临时文件：一律写项目内，绝不写 /tmp
+
+- 用户 2026-10-31 19:31 原话：「临时文件写不到 /tmp。用项目内的路径！」——**所有工程、所有对话永久适用**。
+- 本机 `/tmp`、`/var/tmp` 在不少调用路径上（`icli probe` 的 JavaScriptCore、Apelin 宿主工具、别的命名空间里跑的脚本）写不进或写进去也读不回；排查时白白折腾。
+- 写法：`TMPD="${APELIN_PROJECT_ROOT:?}/.tmp"; mkdir -p "$TMPD"`，用完删；`.tmp/` 已进 `.gitignore`。要长期留的产物放 `docs/`、`Attachments/`、`docs/cases/`。
+- 脚本里出现 `/tmp` 就是 bug：`scripts/sync-all.sh`、`scripts/errand-in-app.sh`（截图）、`scripts/fleet-live.sh`（临时标记）已全部改到 `.tmp/`。CI 工作流（macOS runner）里的 `/tmp` 不受此限。
+
 ## 9. 故障速查
 
 | 症状 | 先查 |
