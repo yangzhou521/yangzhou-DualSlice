@@ -482,10 +482,13 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   你来个通知或者弹窗让我知道这个！」，**所有工程、所有对话、永久适用**）**：
   - **push 前先告诉用户开 VPN**：每次 `git_push` 到 GitHub 前，先在正文说「现在要推送到你仓库，GitHub 国内被
     DNS 污染，请开 VPN」，等用户回「开了/继续/推送」再 push。绝不静默 push、绝不因「上一轮成功过」跳过告知。
+  - **开 VPN 必须弹窗让用户确定（2026-10-31 16:02 加）**：凡让用户开 VPN，一律用灵动岛**确认弹窗**（`?` 模式 /
+    `sh scripts/respring-guard.sh --ask 120 <标签>`）让用户点确定，不能只发纯文案胶囊或 `apelin_notification_send`
+    （那些不让人「确定」）。用户点「确定」后再 push。
+  - **push 成功 = VPN 通 = 只发一条灵动岛胶囊「已推送」，不再弹窗、不发通知**（2026-10-31 16:00 加）。
   - **push 失败 / 不能访问仓库 → 必须通知/弹窗让用户知道**：报网络错误（`failed to connect` /
-    `Operation timed out` / `SecureTransport OSStatus -9806`）时，正文说清原因 + `apelin_notification_send`
-    发一条通知（短标题 + 「push 失败，请检查 VPN」），或写灵动岛胶囊 `sh scripts/hud-notify.sh 8 "!push 失败，请开 VPN"`。
-    **不许静默失败、不许空转重试十几遍不吭声**。等用户确认 VPN 就绪再重试。
+    `Operation timed out` / `SecureTransport OSStatus -9806`）时，正文说清原因 + 胶囊
+    `sh scripts/hud-notify.sh 8 "!push 失败，请开 VPN"`。**不许静默失败、不许空转重试十几遍不吭声**。等用户确认 VPN 就绪再重试。
   - **原因**：GitHub 在国内被 DNS 污染，不能直连。本机实测（2026-10-31 15:4x）：github.com 普通 HTTPS
     （NSData / icli probe / apelin_web_fetch）有时能通，但 Apelin 的 `git_push` 走另一条网络路径，
     不开 VPN 就反复超时，开 VPN 后立刻恢复。
