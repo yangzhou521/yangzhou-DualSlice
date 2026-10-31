@@ -12,6 +12,7 @@
 #import <UIKit/UIKit.h>
 
 #import "ThemeCorePlusKeys.h"
+#import "ThemeCorePlusPaths.h"
 #import "ThemeCorePlusPreferences.h"
 #import "ThemeCorePlusStore.h"
 #import "ThemeCorePlusLog.h"
@@ -196,9 +197,60 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
 @interface TCPThemeChooserController : UITableViewController
 @end
 
+#pragma mark 行的副标题（第几层 + 这个目录里有几件素材）
+
+// 素材分类的中文名（分类常量在 ThemeCorePlusStore.h，判定在引擎里，面板只负责显示）。
+static NSString *TCPMaterialLabel(NSString *kind) {
+    if ([kind isEqualToString:TCPMaterialIcons]) return @"图标";
+    if ([kind isEqualToString:TCPMaterialFolders]) return @"文件夹";
+    if ([kind isEqualToString:TCPMaterialBadges]) return @"角标";
+    if ([kind isEqualToString:TCPMaterialFiles]) return @"界面图";
+    return kind;
+}
+
+// 偏好里**存着**的叠加链（不管总开关开没开）：路径照当前隐根重解析一遍。
+// 为什么要单独读一次：总开关关掉时引擎不解析主题（store.themePaths 变成空数组），
+// 但用户原来选的那几层还躺在偏好里；面板若照着 store 显示，就会把「存着两层」显示成
+// 「全都关着」，接着随便拨一下就把那两层覆盖掉。面板要显示的是「存着什么」。
+static NSArray<NSString *> *TCPStoredThemeChain(void) {
+    NSMutableArray<NSString *> *chain = [NSMutableArray array];
+    NSDictionary *values = TCPReadPreferences() ?: @{};
+
+    id raw = values[TCPKeyThemePaths];
+    if ([raw isKindOfClass:[NSArray class]]) {
+        for (id entry in (NSArray *)raw) {
+            if (chain.count >= TCPMaxThemeLayers) break;
+            if (![entry isKindOfClass:[NSString class]] || [entry length] == 0) continue;
+            NSString *resolved = TCPReResolveThemePath((NSString *)entry);
+            if (resolved.length > 0 && ![chain containsObject:resolved]) [chain addObject:resolved];
+        }
+    }
+    if (chain.count > 0) return chain;
+
+    // 旧写法（单主题两个键）：ThemePath 优先，其次按 ThemeName 在主题根里找。
+    id single = values[TCPKeyThemePath];
+    if ([single isKindOfClass:[NSString class]] && [single length] > 0) {
+        NSString *resolved = TCPReResolveThemePath((NSString *)single);
+        if (resolved.length > 0) return @[ resolved ];
+    }
+    id name = values[TCPKeyThemeName];
+    if ([name isKindOfClass:[NSString class]] && [name length] > 0) {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        for (NSString *root in TCPSourceThemeRoots()) {
+            for (NSString *candidate in @[ name, [(NSString *)name stringByAppendingPathExtension:@"theme"] ]) {
+                NSString *full = [root stringByAppendingPathComponent:candidate];
+                BOOL isDir = NO;
+                if ([fm fileExistsAtPath:full isDirectory:&isDir] && isDir) return @[ full ];
+            }
+        }
+    }
+    return @[];
+}
+
 @implementation TCPThemeChooserController {
     NSArray<NSString *> *_rows;             // 主题目录，一行一个（顶部「系统原生外观」那行已删）
     NSMutableArray<NSString *> *_selected;  // 勾选顺序 = 叠加顺序：靠后的主题覆盖靠前的
+    NSDictionary<NSString *, NSDictionary *> *_summaries;   // 每行素材件数：进页面时扫一次，滚动不再扫盘
 }
 
 - (instancetype)initWithStyle:(UITableViewStyle)style {
@@ -255,9 +307,29 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     for (NSString *path in store.themePaths) {
         if ([path isKindOfClass:[NSString class]] && path.length > 0) [_selected addObject:path];
     }
+    // 总开关关着时引擎不解析主题，store.themePaths 是空的 —— 但偏好里存着的层还在。
+    // 这时按偏好原文显示（见 TCPStoredThemeChain 的注释），面板才不会把「存着两层」显示成「全关」。
+    if (_selected.count == 0) {
+        for (NSString *path in TCPStoredThemeChain()) {
+            if (![_selected containsObject:path]) [_selected addObject:path];
+        }
+    }
     // 只列主题本身。「系统原生外观」那一行已删（用户 2026-10-30 17:03）：
     // 想回滚就把开着的层一层层关掉（拨开关、点这一行都行），空链就是系统原生外观。
-    _rows = [store availableThemePaths] ?: @[];
+    NSMutableArray<NSString *> *rows = [NSMutableArray arrayWithArray:([store availableThemePaths] ?: @[])];
+    // 开着的层必须在表里有一行，否则用户关不掉它：主题目录被改名/少了素材探针文件时，
+    // availableThemePaths 就不再列它，而偏好里还挂着它 —— 补到表尾。
+    for (NSString *path in _selected) {
+        if (![rows containsObject:path]) [rows addObject:path];
+    }
+    _rows = [rows copy];
+    // 每行的素材件数在这里算一次（浅扫目录，不读图）：滚动时 cellForRow 只查表，不再扫盘。
+    NSMutableDictionary<NSString *, NSDictionary *> *summaries = [NSMutableDictionary dictionary];
+    for (NSString *path in _rows) {
+        NSDictionary *summary = [store materialSummaryForThemePath:path];
+        summaries[path] = summary ?: @{};
+    }
+    _summaries = [summaries copy];
     [self.tableView reloadData];
 }
 
@@ -281,6 +353,28 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
         }
     }
     return index == NSNotFound ? 0 : (NSInteger)index + 1;
+}
+
+// 行的副标题：这一层排第几（叠加顺序靠后的覆盖靠前的）+ 这个目录里各类素材各有几件。
+// 本次修：这一行以前从来没被赋过值 —— rowHeight 62 给副标题留的位置一直是空的，
+// 用户看不出「哪一层在上面」，也看不出一个主题到底带了什么（四个分类开关已经删了）。
+- (NSString *)tcpSubtitleForPath:(NSString *)path layer:(NSInteger)layer total:(NSInteger)total {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+
+    if (layer > 0) {
+        NSString *rank = [NSString stringWithFormat:@"第 %ld 层", (long)layer];
+        if (total > 1 && layer == total) rank = [rank stringByAppendingString:@"（最上层）"];
+        [parts addObject:rank];
+    }
+
+    NSDictionary<NSString *, NSNumber *> *summary = _summaries[path] ?: @{};
+    for (NSString *kind in @[ TCPMaterialIcons, TCPMaterialFolders, TCPMaterialBadges, TCPMaterialFiles ]) {
+        NSInteger count = summary[kind].integerValue;
+        if (count <= 0) continue;
+        [parts addObject:[NSString stringWithFormat:@"%@ %ld", TCPMaterialLabel(kind), (long)count]];
+    }
+
+    return parts.count > 0 ? [parts componentsJoinedByString:@" · "] : @"这个目录里没有素材";
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
@@ -328,6 +422,9 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     cell.tcpSwitch.enabled = YES;
     cell.tcpSwitch.tag = (NSInteger)indexPath.row;
     cell.tcpSwitch.on = (layer > 0);
+    cell.detailTextLabel.text = [self tcpSubtitleForPath:path
+                                                   layer:layer
+                                                   total:(NSInteger)_selected.count];
     [cell.tcpSwitch addTarget:self action:@selector(tcpSwitchChanged:) forControlEvents:UIControlEventValueChanged];
     return cell;
 }
@@ -436,9 +533,8 @@ static NSString *TCPDiagnosticsText(NSUInteger limit) {
     }
     NSString *state = @"系统原生外观";
     if (current.length > 0) {
-        state = active.count > 1
-            ? [NSString stringWithFormat:@"%@（%lu 层）", current, (unsigned long)active.count]
-            : current;
+        // store.themeName 已经是「按叠加顺序用 + 连起来」的全名，再补「（N 层）」只是重复一遍。
+        state = current;
     }
 
     PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:@"选择主题"
