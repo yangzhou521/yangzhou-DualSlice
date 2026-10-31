@@ -45,9 +45,9 @@
 
 改完源码 push 到 `main`：只有 `ThemeCorePlus/**`、`Prefs/**`、`Support/ThemeCorePlus*`、
 `scripts/build-themecoreplus.sh`、工作流自身变动才会触发（paths 过滤），以免白白重建已经验过的包。
-同一次运行里发 Release（静态 tag 与包版本一致，当前 `themecoreplus-v0.9.18`，每次运行都重建资产，sha256/体积会变）。
+同一次运行里发 Release（静态 tag 与包版本一致，当前 `themecoreplus-v0.9.19`，每次运行都重建资产，sha256/体积会变）。
 Release 资产地址：
-`https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.9.18/com.yangzhou.themecoreplus_0.9.18_iphoneos-arm64e.deb`
+`https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.9.19/com.yangzhou.themecoreplus_0.9.19_iphoneos-arm64e.deb`
 
 **tag 必须与包版本一致**：改版本时 `scripts/build-themecoreplus.sh` 的 `VERSION` 与工作流的
 `env.VERSION`、`tag_name`、release 名、`deb-url` 注解要一起改。2026-10-30 17:19 那次只改了脚本
@@ -58,29 +58,38 @@ Release 资产地址：
 公开仓库的 annotations 匿名可读（`/repos/{owner}/{repo}/check-runs/{id}/annotations`）。
 本机没有 curl/wget/python3，查状态用 `icli probe` + `NSData`/`NSURLForString` 调 GitHub API。
 
-## 桌面图标布局保存（ThemeCorePlus 0.9.18 起）
+## 桌面图标布局保存（ThemeCorePlus 0.9.18 起，0.9.19 补诊断）
 
 用户的病灶：「图标注销/崩溃后不保存，回到旧摆位」。全部逻辑在 `ThemeCorePlus/Sources/ThemeCorePlusLayout.m`
-（**只改这一个文件**，Icons/Badges/Store 不碰），诊断在 `ThemeCorePlusMain.m` 的 `lay{...}` 段：
+（**只改这一个文件**，Icons/Badges/Store 不碰）。诊断有两条：
+
+- `ThemeCorePlusLayout`（0.9.19 起，**看它，tick 最多旧 60 秒**）：
+  `sh scripts/device.sh read com.apple.springboard ThemeCorePlusLayout`
+- 主诊断 `ThemeCorePlusDiagnostics` 里嵌的 `lay{...}`：**只在启动那几轮 / 面板改设置时才重写**，
+  读到的是那一刻的快照，别拿它判断定时器现在活没活。
 
 ```
-lay{rst=N,sav=N,tick=N,last=<原因>,force=N,site=<挂上的保存方法|none>}
+lay{rst=N,sav=N,tick=N,force=N,site=<挂上的保存方法|none>,last=<原因>}
 ```
 
-- **0.9.18 的真正 bug：`tick=0`** —— `dispatch_source_t` 原来是 `TCPLayoutInstall()` 里的局部变量，
+- **0.9.17 及以前的真正 bug：`tick=0`** —— `dispatch_source_t` 原来是 `TCPLayoutInstall()` 里的局部变量，
   文件用 `-fobjc-arc` 编译，函数返回时源被释放并取消，handler 一次都没跑过（恢复是同步调用，所以照跑）。
   修法：文件级静态 `sLayoutTimer` 持有；定时器跑**主队列**（碰 `SBIconModel` 必须主线程）。
+- 0.9.19 起每拍自己写一次 `ThemeCorePlusLayout`（状态一变立刻写，没变最多每 60 秒写）：
+  `tick` 会一直涨；`last` 会写 `baseline`/`nomodel`/`nosignature`/`forced:changed`/`forcefail`，
+  一眼看出这一拍在干什么。没有这条键 = 这个进程没跑 0.9.19 的代码。
 - 每 5 秒一拍：① 类晚到了就补挂保存站；② `IconState.plist` 比备份新 → 跟存；
   ③ 活的模型摆位签名（`leafIcons` 的 identifier + indexPath/gridPosition）变了 → 主动让系统写盘。
 - 保存站只挂**零参数**方法（`saveIconState` / `_saveIconState` / `persistIconState`，
   `method_getNumberOfArguments == 2` 才挂）。钩子签名是 `(id, SEL)`，带参数的版本
   （`saveIconStateAndWait:` 之类）挂上去会丢参数，把系统写盘弄坏 —— 一律不碰。
+  主动保存时先试 `SBIconModel`，再试 `SBIconController`（有的版本挂在控制器上），同样只调零参数版本。
 - 恢复规则（0.9.17 起不再无条件覆盖）：内容相同 → 一个字节不动（`last=keepsource`）；
   系统那份缺失/坏了 → 回填（`last=restored`）；**备份比系统那份新**（崩溃前系统没写盘）→ 回填
   （`last=restored:newer`）。
 - 路径：源 `/var/mobile/Library/SpringBoard/IconState.plist`，备份
   `/var/mobile/Library/ThemeCorePlus/IconState.backup.plist`（shell 里要加真根 `/rootfs` 前缀）。
-- 验收：① 挪个图标等 30 秒 → `sav` 涨、备份 mtime 变新；② 注销后图标还在且 `rst=0`；
+- 验收：① 挪个图标等 30 秒 → `sav` 涨、`force` 涨、备份 mtime 变新；② 注销后图标还在且 `rst=0`；
   ③ 把 `IconState.plist` 挪走再注销 → `rst=1,last=restored`；④ `apelin_crash_list` 无新报告。
 - 已实测（2026-10-31）：0.9.17 装机后 `tick=0`（两分钟两次读数都不动）＝上表那条 ARC 根因；
   系统那份与备份内容只差一个 UUID 字符串（说明系统确实在写盘，摆位没丢）。

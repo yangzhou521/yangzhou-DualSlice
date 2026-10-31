@@ -265,47 +265,85 @@ static NSString *TCPLayoutSignature(id model) {
 }
 
 // 让系统自己把当前布局写进 IconState.plist（走我们挂上的那站，会顺带跟存备份）。
-static BOOL TCPLayoutAskSystemToSave(id model) {
-    for (int i = 0; i < sLayoutSlotCount; i++) {
-        SEL sel = sLayoutSlots[i].sel;
-        if (![model respondsToSelector:sel]) continue;
+// 只调零参数版本：多一个参数的保存方法（saveIconStateAndWait: 之类）被我们无参调用会丢掉参数。
+static BOOL TCPLayoutAskObjectToSave(id object) {
+    if (object == nil) return NO;
+    for (NSString *name in @[ @"saveIconState", @"_saveIconState", @"persistIconState" ]) {
+        SEL sel = NSSelectorFromString(name);
+        Method method = class_getInstanceMethod(object_getClass(object), sel);
+        if (method == NULL) continue;
+        if (method_getNumberOfArguments(method) != 2) continue;
         @try {
-            ((void (*)(id, SEL))objc_msgSend)(model, sel);
-            return YES;
-        } @catch (NSException *e) {}
-    }
-    SEL fallback = NSSelectorFromString(@"saveIconState");
-    if ([model respondsToSelector:fallback]) {
-        @try {
-            ((void (*)(id, SEL))objc_msgSend)(model, fallback);
+            ((void (*)(id, SEL))objc_msgSend)(object, sel);
             return YES;
         } @catch (NSException *e) {}
     }
     return NO;
 }
 
+static BOOL TCPLayoutAskSystemToSave(id model) {
+    if (TCPLayoutAskObjectToSave(model)) return YES;
+    // 有的系统版本把保存挂在控制器上而不是模型上。
+    Class controllerClass = objc_getClass("SBIconController");
+    if (controllerClass == Nil) return NO;
+    SEL sharedSelector = NSSelectorFromString(@"sharedInstance");
+    if (![controllerClass respondsToSelector:sharedSelector]) return NO;
+    id controller = ((id (*)(id, SEL))objc_msgSend)((id)controllerClass, sharedSelector);
+    return TCPLayoutAskObjectToSave(controller);
+}
+
 // ── 每 5 秒一拍（主线程） ─────────────────────────────────────────────────
 
-static void TCPLayoutTick(void) {
-    __sync_fetch_and_add(&sLayoutTicks, 1);
-
+static void TCPLayoutTickBody(void) {
     TCPLayoutHookSave();                 // 类晚到也能补挂
 
     TCPLayoutBackupIfNewer(@"timer");    // 系统自己写过 → 跟存
 
     id model = TCPLayoutIconModel();
-    if (model == nil) return;
+    if (model == nil) { TCPLayoutNote(@"nomodel"); return; }
     NSString *signature = TCPLayoutSignature(model);
-    if (signature == nil) return;
+    if (signature == nil) { TCPLayoutNote(@"nosignature"); return; }
     NSString *previous = sLayoutSignature;
     sLayoutSignature = signature;
-    if (previous == nil) return;                         // 第一次只记基线
-    if ([previous isEqualToString:signature]) return;     // 没动过
+    if (previous == nil) { TCPLayoutNote(@"baseline"); return; }   // 第一次只记基线
+    if ([previous isEqualToString:signature]) return;              // 没动过
 
     if (TCPLayoutAskSystemToSave(model)) {
         __sync_fetch_and_add(&sLayoutForced, 1);
+        TCPLayoutNote(@"forced:changed");
         TCPLayoutBackupIfNewer(@"changed");
+    } else {
+        TCPLayoutNote(@"forcefail");
     }
+}
+
+// 单独一条轻量诊断键：主诊断（Main.m 那条）只在启动那几轮和面板改设置时才重写，
+// 里面嵌的 lay{} 会停在启动那一刻 —— 2026-10-31 09:0x 就被它骗过一次（读到 tick=0
+// 无法区分「定时器没跑」和「诊断没刷新」）。所以这里每拍自己写一次：
+// 状态（rst/sav/force/site/last）变了立刻写，没变也最多每 12 拍（60 秒）写一次，
+// 保证读到的 tick 最多旧一分钟，而且不刷整个主诊断（那要跑普查，太重）。
+static void TCPLayoutPublish(void) {
+    static NSString *publishedState = nil;
+    static int publishedTick = -1;
+    NSString *state = [NSString stringWithFormat:@"%d/%d/%d/%@/%@",
+                       (int)sLayoutRestored, (int)sLayoutSaved, (int)sLayoutForced,
+                       sLayoutSite, sLayoutLast];
+    BOOL changed = (publishedState == nil) || ![publishedState isEqualToString:state];
+    if (!changed && publishedTick >= 0 && sLayoutTicks - publishedTick < 12) return;
+    publishedState = [state copy];
+    publishedTick = (int)sLayoutTicks;
+
+    NSString *text = TCPLayoutDiagnostics();
+    CFPreferencesSetAppValue(CFSTR("ThemeCorePlusLayout"),
+                             (__bridge CFPropertyListRef)text,
+                             kCFPreferencesCurrentApplication);
+    CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+}
+
+static void TCPLayoutTick(void) {
+    __sync_fetch_and_add(&sLayoutTicks, 1);
+    TCPLayoutTickBody();
+    TCPLayoutPublish();                  // 每拍（或状态一变）现写，tick 才可信
 }
 
 void TCPLayoutInstall(void) {
@@ -339,6 +377,9 @@ void TCPLayoutInstall(void) {
             dispatch_resume(sLayoutTimer);
         }
     }
+
+    // 构造函数阶段就把这条轻量诊断写出去：等第一拍要 5 秒，中间读诊断也不该是空的。
+    TCPLayoutPublish();
 }
 
 NSString *TCPLayoutDiagnostics(void) {

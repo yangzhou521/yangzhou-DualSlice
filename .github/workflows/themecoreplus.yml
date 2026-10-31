@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.18
+  VERSION: 0.9.19
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.18)
+    name: Release (themecoreplus-v0.9.19)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,12 +185,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.18
-          name: ThemeCorePlus v0.9.18
+          tag_name: themecoreplus-v0.9.19
+          name: ThemeCorePlus v0.9.19
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.18 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.19 —— MarkTheme 式的主题引擎，作者 yangzhou。
 
-            v0.9.18：
+            v0.9.19：
 
             1. **桌面图标布局真的会保存了**（用户 2026-10-31 09:07 报「图标不保存」）：
                0.9.17 及以前诊断里 `lay{tick=0}` —— 兜底定时器一次都没跑过。
@@ -205,6 +205,11 @@ jobs:
                不再无条件覆盖（那是 0.9.16 的老毛病）。
             4. **诊断可核对**：`lay{rst,sav,tick,force,site,last}` —— `tick` 必须持续增长，
                `site=` 写明挂上了哪个保存方法（`none` = 一个都没挂上）。
+            5. **0.9.19：`lay{}` 改成每拍现写**（键 `ThemeCorePlusLayout`）。主诊断只在启动那几轮重写，
+               里面嵌的 `lay{}` 会停在启动那一刻，`tick=0` 分不清「定时器没跑」还是「诊断没刷新」。
+               现在状态一变立刻写、没变也最多每 60 秒写一次；`last=` 另外会写
+               `baseline`/`nomodel`/`nosignature`/`forced:changed`/`forcefail`，一眼看出这一拍在干什么。
+               主动保存也补了「控制器上的零参数保存方法」这条退路（仍然只调零参数版本）。
 
             v0.9.11：
 
@@ -312,7 +317,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.18/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.19/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'
