@@ -44,6 +44,7 @@ static NSString *sBadgeProbe = nil;
 static NSInteger sBadgeBackLook = 0, sBadgeBackHit = 0;
 static NSInteger sBadgeTupleLook = 0, sBadgeTupleHit = 0;
 static NSInteger sBadgeTextLook = 0, sBadgeTextHit = 0;
+static NSInteger sBadgeHostClears = 0;   // 0.9.26：ourHost 的 contents 被清过几次
 
 // —— 0.9.11：单层化，把「系统自己画的那层底板」清掉 ——
 // 本机实测（诊断串，2026-10-31 04:2x）：
@@ -234,6 +235,16 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
                 layer.contents = nil;
                 touched = YES;
             }
+        } else if ([target isKindOfClass:[UIImageView class]] &&
+                   TCPBadgeImageIsOurs(((UIImageView *)target).image)) {
+            // 0.9.26：ourHost 是装着我们那张图的 UIImageView。它的 layer.contents 由 UIKit 从
+            // `image` 渲染，所以**清掉 contents 不会丢我们的图**（下一帧会照 image 重画），
+            // 却能把混在 contents 里的系统红底/暗化底一并抹掉 —— 只清底色清不干净时走这一步。
+            if (layer.contents != NULL) {
+                layer.contents = nil;
+                sBadgeHostClears++;
+                touched = YES;
+            }
         }
         if (touched) cleared++;
         if (names.count < 6) {
@@ -285,6 +296,7 @@ void TCPBadgeResetStations(void) {
     sBadgeBackLook = sBadgeBackHit = 0;
     sBadgeTupleLook = sBadgeTupleHit = 0;
     sBadgeTextLook = sBadgeTextHit = 0;
+    sBadgeHostClears = 0;
     sBadgeComposedServed = NO;
 }
 
@@ -309,14 +321,14 @@ BOOL TCPBadgeBackgroundServed(void) {
 NSString *TCPBadgeProbeReport(void) {
     return [NSString stringWithFormat:
             @"%@;bg{look=%ld,hit=%ld};tup{look=%ld,hit=%ld};txt{look=%ld,hit=%ld};gate=%@;"
-            @"sys{look=%ld,hid=%ld,wait=%ld,skip=%ld,tree=%@};v{lay=%ld,cfg=%ld,mv=%ld,lo=%ld}",
+            @"sys{look=%ld,hid=%ld,wait=%ld,skip=%ld,host=%ld,tree=%@};v{lay=%ld,cfg=%ld,mv=%ld,lo=%ld}",
             sBadgeProbe ?: @"badge=-",
             (long)sBadgeBackLook, (long)sBadgeBackHit,
             (long)sBadgeTupleLook, (long)sBadgeTupleHit,
             (long)sBadgeTextLook, (long)sBadgeTextHit,
             TCPBadgeBackgroundServed() ? @"text-only" : @"composed",
             (long)sBadgeSysLook, (long)sBadgeSysHidden, (long)sBadgeSysWait,
-            (long)sBadgeSysSkip,
+            (long)sBadgeSysSkip, (long)sBadgeHostClears,
             sBadgeSysTree ?: @"-",
             (long)sBadgeLayoutCalls, (long)sBadgeConfigCalls, (long)sBadgeMoveCalls,
             (long)sBadgeLayCalls];

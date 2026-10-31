@@ -34,6 +34,12 @@ deb_sha256=
 #             CI run 41170666488（提交 96225051，success；前一个 run 41170405550 失败于 Layout.m:453 少一个 `]`）。
 #   0.9.26 = 角标新版本（6c78afa4 在出，0.9.24 之后）。
 #   0.9.27 = 图标加载修复（157b2985 在出：Icons.m/Store.m 指纹接线 + 像素统计 memo）。
-#   HUD 1.6.1 = countdownhud-v1.6.1（3e983c10，run 41168223032 success，deb 21976 B）。
+#   HUD 1.6.1 = countdownhud-v1.6.1（3e983c10）：弹窗点「立即注销」后由**插件自己** spawn
+#             `<jbroot>/usr/bin/sbreload`（dladdr 推根，退 /usr/bin、/var/jb/usr/bin，再退 SIGTERM 让 launchd 拉起）；
+#             新增 `.countdownhud-no-respring` 标记（存在时只写答案不注销）；诊断加 `exec=spawned|skip-marker|term|fail|-`。
+#             提交 c3df48f0，CI run 41168223032 success，deb 21976 B，sha256 a65102d9…，
+#             已下载到 /rootfs/var/mobile/Documents/com.yangzhou.countdownhud_1.6.1_iphoneos-arm64e.deb。
+#             【第 1 轮注销】HUD 是独立包（com.yangzhou.countdownhud），不走 ThemeCorePlus 的锁 ——
+#             由调度台 f8fbdbd5 排：装机 → 弹窗 → 用户当轮点头 → 5 秒 → 注销 → 读 `exec=`。
 updated=2026-10-31 12:55
 note=0.9.23 = 0.9.22 的纯诊断版（probe=/hooked=），Release 已发不覆盖，是**当前机上实际在跑的版本**。0.9.22 已实测修好安全模式（无新崩溃）。0.9.21 作废永不复用。0.9.24+0.9.25+0.9.26+0.9.27 与 HUD 1.6.1 计划**合并成一次装机 + 一次注销**（HUD 1.6.1 单独一轮已放行给 3e983c10）。
