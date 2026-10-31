@@ -62,11 +62,12 @@ static void TCPWriteDiagnostics(void) {
 
     // 像素自检（gen{}/pix{}）原来写好了却没接进来，诊断里一直看不到 —— 2026-10-30 15:4x 接上：
     // 「图标没换」到底是①我们合成把图抹透明了、还是②屏幕上挂的压根不是我们那张图，靠这组数区分。
-    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
                       [store diagnostics], TCPDisplayProbeReport(), TCPRefreshProbeReport(),
                       TCPIconProbeReport(),
                       TCPBadgeProbeReport(), TCPIconPixelProbeReport(),
                       TCPScreenCensusReport(),
+                      TCPDynamicProbeReport(), TCPClockViewProbeReport(), TCPFolderProbeReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
                       TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText];
     TCPWriteProcessPreference(TCPKeyDiagnostics, text);
@@ -151,6 +152,10 @@ static void TCPReload(BOOL refreshImages) {
     TCPInstallIconSites();
     TCPInstallDisplaySites();
     TCPInstallBadgeSites();
+    // 时钟图标的视图站（0.9.17 写好、1.0.0 精简时漏了调用）：时钟从不走图标取图那几站，
+    // 它自己画表盘和指针，只能挂 SBHClockApplicationIconImageView 的 layoutSubviews。
+    // 类还没加载时它自己会返回，下一轮再挂。
+    TCPInstallClockViewSite();
     TCPRelayoutIcons();
 
     // 每次重载记一行「这一轮解析成什么样」，另起一行贴素材快照：面板「运行日志」里看到的就是
@@ -191,6 +196,8 @@ static void TCPRunCensusAndWrite(void) {
         return;
     }
     TCPRunScreenCensus();
+    // 文件夹预览取证（只读）：必须和普查一起、在主线程、图标都建好之后跑。
+    TCPProbeFolderViews();
     TCPWriteDiagnostics();
     os_log(TCPLogHandle(), "TCPS_CENSUS %{public}@", TCPScreenCensusReport());
 }

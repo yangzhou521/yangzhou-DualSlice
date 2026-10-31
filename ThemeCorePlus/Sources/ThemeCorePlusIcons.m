@@ -629,6 +629,63 @@ NSString *TCPClockViewProbeReport(void) {
             (long)sClockVLook, (long)sClockVHit, (long)sClockVMiss, sClockVLast];
 }
 
+// —— 文件夹预览（收起状态）取证 ——
+//
+// 用户 2026-10-31 17:09：「文件夹里的图标打开时是正常显示，文件夹不点开时是原图标」。
+// 打开后看到的是独立的 SBIconImageView（显示层站管得到）；收起时那张预览图是
+// SBFolderIconImageView 自己把 mini 图标拼成的一张图，mini 图标是不是独立的
+// SBIconImageView 实例决定了显示层站能不能摸到它。
+// 这里只读地扫一遍窗口树：数出文件夹视图几个、它们直接子视图的类名/尺寸/手里那张图归谁。
+// 不碰任何视图状态，一次装包就能判定该挂哪一层。
+static NSInteger sFolderViewCount = 0;
+static NSMutableArray<NSString *> *sFolderViewSamples = nil;
+
+void TCPProbeFolderViews(void) {
+    if (![NSThread isMainThread]) return;
+    Class folderClass = NSClassFromString(@"SBFolderIconImageView");
+    if (folderClass == Nil) return;
+    if (sFolderViewSamples == nil) sFolderViewSamples = [NSMutableArray array];
+    [sFolderViewSamples removeAllObjects];
+    sFolderViewCount = 0;
+
+    TCPThemeStore *store = [TCPThemeStore shared];
+    NSMutableArray *stack = [NSMutableArray array];
+    for (UIWindow *window in [UIApplication sharedApplication].windows) [stack addObject:window];
+    NSUInteger guard = 0;
+    while (stack.count > 0 && guard++ < 6000) {
+        UIView *view = [stack lastObject];
+        [stack removeLastObject];
+        if ([view isKindOfClass:folderClass]) {
+            sFolderViewCount++;
+            if (sFolderViewSamples.count < 4) {
+                NSMutableArray<NSString *> *kids = [NSMutableArray array];
+                for (UIView *sub in view.subviews) {
+                    NSString *line = [NSString stringWithFormat:@"%@|%.0fx%.0f",
+                                      NSStringFromClass([sub class]),
+                                      sub.bounds.size.width, sub.bounds.size.height];
+                    if ([sub isKindOfClass:[UIImageView class]]) {
+                        UIImage *image = ((UIImageView *)sub).image;
+                        line = [line stringByAppendingFormat:@"|%@",
+                                image == nil ? @"nil"
+                                             : ([store isRenderedImage:image] ? @"ours" : @"stock")];
+                    }
+                    [kids addObject:line];
+                }
+                [sFolderViewSamples addObject:[NSString stringWithFormat:@"%.0fx%.0f[%@]",
+                                               view.bounds.size.width, view.bounds.size.height,
+                                               [kids componentsJoinedByString:@";"]]];
+            }
+        }
+        [stack addObjectsFromArray:view.subviews];
+    }
+}
+
+NSString *TCPFolderProbeReport(void) {
+    return [NSString stringWithFormat:@"folderv{n=%ld,s=[%@]}", (long)sFolderViewCount,
+            sFolderViewSamples.count > 0
+                ? [sFolderViewSamples componentsJoinedByString:@";"] : @"-"];
+}
+
 // —— 视图层：屏幕上到底挂了什么 ——
 static NSInteger sPixelViews = 0;
 static NSInteger sPixelThemed = 0;        // 视图 displayedImage 交出来的就是我们合的图
