@@ -69,6 +69,8 @@ static volatile int sLayoutForced = 0;
 static volatile int sLayoutSafeSkip = 0;       // 上次崩在重活里 → 这次整段跳过（诊断 safeskip=1）
 static volatile int sLayoutEnumRan = 0;        // 类枚举真的跑过一遍（护栏可以撤了）
 static volatile int sLayoutGuardCleared = 0;
+static volatile int sLayoutHooked = 0;         // 本进程真正挂上的站数（区分 prefs 里的历史残留）
+static volatile int sLayoutSaves = 0;          // 本进程保存站被系统调用过几次
 static NSString *sLayoutLast = @"-";
 
 // ── 保存站 / 图标列表站（一站一槽：每个 (类, 选择器) 一格，绝不按 self 的类反查总表）──
@@ -333,9 +335,15 @@ static id tcpLayoutLeafHook(id self, SEL _cmd) {
 static NSArray<Class> *TCPLayoutCandidateClasses(void) {
     NSMutableArray *out = [NSMutableArray array];
     Class base = objc_getClass("SBIconModel");
-    if (base == Nil) return out;
+    if (base == Nil) {
+        sLayoutProbe = @"base=nil";       // 类根本没进 dyld：这一拍什么也挂不了
+        return out;
+    }
     int count = objc_getClassList(NULL, 0);
-    if (count <= 0) return out;
+    if (count <= 0) {
+        sLayoutProbe = @"classlist=0";
+        return out;
+    }
     Class *classes = (Class *)malloc(sizeof(Class) * (size_t)count);
     if (classes == NULL) return out;
     count = objc_getClassList(classes, count);
@@ -347,6 +355,12 @@ static NSArray<Class> *TCPLayoutCandidateClasses(void) {
         if (TCPLayoutClassDescendsFrom(c, base)) [out addObject:c];
     }
     free(classes);
+    if (out.count == 0) {
+        // 类表里有 SBIconModel 这个名字，却没有任何类沿父链走得到它 —— 记下来，
+        // 免得「挂不上」只有 noinstance 一个症状、看不出是枚举还是挂站的问题。
+        sLayoutProbe = [NSString stringWithFormat:@"base=%@,scanned=%d,hit=0",
+                        NSStringFromClass(base), count];
+    }
     return out;
 }
 
@@ -410,6 +424,7 @@ static void TCPLayoutHookSave(void) {
             sLayoutSlots[sLayoutSlotCount].orig = orig;
             sLayoutSlots[sLayoutSlotCount].kind = kind;
             sLayoutSlotCount++;
+            __sync_fetch_and_add(&sLayoutHooked, 1);   // 本进程真挂上的站数
 
             NSString *entry = [NSString stringWithFormat:@"-%@:%@",
                                NSStringFromClass(cls), NSStringFromSelector(sel)];
@@ -659,7 +674,8 @@ void TCPLayoutInstall(void) {
 }
 
 NSString *TCPLayoutDiagnostics(void) {
-    return [NSString stringWithFormat:@"lay{rst=%d,sav=%d,tick=%d,force=%d,site=%@,model=%@,last=%@,probe=%@,safeskip=%d}",
+    return [NSString stringWithFormat:@"lay{rst=%d,sav=%d,tick=%d,force=%d,site=%@,model=%@,last=%@,probe=%@,safeskip=%d,hooked=%d}",
             (int)sLayoutRestored, (int)sLayoutSaved, (int)sLayoutTicks, (int)sLayoutForced,
-            sLayoutSite, sLayoutModelPath, sLayoutLast, sLayoutProbe, (int)sLayoutSafeSkip];
+            sLayoutSite, sLayoutModelPath, sLayoutLast, sLayoutProbe, (int)sLayoutSafeSkip,
+            (int)sLayoutHooked];
 }
