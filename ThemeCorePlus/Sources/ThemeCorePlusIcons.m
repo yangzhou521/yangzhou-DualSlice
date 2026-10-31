@@ -494,6 +494,9 @@ BOOL TCPIconNeedsSystemComposite(id icon) {
     return TCPBundleIsDynamic(TCPIconBundleIdentifier(icon));
 }
 
+// 1.0.7：日历的「数字层」提取（定义在文件后面）。
+static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *systemImage, BOOL darkBase);
+
 UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *systemImage) {
     if (icon == nil || info.size.width <= 0 || info.size.height <= 0) return nil;
     NSString *bundleID = TCPIconBundleIdentifier(icon);
@@ -576,9 +579,6 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
     TCPNoteComposedImage(result, bundleID);
     return result;
 }
-
-// 1.0.7：日历的「数字层」提取（定义在下面）。
-static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *systemImage, BOOL darkBase);
 
 // 1.0.7：日历的「数字层」提取。
 // 为什么不能用混合模式（用户 2026-10-31 20:31「日历和时钟美化素材不加载」、
