@@ -97,7 +97,96 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
 - 面板：「面板能开、开关能拨，但插件没反应」九成是三处不一致——specifier 里的 `defaults`、插件读的偏好域、Darwin 通知名必须是同一个包 id。默认值永远不写盘，关掉就是原行为。
 - 偏好域写成目标 App 自己的 bundle id，`icli prefs read` 才读得到（沙箱里跨域写不进去）。
 
-## 9. 故障速查
+## 9. 安全模式与崩溃循环自救（2026-10-31 实测事故，铁律）
+
+**事故**：ThemeCorePlus 0.9.21 装到 SpringBoard 后，设备进安全模式，`consecutiveCrashCount: 5`。
+
+**崩溃报告长这样**（`SpringBoard-2026-10-31-104430.ips`）：
+
+```
+bug_type 309 / EXC_BREAKPOINT / SIGTRAP / faultingThread 0（主线程）
+procLaunch 10:44:25  captureTime 10:44:28   ← 启动 3 秒就死
+栈：TCPInitialize → TCPLayoutInstall → TCPLayoutHookSave → CF_forwarding_prep_0
+    → ___forwarding___ → ___forwarding___.cold.3
+寄存器：OBJC_CLASS_$_ISOverlayEmbossedFolder + selector isSubclassOfClass:
+consecutiveCrashCount 5 / throttleTimeout 5
+```
+
+**根因**：构造函数（dyld initializer）里 `objc_getClassList` 枚举**全进程所有类**，对每一个类发
+`[c isSubclassOfClass:base]`；其中某个类不响应这条类方法 → 消息转发失败 → `SIGTRAP`。
+构造函数里崩 = 每次启动都崩 = 连崩 5 次 = 安全模式。**`@try` 救不了这种 trap。**
+
+**四条铁律（写任何注入 SpringBoard 的插件都照做）**：
+
+1. **判类关系用 C 函数**：`class_getSuperclass()` 一路往上走，返回 `nil` 即到头。
+   绝不对「从 `objc_getClassList` / `objc_copyClassList` 枚举出来的类」发 `isSubclassOfClass:`、
+   `isKindOfClass:`、`respondsToSelector:` 这类消息 —— 来路不明就可能不响应。
+2. **构造函数只做纯赋值**：枚举类、`MSHookMessageEx`、建窗口、碰 UIKit / `UIScreen mainScreen` 全部
+   挪到启动后主队列的第一拍（延迟 ≥1 秒）。构造函数里崩会把用户送进安全模式。
+3. **启动护栏文件**：跑重活前写 `<数据目录>/.xxx-launch-guard`，跑完 `unlink`；下次启动发现它还在
+   ＝上次就死在这里 → **整段跳过**并在诊断里记 `safeskip=1`。宁可功能不生效，绝不连崩。
+4. **挂站前验签名**：`method_getNumberOfArguments`（只挂 `== 2` 的零参数方法）、
+   `method_getTypeEncoding` 核对；宁可一个都不挂。
+
+**安全模式怎么认、怎么出**：
+
+| 现象 | 含义 |
+|---|---|
+| 屏幕顶部「安全模式」 | SpringBoard 连崩被系统保护 |
+| 所有插件同时失效 | 注入被整体禁用 |
+| `device.sh read <域> <键>` **仍读得到旧值** | `defaults` 值会残留，**读到诊断 ≠ 插件在跑**，别被骗 |
+
+出路：`irisin-cli show <包>` 核对当前版本 → 回滚到已知good版本（`irisin-cli install --yes --json
+/rootfs/var/mobile/Documents/<good>.deb`，须 root）→ **用户点头** → `sh scripts/respring-guard.sh
+--confirm 5 "注销"` → 复查 `apelin_crash_list process=SpringBoard` 不再新增即脱离。
+
+**纪律**：一个版本只许一条线装一次；装前 `irisin-cli show` 核对、装后立刻查 crash list；
+**出过崩溃的版本号永不复用**（0.9.21 已废，下一版从 0.9.22 起）。
+
+**单线修复纪律**（用户 2026-10-31 10:56 原话「只准一个对话机器人着手修复安全模式！其它机器人立即停止⏹️工作！
+同步通告全员！修复后第一时间通告全员后让他们继续工作！」）：
+
+1. 进安全模式后**只留一条修复线**，它独占：改代码、触发云编译、装包、注销、回滚。
+2. **其它对话立即停手**：不改相关源码、不 push、不建 CI run、不装包、不注销；只回一句「收到，已停手」。
+   停手范围是**整个受影响的包**（ThemeCorePlus / CountdownHUD）及其装包与注销，不只是崩溃的那个文件。
+3. 修复线自己验完（版本对、诊断对、`apelin_crash_list` 无新增）→ **第一时间广播「已修复，可以继续」**
+   + 各自被冻结的那一步 → 才准复工。**没通告前谁都不许复工。**
+4. 广播用 `apelin_conversation_send`，一次一条、三行以内：现状 / 谁是唯一修复线 / 其它人现在做什么。
+5. **排查有结论就发一条、修复完成再发一条**，不许等修完才说（用户 2026-10-31 11:0x 原话
+   「安全模式排查！修复早后都要第一时间通告全员知道！」）。
+6. **一个 bug 只许一条线改**（用户原话「做到一个 bug 不要被全员反复修改回归耽误用户时间」）：改码权只属于
+   `version-lock.txt` 的 owner；别的线有新线索只发消息，不动手；owner 一轮只出一个改动（改→push→编→装→验），
+   禁止「装 A 不行又装 B」；出过崩溃的版本号永不复用。
+7. **`tick` 有 60 秒写盘节流**：状态没变时诊断里的 `tick` 最多旧 60 秒，量「插件活没活」要隔 70 秒读两次；
+   7 秒内两次不动不能判死（2026-10-31 11:03 差点误判）。
+8. **事故解决后必须把三段分析发给全员**（用户 2026-10-31 11:1x「安全事故原因过程解决后的分析发给全员！」）：
+   原因（直接原因/崩点/为什么升级成事故/根因归类）→ 过程（怎么发现、耽误在哪、哪一步判断错了）→
+   解决与复盘（怎么救回来、以后怎么防、规矩落到哪个文件）。模板：`docs/cases/springboard-safemode-0.9.21.md`。
+   **只修不写复盘 = 没修完。**
+9. **根因没定位前不许注销、不许装新包**（用户 2026-10-31 11:16「在没有真正排查出安全事故的原因情况下不要让他们注销」）：
+   注销是验证手段不是排查手段（会掩盖崩溃现场与旧诊断值）。顺序固定：**读 ips 定位 → 改码 → 云编译 → 装包 → 最后注销**；
+   注销须用户当轮点头，排查期任何人不得自行发起注销。详见 `docs/cases/springboard-safemode-0.9.21.md`。
+
+**防回滚三件套**（2026-10-31 落地并实测，防止「修复线刚回滚、别的线又装回坏版本」）：
+
+| 文件 | 作用 |
+| --- | --- |
+| `scripts/version-lock.txt` | `owner`=唯一修复线 sid、`version`=唯一允许装在机上的版本、`dylib_sha256`、`deb_sha256`。只有 owner 改 |
+| `scripts/deb-guard.sh` | 装包/注销唯一入口：非 owner **exit 6**，版本不符锁 **exit 7**；`check` 只读比对锁与机上实况 |
+| `scripts/safemode-check.sh` | 一条命令体检（只读）：版本 / dylib 指纹 / 最近崩溃 / `ThemeCorePlusLayout` 的 tick 是否在涨 |
+
+```sh
+sh scripts/safemode-check.sh                      # 0 健康 1 连崩或安全模式 2 版本漂移 3 插件没在跑 9 读数缺失
+sh scripts/deb-guard.sh check                     # 锁 vs 机上
+GUARD_SID=<自己 sid> sh scripts/deb-guard.sh install <deb>   # 只有 owner 能过
+GUARD_SID=<自己 sid> sh scripts/deb-guard.sh respring 5 注销   # 过了归属关，仍要用户点头 + --confirm
+```
+
+**在安全模式的硬证据**：最新 ips 的 `consecutiveCrashCount ≥ 5` ＋ SpringBoard 的 pid 自那次崩溃后没换过 ＋
+`ThemeCorePlusLayout` 的 `tick` 不再增长（注入被 ellekit 关掉）。**读到诊断 ≠ 插件在跑**，诊断值是崩溃前的残留。
+脱困 = 回滚到锁里的版本（已 good 就跳过）→ 用户点头 → 注销一次，SpringBoard 全新启动即恢复注入。
+
+## 10. 故障速查
 
 | 症状 | 先查 |
 |---|---|
@@ -108,8 +197,9 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
 | 设置面板没有入口 | PreferenceLoader 入口路径、bundle 名、`preferenceloader` 依赖；重启 Settings |
 | 构建报 environment 错误 | 本机预期永远 unavailable；去 CI，别在本机继续试 |
 | 界面动作被拒 | Apelin 在前台；先把目标 App 调到前台，并且一次做完 |
+| 进了安全模式 | 见第 9 节：读 crash 的 `consecutiveCrashCount` → 回滚 → 用户点头注销 → 复查不再新增 |
 
-## 10. 说法纪律
+## 11. 说法纪律
 
 - 编译通过 ≠ 装机通过 ≠ 加载生效 ≠ 界面正确。本机能覆盖到「装了 + 进程里生效」，界面部分要么用屏幕工具走通，要么写明未测。
 - 本文件里的实测数字只属于这台 A11 / 这次越狱；换设备、换引导要重新实测。

@@ -58,7 +58,11 @@ Release 资产地址：
 公开仓库的 annotations 匿名可读（`/repos/{owner}/{repo}/check-runs/{id}/annotations`）。
 本机没有 curl/wget/python3，查状态用 `icli probe` + `NSData`/`NSURLForString` 调 GitHub API。
 
-## 桌面图标布局保存（ThemeCorePlus 0.9.18 起，0.9.19 补诊断，0.9.20 修 nomodel）
+## 桌面图标布局保存（ThemeCorePlus 0.9.18 起，0.9.19 补诊断，0.9.20 修 nomodel，0.9.21 崩过、已废）
+
+> **0.9.21 = 崩溃版本，永不再装、永不复用版本号。** 它把「枚举全进程所有类」搬进了构造函数，
+> 对来路不明的类发 `isSubclassOfClass:` → 消息转发 SIGTRAP → SpringBoard 连崩 5 次进安全模式
+> （详见「硬规矩」第一条）。**下一版从 0.9.22 起**，并且必须按那 4 条修法写。
 
 用户的病灶：「图标注销/崩溃后不保存，回到旧摆位」。全部逻辑在 `ThemeCorePlus/Sources/ThemeCorePlusLayout.m`
 （**只改这一个文件**，Icons/Badges/Store 不碰）。诊断有两条：
@@ -359,6 +363,82 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 ## 硬规矩
 
+- **构造函数里禁止做重活、禁止对「任意运行时类」发消息 —— 一次崩就是安全模式**（2026-10-31 10:37 / 10:44
+  两次实测事故，用户原话：「又安全模式了！修复前后第一时间把安全模式注销的事件和修复后的方法告告诉全员知道」，
+  **所有工程、所有对话、永久适用**）：
+  - **事故**：ThemeCorePlus 0.9.21 装上后 SpringBoard **连续崩 5 次 → 进安全模式**（`consecutiveCrashCount: 5`，
+    `throttleTimeout: 5`）。崩溃报告 `SpringBoard-2026-10-31-103755.ips` / `-103832.ips` / `-104430.ips`，
+    `bug_type 309`、`EXC_BREAKPOINT`、`SIGTRAP`、`faultingThread 0`（主线程），栈：
+    `TCPInitialize` → `TCPLayoutInstall` → `TCPLayoutHookSave` → `CF_forwarding_prep_0` → `___forwarding___`
+    → `___forwarding___.cold.3`。寄存器里 `OBJC_CLASS_$_ISOverlayEmbossedFolder` + `isSubclassOfClass:`。
+  - **根因**：`ThemeCorePlusLayout.m` 的 `TCPLayoutCandidateClasses()`（被内联进 `TCPLayoutHookSave`）用
+    `objc_getClassList` 枚举**全进程所有类**，再对每一个类发 `[c isSubclassOfClass:base]`。其中某个类
+    不响应这条类方法 → 消息转发失败 → `SIGTRAP`。**这一步跑在 dyld initializer（构造函数）里**，
+    所以 SpringBoard 每次启动都必崩 → 连崩 5 次 → 安全模式。0.9.19 不崩是因为它不枚举类。
+  - **修法（0.9.22 起，写代码时照做）**：
+    ① 判类关系一律用 **C 函数 `class_getSuperclass()` 往上走**，绝不用 `isSubclassOfClass:` /
+       `isKindOfClass:` 去问一个「从运行时枚举出来的、来路不明的类」；
+    ② 枚举类、挂站这类重活**移出构造函数**，放到启动后主队列的第一拍（延迟 ≥1 秒），构造函数里只做纯赋值；
+    ③ 加**启动护栏文件**：跑重活前写 `~/Library/ThemeCorePlus/.tcp-launch-guard`，跑完删掉；
+       下次启动发现它还在 = 上次就是崩在这里 → **整段跳过**并记 `lay{safeskip=1}`，宁可功能不生效也绝不连崩；
+    ④ 任何 `MSHookMessageEx` 之前先用 `method_getTypeEncoding` / `method_getNumberOfArguments` 验真实签名，
+       宁可一个都不挂。
+  - **症状识别**：屏幕顶部「安全模式」、所有插件失效、诊断键还是崩溃前的旧值（`defaults` 值会残留，
+    **读到诊断 ≠ 插件在跑**）。此时 `irisin-cli show <包>` 看版本，`apelin_crash_list process=SpringBoard`
+    看 `consecutiveCrashCount`；回滚到已知good版本 → 用户点头 → `sbreload` 即脱离。
+  - **纪律**：**新版本只许一条线装一次**，装之前先 `irisin-cli show` 核对版本、装之后立刻读 crash list；
+    已出过崩溃的版本号**永不复用**（0.9.21 已废，下一版从 0.9.22 起）。
+  - **单线修复纪律（用户 2026-10-31 10:56 原话：「安全模式全员对齐工作进展和工作内容，只准一个对话机器人着手
+    修复安全模式！其它机器人立即停止⏹️工作！同步通告全员！修复后第一时间通告全员后让他们继续工作！」）**：
+    - 一进安全模式 / 一出崩溃循环，**只留一条「修复线」**（由本对话指定并写进广播），它独占：改代码、
+      触发云编译、装包、注销、回滚。**其它对话立即停手**：不改相关源码、不 push、不建 run、不装包、不注销、
+      不读设备状态做判断；只准回一句「收到，已停手」。
+    - **停手范围 = 整个 ThemeCorePlus / CountdownHUD 及其装包与注销**，不只是崩溃的那个文件 ——
+      0.9.21 就是「别的线自己装了一次」把设备两次送进安全模式。
+    - 修复线修完 → 自己先验（`irisin-cli show` 版本对、诊断对、`apelin_crash_list` 无新增）→ **第一时间
+      通告全员**「已修复，可以继续」+ 各自被冻结的那一步 → 再让它们复工。**没通告前不许任何人复工。**
+    - 广播一次一条、三行以内：现状 / 谁是唯一修复线 / 其它人现在做什么。用 `apelin_conversation_send`。
+    - **排查有结论、修复完成，都要第一时间通告全员**（用户 2026-10-31 11:0x 原话：「安全模式排查！修复早后都要
+      第一时间通告全员知道！这个内容同步到以上规则内！」）—— 不等修完才说，排查出根因就先发一条；修完再发一条
+      「已修复，可以继续」。两条都不许省。
+  - **防回滚：版本锁 + 唯一装包入口（2026-10-31 11:0x 落地，脚本已实测）**：
+    - `scripts/version-lock.txt`：`owner`（唯一修复线 session id）、`version`（唯一允许装在机上的版本）、
+      `dylib_sha256`（该版本指纹）、`deb_sha256`。**只有 owner 能改**，改版本 = 改这个文件，一改就要提交上云。
+    - `scripts/deb-guard.sh`：装包/注销的唯一入口。
+      `GUARD_SID=<自己的 sid> sh scripts/deb-guard.sh install <deb>` —— 不是 owner 直接 **exit 6 拒绝**；
+      版本与锁不符 **exit 7 拒绝**（顺手回滚就卡在这里）。`respring` 子命令同样先验归属，再交给
+      `respring-guard.sh`（仍然要用户点头 + `--confirm`）。`check` 只读比对锁与机上实况。
+    - `scripts/safemode-check.sh`：一条命令体检，只读、不弹卡。输出 ①版本 ②dylib 指纹 ③最近崩溃
+      ④`ThemeCorePlusLayout` 的 tick 两次读数是否在涨（插件这一刻在不在跑）。退出码
+      `0`健康 / `1`连崩或安全模式 / `2`**版本漂移（有人回滚或私装）** / `3`插件没在跑 / `9`读数缺失。
+    - **绕过守卫硬敲 `irisin-cli install` = 违规**，会被 `safemode-check.sh` 的 ① ② 抓到（exit 2）并广播点名。
+    - 判定「在安全模式」的硬证据：最新 ips 的 `consecutiveCrashCount ≥ 5`、SpringBoard 的 pid 自那次崩溃后
+      没换过、且 `tick` 不再增长（注入被 ellekit 关掉）。**读到诊断 ≠ 插件在跑**。
+      **tick 有 60 秒写盘节流**：状态没变时诊断里的 `tick` 最多旧 60 秒，量「活没活」要隔 70 秒读两次，
+      7 秒内两次不动**不能**判死（2026-10-31 11:03 就差点误判）。
+  - **一个 bug 只许一条线改：禁止全员反复修改、反复回归（用户 2026-10-31 11:0x 原话「做到一个 bug 不要被全员
+    反复修改回归耽误用户时间」）**：
+    1. 同一个 bug 的**改码权只属于 `scripts/version-lock.txt` 里的 owner**；别的线读到新线索 → 一条消息发给 owner，
+       不自己改、不自己装、不自己注销。
+    2. owner 一轮只出**一个**改动：改一处 → push 一次 → 编一次 → 装一次 → 验一次。**禁止「装 A 不行又装 B」的来回**；
+       换方案先广播为什么，再动手。
+    3. 每次装包/注销必须过 `scripts/deb-guard.sh`（非 owner exit 6、版本不符锁 exit 7）；绕过它硬敲 `irisin-cli`
+       一律算违规，`safemode-check.sh` 的 ① ② 会抓到并广播点名。
+    4. **出过崩溃的版本号永不复用**（0.9.21 已废，下一版 0.9.22），改完必须换版本号，别在同号上反复覆盖。
+    5. 修完第一时间通告全员「已修复，可以继续」，并把根因与结论写进 AGENTS.md / 技能 / 记忆（同一提交），
+       让下一条线不用重新踩坑。
+  - **事故复盘必须发给全员（用户 2026-10-31 11:1x 原话「安全事故原因过程解决后的分析发给全员！这个也写成
+    运行规定」）**：任何安全事故（崩溃循环、安全模式、数据丢失、误删）**解决之后**，必须写三段并发给所有在跑的
+    对话 —— ① **原因**（直接原因 / 崩点 / 为什么升级成事故 / 根因归类）② **过程**（怎么发现、耽误在哪、哪一步
+    判断错了）③ **解决与复盘**（怎么救回来、以后怎么防、规矩落到哪个文件）。
+    模板与本次实况：`docs/cases/springboard-safemode-0.9.21.md`；广播用「一句话版本」那一节，三行以内。
+    复盘不是可选项：只修不写 = 没修完。
+  - **根因没定位前，不许注销、不许装新包（用户 2026-10-31 11:16 原话「在没有真正排查出安全事故的原因情况下
+    不要让他们注销」）**：注销是**验证手段**，不是排查手段 —— 根因不明就注销 = 拿用户桌面做随机试验，
+    还会掩盖证据（注销后 pid 变了、崩溃现场没了、诊断键仍是旧值）。固定顺序：
+    **先读 ips 定位 → 改码 → 云编译 → 装包 → 最后才注销**；注销仍须用户当轮点头
+    （`respring-guard.sh --confirm 5 <标签>`）。多人排查时由 owner 统一对外，**任何人不得自行发起注销**。
+  - 技能：`a11-roothide-ondevice` 第 9 节「安全模式与崩溃循环自救」。
 - **每一件事做完都要在对话内说清结果；完成了还要用灵动岛胶囊 + 通知提醒他**（用户 2026-10-30 21:16
   原话：「以后所有让你完全和修复的结果：如果修复和完成✅后都要在对话内和我说一下！如果我离开此对话去别的对话
   和去系统桌面上和我本地安装的软件内都要用灵动岛胶囊通知我一下！给我提一下工作进程和工作进度！把这个写进记忆
