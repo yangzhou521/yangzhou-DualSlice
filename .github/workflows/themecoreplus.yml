@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.24
+  VERSION: 0.9.25
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.24)
+    name: Release (themecoreplus-v0.9.25)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,10 +185,26 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.24
-          name: ThemeCorePlus v0.9.24
+          tag_name: themecoreplus-v0.9.25
+          name: ThemeCorePlus v0.9.25
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.24 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.25 —— MarkTheme 式的主题引擎，作者 yangzhou。
+
+            v0.9.25（**布局保存第一步：让枚举自己说话**）：
+
+            1. 0.9.23 装机后读到 `probe=-`、`hooked=0`，而 `tick` 在涨（定时器活着）。
+               查源码发现两处「诊断把自己藏了」：
+               - `TCPLayoutCandidateClasses()` 只在 `out.count == 0` 时写 probe；
+               - `TCPLayoutHookSave()` 只在**挂上了站或跳过了站**时才写 probe。
+               于是「找到了类、但一个方法名都没匹配上」会退化成 `probe=-`，看起来像什么都没枚举到。
+            2. probe 现在**无条件**写，且先写枚举事实：`cand[model=N,ctrl=M]` ——
+               `SBIconModel` 家族找到几个、`SBIconController` 家族找到几个。
+            3. 新增**控制器家族**枚举：iOS 16 上把布局写盘的很可能挂在 `SBIconController`，
+               原来只扫 `SBIconModel` 家族，这条路整条漏掉。
+            4. 新增**宽名单** `near(类)[名字…]`：名字里带 `iconstate/saveicon/persisticon/writeicon/
+               storeicon/flush/syncicon/commit` 之一、但没被判据认下的零参数方法也列出来。
+               下一次就知道系统那个方法到底叫什么，不用再猜。
+            5. 这一版仍**不保证挂上站**：它只负责把「为什么挂不上」变成可读的事实。
 
             v0.9.24（**角标双层修复**）：诊断 `sys{…,tree=SBDarkeningImageView}` 一直没有 `*`，
             即系统纯色底板从来没被清动过。根因是本机每格角标只有 1 个子视图
@@ -385,7 +401,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.24/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.25/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'

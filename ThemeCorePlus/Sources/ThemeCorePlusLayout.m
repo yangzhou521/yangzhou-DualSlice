@@ -364,23 +364,79 @@ static NSArray<Class> *TCPLayoutCandidateClasses(void) {
     return out;
 }
 
+// 宽名单：任何名字里带这些词之一的零参数方法都值得看一眼。
+// 0.9.24 之前的判据要求「同时含 iconstate 且含 save/persist/write/store」，
+// 一旦系统那个方法叫别的名字（例如 -_writeIconStateData、-persistIconState:. 之外的形式）
+// 就会一个都匹配不上，而 probe 又只在匹配成功时写 —— 于是诊断只剩一个 "-"，什么都看不出来。
+static BOOL TCPLayoutIsInterestingName(const char *name) {
+    if (name == NULL) return NO;
+    char lower[160];
+    size_t n = strlen(name);
+    if (n == 0) return NO;
+    if (n >= sizeof(lower)) n = sizeof(lower) - 1;
+    for (size_t i = 0; i < n; i++) {
+        char c = name[i];
+        lower[i] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    }
+    lower[n] = '\0';
+    static const char *words[] = { "iconstate", "saveicon", "persisticon", "writeicon",
+                                   "storeicon", "flush", "syncicon", "commit" };
+    for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
+        if (strstr(lower, words[i]) != NULL) return YES;
+    }
+    return NO;
+}
+
+// 控制器类：SBIconController 及其子类。iOS 16 上写盘很可能挂在控制器而不是模型上，
+// 只枚举 SBIconModel 家族会把这条路整条漏掉。
+static NSArray<Class> *TCPLayoutControllerClasses(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    Class base = objc_getClass("SBIconController");
+    if (base == Nil) return out;
+    int count = objc_getClassList(NULL, 0);
+    if (count <= 0) return out;
+    Class *classes = (Class *)malloc(sizeof(Class) * (size_t)count);
+    if (classes == NULL) return out;
+    count = objc_getClassList(classes, count);
+    int scan = count;
+    for (int i = 0; i < scan; i++) {
+        Class c = classes[i];
+        if (c == Nil) continue;
+        if (class_isMetaClass(c)) continue;
+        if (TCPLayoutClassDescendsFrom(c, base)) [out addObject:c];
+    }
+    free(classes);
+    return out;
+}
+
 // 挂站。构造函数里 SBIconModel 可能还没被 dyld 载进来，所以定时器每一拍都会再试一次，
 // 挂上就不再重挂（同一 (类,选择器) 只挂一次）。
 static void TCPLayoutHookSave(void) {
-    NSArray<Class> *classes = TCPLayoutCandidateClasses();
-    if (classes.count == 0) return;
+    NSArray<Class> *modelClasses = TCPLayoutCandidateClasses();
+    NSArray<Class> *ctrlClasses = TCPLayoutControllerClasses();
     sLayoutEnumRan = 1;                  // 类枚举真跑过了：启动护栏可以撤
+
+    NSMutableArray<Class> *classes = [NSMutableArray array];
+    [classes addObjectsFromArray:modelClasses];
+    [classes addObjectsFromArray:ctrlClasses];
 
     NSMutableArray<NSString *> *hooked = [NSMutableArray array];
     NSMutableArray<NSString *> *skipped = [NSMutableArray array];
     NSMutableArray<NSString *> *probe = [NSMutableArray array];
 
+    // probe 一律先写枚举事实（0.9.25 起）：以前只有「挂上/跳过」时才写，
+    // 于是「找到了类但一个名字都没匹配上」会退化成 probe=-，看起来像什么都没枚举到。
+    [probe addObject:[NSString stringWithFormat:@"cand[model=%lu,ctrl=%lu]",
+                      (unsigned long)modelClasses.count, (unsigned long)ctrlClasses.count]];
+
     for (Class cls in classes) {
         unsigned int count = 0;
         Method *methods = class_copyMethodList(cls, &count);
-        if (methods == NULL) continue;
+        if (methods == NULL) { [probe addObject:[NSString stringWithFormat:@"%@:0", NSStringFromClass(cls)]]; continue; }
         NSMutableArray<NSString *> *saveNames = [NSMutableArray array];
         NSMutableArray<NSString *> *leafNames = [NSMutableArray array];
+        // 宽名单：名字像但判据没命中的，照样记进 probe，用来定下一次该认哪些名字。
+        NSMutableArray<NSString *> *nearNames = [NSMutableArray array];
 
         for (unsigned int i = 0; i < count; i++) {
             SEL sel = method_getName(methods[i]);
@@ -390,7 +446,14 @@ static void TCPLayoutHookSave(void) {
             int kind = -1;
             if (TCPLayoutIsSaveName(name)) kind = TCPLayoutKindSave;
             else if (TCPLayoutIsLeafName(name)) kind = TCPLayoutKindLeaf;
-            if (kind < 0) continue;
+            if (kind < 0) {
+                // 判据没命中，但名字像：记下来（限 8 条），下一版就知道真实名字。
+                if (nearNames.count < 8 && TCPLayoutIsInterestingName(name)) {
+                    [nearNames addObject:[NSString stringWithFormat:@"%s%s", name,
+                                          method_getNumberOfArguments(methods[i]) == 2 ? "" : ":"];
+                }
+                continue;
+            }
 
             // 铁律：只挂零参数、返回 void 的方法（隐式 self + _cmd 两个参数）。
             // 带参数的保存方法（saveIconStateAndWait: 之类）被我们无参调用会丢掉参数，
@@ -444,6 +507,11 @@ static void TCPLayoutHookSave(void) {
                               [[saveNames arrayByAddingObjectsFromArray:leafNames]
                                componentsJoinedByString:@","]]];
         }
+        if (nearNames.count > 0) {
+            [probe addObject:[NSString stringWithFormat:@"near(%@)[%@]",
+                              NSStringFromClass(cls),
+                              [nearNames componentsJoinedByString:@","]]];
+        }
     }
 
     if (skipped.count > 0) {
@@ -451,9 +519,8 @@ static void TCPLayoutHookSave(void) {
                           [skipped componentsJoinedByString:@","]]];
     }
     if (hooked.count > 0) sLayoutSite = [hooked componentsJoinedByString:@","];
-    if (hooked.count > 0 || skipped.count > 0) {
-        sLayoutProbe = [probe componentsJoinedByString:@";"];
-    }
+    // 无条件写：即便一个都没挂上、名字一个都没命中，也要留下 cand[] 与 near[]。
+    sLayoutProbe = [probe componentsJoinedByString:@";"];
 }
 
 // 模型身上有没有零参数保存方法（挂着的那几站）。
