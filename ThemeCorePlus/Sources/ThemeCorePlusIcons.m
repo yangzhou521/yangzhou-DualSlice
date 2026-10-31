@@ -538,11 +538,10 @@ static void (*sClockLayoutOrig)(id, SEL) = NULL;
 static NSInteger sClockVLook = 0, sClockVHit = 0, sClockVMiss = 0;
 static NSString *sClockVLast = @"-";
 
-// 在视图里找「表盘」那张图：尺寸（点）与本视图大致相等的 UIImageView。
-// 只往下一层（系统把表盘放在自己的 imageView 里），找不到就什么都不做。
-// 0.9.31：加了 trace —— noface 时把看到的子视图树一并记进诊断，下次装包就知道表盘到底在哪一层、
-// 是不是根本不是 UIImageView（iOS 16.7 很可能是 CALayer / 自绘）。
-static UIImageView *TCPClockFindFaceView(UIView *view, NSInteger depth, NSMutableArray<NSString *> *trace) {
+// 在视图里找「表盘」：尺寸（点）与本视图大致相等的 UIImageView，或 layer.contents 有图的 CALayer。
+// iOS 16.7 的 SBHClockApplicationIconImageView 表盘可能是 CALayer 自绘（不是 UIImageView）。
+// 返回一个封装：type="imgv" 时 value 是 UIImageView；type="layer" 时 value 是 CALayer。
+static NSDictionary *TCPClockFindFace(UIView *view, NSInteger depth, NSMutableArray<NSString *> *trace) {
     CGSize bounds = view.bounds.size;
     if (bounds.width < 8) return nil;
     for (UIView *sub in view.subviews) {
@@ -556,17 +555,39 @@ static UIImageView *TCPClockFindFaceView(UIView *view, NSInteger depth, NSMutabl
             }
             [trace addObject:line];
         }
+        // 路径 A：UIImageView（旧版本/iOS 15 及以下）
         if ([sub isKindOfClass:[UIImageView class]]) {
             UIImage *image = ((UIImageView *)sub).image;
             CGSize size = image.size;
             if (size.width > 1 && fabs(size.width - bounds.width) <= bounds.width * 0.25) {
-                return (UIImageView *)sub;
+                return @{ @"type": @"imgv", @"value": sub };
+            }
+        }
+        // 路径 B：CALayer（iOS 16+ 自绘表盘）
+        CALayer *layer = sub.layer;
+        if (layer && layer.contents) {
+            CGSize layerSize = layer.bounds.size;
+            if (layerSize.width > 1 && fabs(layerSize.width - bounds.width) <= bounds.width * 0.25) {
+                // 确认 contents 是 CGImage（不是别的类型）
+                CFTypeID contentsType = CFGetTypeID((__bridge CFTypeRef)layer.contents);
+                if (contentsType == CGImageGetTypeID()) {
+                    return @{ @"type": @"layer", @"value": layer, @"host": sub };
+                }
             }
         }
         if (depth > 0) {
-            UIImageView *found = TCPClockFindFaceView(sub, depth - 1, trace);
+            NSDictionary *found = TCPClockFindFace(sub, depth - 1, trace);
             if (found != nil) return found;
         }
+    }
+    return nil;
+}
+
+// 旧名保留，供本文件内调用（避免改太多地方）
+static UIImageView *TCPClockFindFaceView(UIView *view, NSInteger depth, NSMutableArray<NSString *> *trace) {
+    NSDictionary *found = TCPClockFindFace(view, depth, trace);
+    if ([@"imgv" isEqualToString:found[@"type"]]) {
+        return found[@"value"];
     }
     return nil;
 }
@@ -578,10 +599,10 @@ static void TCPClockViewApply(UIView *view) {
     if (size.width < 8 || size.height < 8) return;
 
     NSMutableArray<NSString *> *trace = [NSMutableArray array];
-    UIImageView *face = TCPClockFindFaceView(view, 1, trace);
-    if (face == nil) {
+    NSDictionary *faceInfo = TCPClockFindFace(view, 1, trace);
+    if (faceInfo == nil) {
         __sync_fetch_and_add(&sClockVMiss, 1);
-        // 0.9.31：noface 时把子视图树记下来（最多 8 条），一次装包就能定位表盘在哪。
+        // 1.0.6：noface 时把子视图树记下来（最多 8 条），并标注是不是连 CALayer 都没找到。
         sClockVLast = [NSString stringWithFormat:@"noface|%.0fx%.0f[%@]",
                        size.width, size.height,
                        trace.count > 0 ? [trace componentsJoinedByString:@";"] : @"nosub"];
@@ -597,11 +618,38 @@ static void TCPClockViewApply(UIView *view) {
         sClockVLast = @"noasset";
         return;
     }
-    if (face.image == themed) return;
-    face.image = themed;
-    __sync_fetch_and_add(&sClockVHit, 1);
-    sClockVLast = [NSString stringWithFormat:@"%@|%.0fx%.0f@%.0f",
-                   NSStringFromClass([face class]), themed.size.width, themed.size.height, scale];
+    
+    NSString *faceType = faceInfo[@"type"];
+    if ([@"imgv" isEqualToString:faceType]) {
+        // 路径 A：UIImageView（旧版本/iOS 15 及以下）
+        UIImageView *face = faceInfo[@"value"];
+        if (face.image == themed) return;
+        face.image = themed;
+        __sync_fetch_and_add(&sClockVHit, 1);
+        sClockVLast = [NSString stringWithFormat:@"imgv:%@|%.0fx%.0f@%.0f",
+                       NSStringFromClass([face class]), themed.size.width, themed.size.height, scale];
+    } else if ([@"layer" isEqualToString:faceType]) {
+        // 路径 B：CALayer（iOS 16+ 自绘表盘）
+        CALayer *faceLayer = faceInfo[@"value"];
+        UIView *host = faceInfo[@"host"];
+        // 避免重复设置同一张图
+        CFTypeRef currentContents = (__bridge CFTypeRef)faceLayer.contents;
+        if (currentContents) {
+            CFTypeID currentType = CFGetTypeID(currentContents);
+            if (currentType == CGImageGetTypeID() && currentContents == (__bridge CFTypeRef)themed.CGImage) {
+                return;
+            }
+        }
+        faceLayer.contents = (__bridge id)themed.CGImage;
+        __sync_fetch_and_add(&sClockVHit, 1);
+        sClockVLast = [NSString stringWithFormat:@"layer:%@|host:%@|%.0fx%.0f@%.0f",
+                       NSStringFromClass([faceLayer class]),
+                       host ? NSStringFromClass([host class]) : @"-",
+                       themed.size.width, themed.size.height, scale];
+    } else {
+        __sync_fetch_and_add(&sClockVMiss, 1);
+        sClockVLast = [NSString stringWithFormat:@"unknown_type:%@", faceType ?: @"nil"];
+    }
 }
 
 static void TCPClockLayoutHook(id self, SEL _cmd) {
