@@ -59,10 +59,19 @@
 #import <dispatch/dispatch.h>
 #import <math.h>
 #import <os/log.h>
+// v1.6.1：确认后由插件自己执行注销用
+#include <dlfcn.h>
+#include <spawn.h>
+#include <signal.h>
+#include <unistd.h>
+#include <sys/stat.h>
+extern char **environ;
 
-static NSString *const CHVersion = @"1.6.0";
+static NSString *const CHVersion = @"1.6.1";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
+// v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
+static NSString *const CHNoRespringMarker = @"/var/mobile/Library/Preferences/.countdownhud-no-respring";
 static const NSTimeInterval CHPollInterval = 0.5;
 
 // 胶囊窗口的层级：既要盖在灵动岛（SystemAperture 那套）之上，也要盖在任何 App 之上。
@@ -152,6 +161,7 @@ static unsigned long gTaps = 0;      // v1.6.0：胶囊被点了几次（诊断�
 static BOOL gAskMode = NO;              // 这次是弹窗而不是胶囊 → mode=alert
 static unsigned long gAlerts = 0;       // 累计弹过几次
 static NSString *gAnswerDetail = @"-";  // 最近一次答复 confirm|cancel|timeout|-
+static NSString *gExecDetail = @"-";    // v1.6.1：点了「立即注销」之后插件实际做了什么（诊断 exec=spawned|skip-marker|term|fail|-）
 
 // 量岛的结果
 static BOOL gFollowIsland = YES;          // 量到岛就跟着岛走
@@ -424,7 +434,7 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
 }
 
 static void CHWriteDiagnostics(void) {
-    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@;link=%@;taps=%lu",
+    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@;exec=%@;link=%@;taps=%lu",
                          CHVersion, gShows, gLastSeconds,
                          gLabelText.length ? gLabelText : @"-",
                          gFontSize,
@@ -433,7 +443,7 @@ static void CHWriteDiagnostics(void) {
                          gAskMode ? @"alert" : (gPlainNotice ? @"plain" : @"count"),
                          gSelfWindowDetail, gIslandWindowDetail,
                          (unsigned long)gHaptics,
-                         (unsigned long)gAlerts, gAnswerDetail,
+                         (unsigned long)gAlerts, gAnswerDetail, gExecDetail,
                          gLinkSession.length ? gLinkSession : @"none",
                          (unsigned long)gTaps];
     CFPreferencesSetAppValue(CFSTR("CountdownHUDDiagnostics"),
@@ -719,6 +729,67 @@ static void CHWriteAnswer(NSString *verdict) {
     os_log(CHLog(), "answer %{public}@ written=%d", verdict, ok ? 1 : 0);
 }
 
+// v1.6.1：点了「立即注销」不能只把 confirm 写进文件就完事 —— 那条路要求
+// `respring-guard.sh --ask` 那一刻还在前台轮询，脚本一结束（回合结束/超时/被打断），
+// 用户点下去就只剩一个文件、屏幕毫无反应。所以改成：插件自己执行注销。
+//
+// 做法：从自己这个 dylib 的真实路径推出引导根（<jbroot>/usr/lib/TweakInject/CountdownHUD.dylib），
+// 再 spawn <jbroot>/usr/bin/sbreload；找不到就试 /usr/bin/sbreload、/var/jb/usr/bin/sbreload。
+// 都起不来才退化成给 SpringBoard 自己发 SIGTERM（launchd 会原样把它拉起来，效果等同注销）。
+// `CHNoRespringMarker` 存在时只写答案、不注销 —— 给「只倒计时」测试用。
+static NSString *CHBootstrapRoot(void) {
+    Dl_info info;
+    if (dladdr((const void *)&CHBootstrapRoot, &info) == 0 || info.dli_fname == NULL) {
+        return nil;
+    }
+    NSString *self = [NSString stringWithUTF8String:info.dli_fname];
+    NSRange r = [self rangeOfString:@"/usr/lib/TweakInject/"];
+    if (r.location == NSNotFound) {
+        return nil;
+    }
+    return [self substringToIndex:r.location];
+}
+
+static void CHRespringSelf(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:CHNoRespringMarker]) {
+        gExecDetail = @"skip-marker";
+        os_log(CHLog(), "respring skipped (marker present)");
+        CHWriteDiagnostics();
+        return;
+    }
+
+    NSMutableArray<NSString *> *cands = [NSMutableArray array];
+    NSString *root = CHBootstrapRoot();
+    if (root.length > 0) {
+        [cands addObject:[root stringByAppendingString:@"/usr/bin/sbreload"]];
+    }
+    [cands addObject:@"/usr/bin/sbreload"];
+    [cands addObject:@"/var/jb/usr/bin/sbreload"];
+
+    for (NSString *path in cands) {
+        if (![fm isExecutableFileAtPath:path]) {
+            continue;
+        }
+        pid_t pid = 0;
+        const char *cpath = path.fileSystemRepresentation;
+        char *argv[] = { (char *)cpath, NULL };
+        int rc = posix_spawn(&pid, cpath, NULL, NULL, argv, environ);
+        os_log(CHLog(), "respring spawn %{public}@ rc=%d pid=%d", path, rc, (int)pid);
+        if (rc == 0) {
+            gExecDetail = @"spawned";
+            CHWriteDiagnostics();
+            return;
+        }
+    }
+
+    // 起不了 sbreload：让 SpringBoard 自己退出，launchd 会立刻重新拉起（用户看到的就是注销）。
+    gExecDetail = @"term";
+    os_log(CHLog(), "sbreload unavailable, sending SIGTERM to SpringBoard");
+    CHWriteDiagnostics();
+    kill(getpid(), SIGTERM);
+}
+
 // 只在真有 windowScene 时才建弹窗窗口（和胶囊同一个铁律：没挂 scene 的窗口不渲染）。
 static BOOL CHEnsureAlertWindow(void) {
     UIWindowScene *scene = CHPickScene();
@@ -800,13 +871,19 @@ static BOOL CHShowAlert(NSUInteger seconds, NSString *label) {
         CHDismissAlert();
         CHWriteDiagnostics();
     }]];
-    // 立即注销：写 confirm，脚本读到才会真的倒计时 + sbreload。
+    // 立即注销：写 confirm（脚本端仍能据此记录），**然后由插件自己真的注销**（v1.6.1）——
+    // 不再依赖脚本那一刻是否还在前台轮询。
     [a addAction:[UIAlertAction actionWithTitle:@"立即注销"
                                           style:UIAlertActionStyleDestructive
                                         handler:^(UIAlertAction *action) {
         CHWriteAnswer(@"confirm");
         CHDismissAlert();
         CHWriteDiagnostics();
+        // 留 1 秒：让答案文件落盘、诊断写完，再结束这个进程。
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            CHRespringSelf();
+        });
     }]];
 
     gAlert = a;

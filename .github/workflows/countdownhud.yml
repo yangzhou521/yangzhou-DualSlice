@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.0)
+    name: Release (countdownhud-v1.6.1)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,14 +133,24 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.0
-          name: CountdownHUD v1.6.0
+          tag_name: countdownhud-v1.6.1
+          name: CountdownHUD v1.6.1
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
 
             为什么不靠通知：Apelin 的本地通知在发送瞬间会把 App 拉回前台，横幅被它自己的
             UNUserNotificationCenterDelegate 吞掉，既看不到、也进不了灵动岛。这个插件不碰通知，
             直接在 SpringBoard 顶层窗口画。
+
+            v1.6.1：**点了「立即注销」真的会注销**。以前插件只把 `confirm` 写进
+            `/var/mobile/Library/Preferences/.countdownhud-answer`，靠当时还开着的
+            `scripts/respring-guard.sh --ask` 读到才执行 —— 脚本一结束（回合结束、超时、被中断），
+            用户点下去屏幕上什么都不会发生。现在插件自己在写答案 1 秒后 spawn
+            `<jbroot>/usr/bin/sbreload` 注销（找不到就试 `/usr/bin`、`/var/jb/usr/bin`；都不行才给
+            SpringBoard 发 SIGTERM 让 launchd 重新拉起）。存在
+            `/var/mobile/Library/Preferences/.countdownhud-no-respring` 时只写答案、不注销，
+            留给「只倒计时」的测试。诊断串加了 `exec=spawned|skip-marker|term|fail|-`。
+            选择主题等别的功能不变。
 
             v1.6.0：**点一下胶囊，直接跳回发这条消息的对话**。请求文件多一个可选的
             第 4 段：对话 session id（`<epoch>|<秒数>|<标签>|<sid>`，hud-notify.sh 自动填）。
@@ -219,4 +229,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.0/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.1/$(basename "$DEB")"

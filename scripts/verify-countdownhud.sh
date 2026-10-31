@@ -108,8 +108,8 @@ fi
 VER=$(printf '%s' "$D" | sed -n 's/^\(v[0-9][0-9.]*\);.*/\1/p')
 [ -n "$VER" ] || VER=$(printf '%s' "$D" | cut -d';' -f1)
 info "诊断：$D"
-if [ "$VER" = "v1.6.0" ]; then
-  ok "SpringBoard 跑的是 v1.6.0"
+if [ "$VER" = "v1.6.1" ] || [ "$VER" = "v1.6.0" ]; then
+  ok "SpringBoard 跑的是 $VER"
 else
   bad "SpringBoard 还在跑 $VER（新代码要注销才加载）→ 先注销再跑本脚本"
   echo
