@@ -186,9 +186,17 @@ jobs:
         with:
           token: ${{ github.token }}
           tag_name: themecoreplus-v0.9.27
-          name: ThemeCorePlus v0.9.26
+          name: ThemeCorePlus v0.9.27
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.26 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.27 —— MarkTheme 式的主题引擎，作者 yangzhou。
+
+            v0.9.27（**图标加载假阴性修复**）：0.9.23 以来 `census{layer{ours=0}}` 一直报「我们的图标层占 0」，
+            但 `census{icon{ours=6}}`、`disp{ours=6}` 显示图标其实已经换成主题图——这是 CA 复制
+            `layer.contents` 的 CGImage 后指针变了，原 `isRenderedCGImage:` 只比 CGImage 指针集合，
+            复制过的图认不出。现在在渲染登记处把每张合成图算成 12×12 灰度指纹存进
+            `renderedFingerprints`（带限量淘汰），`isRenderedCGImage:` 先比指针、命中不了再按指纹认一遍
+            （≥40pt 的图标才记指纹，小图不参与普查）。同时给合成图的像素统计加 memo（同一张图只量一次），
+            去掉每次取图都跑 24×24 统计的卡顿发热。不动角标共用的 `namedMap`/`cachedImageAtPath:` 链。
 
             v0.9.26（**角标：ourHost 的 contents 也清**，0.9.24 的续作）：0.9.24 只清 `ourHost`
             的底色（backgroundColor / layer.backgroundColor），若系统红底其实画在
