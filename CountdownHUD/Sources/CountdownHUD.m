@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.1";
+static NSString *const CHVersion = @"1.6.2";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -176,25 +176,52 @@ static CGFloat gFontSize = 12.5;         // v1.1.1：诊断串里报出来，省
 // 老写法在量不到 scene 时退回 `[[UIWindow alloc] initWithFrame:]`，那种窗口有 window、
 // 有 subview、isHidden=NO、诊断计数照涨，**屏幕上永远看不见** —— 这就是「注销前用户
 // 毫不知情」的根因。现在量不到 scene 就什么都不建，把请求留到下一次轮询重试。
+// v1.6.2：DynamicX 造的「假岛」是一块独立的 SBSystemApertureWindowScene，它可能一直处于
+// ForegroundActive（岛一直显示在屏幕上），于是旧 CHPickScene 会优先把它选走，胶囊窗口就挂到
+// 岛场景上 —— 岛场景的窗口不参与主屏幕渲染（或只在岛展开/收起时可见性飘忽），用户就
+// 「震了（听到）却看不到胶囊」。选场景时跳过岛相关场景，优先 SpringBoard 主场景。
+static BOOL CHSceneIsIsland(UIScene *scene) {
+    if (scene == nil) {
+        return NO;
+    }
+    NSString *cls = NSStringFromClass([scene class]);
+    if ([cls rangeOfString:@"Aperture" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+        return YES;
+    }
+    return [cls rangeOfString:@"Island" options:NSCaseInsensitiveSearch].location != NSNotFound;
+}
+
 static UIWindowScene *CHPickScene(void) {
     UIApplication *app = [UIApplication sharedApplication];
     if (app == nil) {
         return nil;
     }
-    UIWindowScene *fallback = nil;
+    UIWindowScene *fallback = nil;       // 非岛场景，任何状态
+    UIWindowScene *islandScene = nil;    // 岛场景（万不得已才用）
     for (UIScene *scene in app.connectedScenes) {
         if (![scene isKindOfClass:[UIWindowScene class]]) {
             continue;
         }
         UIWindowScene *ws = (UIWindowScene *)scene;
+        if (CHSceneIsIsland(scene)) {
+            // 岛场景只在「别的场景一个都没有」时兜底用。
+            if (islandScene == nil &&
+                ws.activationState == UISceneActivationStateForegroundActive) {
+                islandScene = ws;
+            }
+            continue;
+        }
         if (ws.activationState == UISceneActivationStateForegroundActive) {
-            return ws;
+            return ws; // 非岛前台场景：最优
         }
         if (fallback == nil) {
             fallback = ws;
         }
     }
-    return fallback;
+    if (fallback != nil) {
+        return fallback;
+    }
+    return islandScene;
 }
 
 static NSString *CHClassNameOf(id obj) {

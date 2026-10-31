@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.1)
+    name: Release (countdownhud-v1.6.2)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,10 +133,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.1
-          name: CountdownHUD v1.6.1
+          tag_name: countdownhud-v1.6.2
+          name: CountdownHUD v1.6.2
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            v1.6.2：**修「通知只有声音、胶囊看不到」**。旧 CHPickScene 优先取 ForegroundActive 的
+            window scene，而 DynamicX 造的假岛（SBSystemApertureWindowScene）一直处于前台，
+            于是胶囊窗口被挂到岛场景上 —— 岛场景的窗口不参与主屏幕渲染（或只在岛展开/收起时
+            可见性飘忽），用户就「震了（听到）却看不到胶囊」。现在选场景时跳过类名带
+            Aperture/Island 的岛场景，优先 SpringBoard 主场景；只有别的一个场景都没有时才退回
+            岛场景兜底。诊断里 `win=…scene=…` 装完应看到 scene 不再是 SBSystemApertureWindowScene。
 
             为什么不靠通知：Apelin 的本地通知在发送瞬间会把 App 拉回前台，横幅被它自己的
             UNUserNotificationCenterDelegate 吞掉，既看不到、也进不了灵动岛。这个插件不碰通知，
@@ -229,4 +236,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.1/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.2/$(basename "$DEB")"
