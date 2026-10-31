@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.29
+  VERSION: 0.9.30
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.29)
+    name: Release (themecoreplus-v0.9.30)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,19 +185,22 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.29
-          name: ThemeCorePlus v0.9.29
+          tag_name: themecoreplus-v0.9.30
+          name: ThemeCorePlus v0.9.30
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.29 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.30 —— MarkTheme 式的主题引擎，作者 yangzhou。
 
-            v0.9.29（**主屏图标空、文件夹里有 —— 取证版**）：用户 13:59 报「桌面上图标不显示，但文件夹内显示了」。
-            诊断里 `census{is=[SBIconImageView|ours|60x60 ×6]}`、`disp{ours=6}` 说明视图认得出我们的图、
-            尺寸也对，屏上却看不见 —— 最可能是**合成图本身近全透明**。而这件事从来没被量到过：
-            像素自检 `TCPInspectIconView` 只挂在「改设置刷新」那条路上，注销后启动一次都不跑，所以 `pix{n=0}`。
-            本版：① 屏幕普查时对「我们的」图标视图顺手做一次像素自检，`pix{}` 从此有数（计数器每轮归零）；
-            ② 合成登记处新增 `tclear{n=,blank=[bundleID:cov…]}` —— 凡是合成出来 cov<0.10 的图按 App 去重记下；
-            ③ 像素统计从固定 24×24 拉平改成按原图等比缩到最长边 ≤256 再量，避免糊化误判透明。
-            仍是纯取证、不改绘图路径：下一版据此定位到具体 App / 具体素材再修。
+            v0.9.30（**主屏图标空/文件夹有 —— 根因修 + 安全网**）：参考开源实现 IconBundles（nickfrey，MIT）——
+            它读主题 `Info.plist` 的 `IB-MaskIcons`，true 表示素材**已自带圆角与底**、引擎不该再套遮罩。
+            本机「液态玻璃」主题正是 `IB-MaskIcons=true`，而它的 `AppIconMask` alpha 覆盖只有 0.14 ——
+            拿那张几乎全透明的遮罩去裁不透明素材，主屏那一层就只剩一圈边（看着就是空），
+            文件夹里走系统自己的渲染才看得见。本版：
+            ① 读叠加链里任一层 Info.plist 的 `IB-MaskIcons`，为 true 时**彻底不用遮罩、也不补圆角兜底**；
+            ② 新增**安全网**：合成结果若比原素材透明一半以上（源 cov>0.30 且结果 cov<源×0.5），
+            直接退回原素材 —— 宁可显示系统图，也不显示空白；诊断 `fb{n=,last=bundleID:源cov→结果cov}`；
+            ③ 诊断新增 `ibmask=0|1`，装完一读就知道有没有读到这个字段。
+            另含 0.9.29 取证：普查时对「我们的」图标视图跑像素自检（`pix{}` 有数）、
+            `tclear{n=,blank=[bundleID:cov…]}`、像素统计改按原图等比缩到 ≤256 再量。
 
             v0.9.28（**图标加载假阴性修复 · 续**）：0.9.27 按内容指纹认 CA 复制过的 CGImage 这条路是对的，
             但它多留了一张以 UIImage 裸指针为键的指纹缓存 —— 要认的偏偏是 CA 复制出来的 CGImage，
@@ -428,7 +431,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.29/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.30/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'

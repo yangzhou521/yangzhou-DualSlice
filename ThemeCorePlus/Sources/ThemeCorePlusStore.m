@@ -270,6 +270,12 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 @property (nonatomic, copy) NSString *maskPath;
 @property (nonatomic) CGFloat maskCoverage;    // 遮罩 alpha 覆盖占比（重载时量）
 @property (nonatomic) BOOL maskSkipped;        // 覆盖太低被跳过（玻璃圈那类，裁完图标就空白）
+// 0.9.30：主题 Info.plist 的 IB-MaskIcons。SnowBoard / IconBundles 的约定 —— 为 true 表示
+// 素材**已经自带圆角与底**，引擎不该再套遮罩、也不该再补圆角。参考实现（IconBundles，
+// nickfrey，MIT）就是这么读的。本机「液态玻璃」主题 Info.plist 正是 IB-MaskIcons=true，
+// 而它的 AppIconMask 覆盖率只有 0.14 —— 拿那张几乎全透明的遮罩去裁不透明素材，留下的
+// 就只剩一圈边，正是用户报的「主屏图标不显示、文件夹里却有」。
+@property (nonatomic) BOOL ibMaskIcons;
 @property (nonatomic, copy) NSString *basePath;
 @property (nonatomic, copy) NSString *overlayPath;
 @property (nonatomic, copy) NSString *folderPath;
@@ -289,6 +295,10 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 @property (nonatomic, strong) NSMutableArray<NSString *> *missSamples;
 // 反过来：实际被换成主题图的 bundle id。诊断里能看出「换了哪几个 App」，不用靠肉眼。
 @property (nonatomic, strong) NSMutableArray<NSString *> *hitSamples;
+// 0.9.30：安全网触发记录（合成后太透明 → 退回原素材），诊断里 fb{n=,last=}。
+@property (nonatomic) NSUInteger fallbackCount;
+@property (nonatomic, copy) NSString *fallbackLast;
+
 
 // 计数（诊断用）
 @property (nonatomic) NSUInteger iconLookups, iconHits, badgeLookups, badgeHits, fileLookups, fileHits;
@@ -334,6 +344,7 @@ enum {
         _renderedFingerprints = [NSMutableSet set];
         _missSamples = [NSMutableArray array];
         _hitSamples = [NSMutableArray array];
+        _ibMaskIcons = NO;
         _featureFlags = TCPFeatureIcons | TCPFeatureFolders | TCPFeatureBadges | TCPFeatureFiles;
         [self reload];
     }
@@ -361,6 +372,21 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
 
 #pragma mark 重载
 
+// 0.9.30：读主题 Info.plist 的 IB-MaskIcons（SnowBoard / IconBundles 的约定）。
+// true = 素材已自带圆角与底，引擎不要再套遮罩、也不要再补圆角兜底。
+- (BOOL)themeAtPathDeclaresMaskedIcons:(NSString *)theme {
+    NSString *plistPath = [theme stringByAppendingPathComponent:@"Info.plist"];
+    NSDictionary *options = [NSDictionary dictionaryWithContentsOfFile:plistPath];
+    if (![options isKindOfClass:[NSDictionary class]]) return NO;
+    id value = options[@"IB-MaskIcons"];
+    if ([value isKindOfClass:[NSNumber class]]) return [value boolValue];
+    if ([value isKindOfClass:[NSString class]]) {
+        NSString *lower = [(NSString *)value lowercaseString];
+        return [lower isEqualToString:@"true"] || [lower isEqualToString:@"yes"] || [lower isEqualToString:@"1"];
+    }
+    return NO;
+}
+
 - (void)reload {
     TCPConfig *config = [TCPConfig shared];
     [config reload];
@@ -371,6 +397,9 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     NSMutableDictionary *globalFiles = [NSMutableDictionary dictionary];
     NSMutableDictionary *bundleFiles = [NSMutableDictionary dictionary];
     __block NSString *maskPath = nil, *basePath = nil, *overlayPath = nil, *folderPath = nil;
+    // 0.9.30：IB-MaskIcons 取**叠加链里任何一层**声明的 true（任意一层说「素材已自带圆角」就算数，
+    // 与 SnowBoard/IconBundles 读 Info.plist 的语义一致）。
+    __block BOOL ibMask = NO;
 
     BOOL enabled = TCPBoolValue(values, TCPKeyEnabled, YES);
     NSArray<NSString *> *paths = enabled ? [self resolveThemePathsWithValues:values] : @[];
@@ -394,6 +423,7 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
                       overlay:&overlayPath
                        folder:&folderPath
                        values:values];
+        if ([self themeAtPathDeclaresMaskedIcons:theme]) ibMask = YES;
     }
 
     @synchronized (self) {
@@ -439,6 +469,13 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         }
         self.maskCoverage = coverage;
         self.maskSkipped = skipped;
+        self.ibMaskIcons = ibMask;
+        // 0.9.30：主题声明 IB-MaskIcons=true → 素材已自带圆角，遮罩整体作废。
+        // 本机「液态玻璃」就是这种：AppIconMask 覆盖率 0.14，套上去只剩一圈边（主屏图标看着就是空的）。
+        if (ibMask) {
+            self.maskPath = nil;
+            self.maskSkipped = YES;
+        }
         self.badgeSettings = [self badgeSettingsFromValues:values];
         self.cornerMaskOn = TCPBoolValue(values, TCPKeyIconCornerMask, NO);
     }
@@ -916,6 +953,15 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
     }
 }
 
+// 0.9.30：安全网触发时记一笔，诊断里 fb{n=,last=bundleID:源cov→结果cov}。
+- (void)noteComposedFallback:(NSString *)bundleID source:(CGFloat)source result:(CGFloat)result {
+    @synchronized (self) {
+        self.fallbackCount = self.fallbackCount + 1;
+        self.fallbackLast = [NSString stringWithFormat:@"%@:%.2f→%.2f",
+                             bundleID.length > 0 ? bundleID : @"?", (double)source, (double)result];
+    }
+}
+
 - (void)noteHit:(NSString *)sample {
     if (sample.length > 0 && self.hitSamples.count < 24 && ![self.hitSamples containsObject:sample]) {
         [self.hitSamples addObject:sample];
@@ -949,9 +995,17 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
     // 于是同一份素材在缓存里留下两个键（13.50 与 13.42）、被合成两份；两层叠在一起，
     // 屏幕上就是一个带重影的图标 —— 用户说的「双份素材加载显示」。
     // 现在圆角只由尺寸决定：一个图标、一个尺寸，只剩一张合成图。
-    if (self.maskSkipped && size.width > 0) {
+    //
+    // 0.9.30：主题声明 IB-MaskIcons=true 时**遮罩与圆角兜底都不用** —— 素材已自带圆角与底，
+    // 再补一刀只会把边缘啃掉一圈。这条与 IconBundles 的 iconsArePrecomposed 语义一致。
+    if (self.maskSkipped && !self.ibMaskIcons && size.width > 0) {
         cornerRadius = size.width * 0.2237;
         roundCorners = YES;
+    }
+    if (self.ibMaskIcons) {
+        maskUsable = NO;
+        roundCorners = NO;
+        cornerRadius = 0;
     }
     // 0.9.6 修「双份素材」残留：上游站（SBIcon 那组）传系统真圆角（≈13.50），
     // 显示层站（SBIconImageView）传 0；遮罩可用时圆角根本不影响合成结果（遮罩先裁了），
@@ -971,6 +1025,20 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
         UIImage *mask = maskUsable ? [self cachedImageAtPath:self.maskPath size:CGSizeZero] : nil;
         UIImage *overlay = self.overlayPath ? [self cachedImageAtPath:self.overlayPath size:CGSizeZero] : nil;
         UIImage *rendered = TCPRenderIcon(icon, base, mask, overlay, size, scale, cornerRadius, roundCorners);
+        // 0.9.30 安全网：合成结果比原素材透明太多 => 说明我们把它抹没了（遮罩太薄、底图透明、
+        // 圆角啃边…任何一种）。这时**退回原素材**，宁可显示系统图也不要显示空白。
+        // 计量用 TCPAlphaCoverage（24×24 全图降采样），与原素材同尺子比，不看绝对阈值。
+        if (rendered && icon) {
+            CGFloat sourceCoverage = TCPAlphaCoverage(icon);
+            CGFloat resultCoverage = TCPAlphaCoverage(rendered);
+            if (sourceCoverage > 0.30 && resultCoverage < sourceCoverage * 0.5) {
+                [self noteComposedFallback:bundleID source:sourceCoverage result:resultCoverage];
+                rendered = nil;
+                // 缓存里放原素材：下一轮同一个键直接拿它，不再反复合成
+                [self.renderedCache setObject:icon forKey:cacheKey];
+                return icon;
+            }
+        }
         if (rendered) {
             [self.renderedCache setObject:rendered forKey:cacheKey];
             // 0.9.8：合成图的身份记录改成**强引用**（原来弱引用 + NSCache 淘汰 →
@@ -1181,7 +1249,7 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
         NSString *layers = chain.count > 0 ? [chain componentsJoinedByString:@"|"] : @"-";
         if (layers.length > 160) layers = [layers substringToIndex:160];
         return [NSString stringWithFormat:
-                @"v%@;active=%d;theme=%@;layers=%lu[%@];gen=%lu;icon{look=%lu,hit=%lu};badge{look=%lu,hit=%lu};file{look=%lu,hit=%lu};named=%lu;mask=%d,cov=%.2f,skip=%d;base=%d;overlay=%d;folder=%d;hit=[%@];miss=[%@]",
+                @"v%@;active=%d;theme=%@;layers=%lu[%@];gen=%lu;icon{look=%lu,hit=%lu};badge{look=%lu,hit=%lu};file{look=%lu,hit=%lu};named=%lu;mask=%d,cov=%.2f,skip=%d;base=%d;overlay=%d;folder=%d;hit=[%@];miss=[%@];ibmask=%d;fb{n=%lu,last=%@}",
                 TCP_VERSION,
                 self.active ? 1 : 0,
                 self.themeName ?: @"-",
@@ -1197,7 +1265,10 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
                 self.overlayPath ? 1 : 0,
                 self.folderPath ? 1 : 0,
                 hits,
-                samples];
+                samples,
+                self.ibMaskIcons ? 1 : 0,
+                (unsigned long)self.fallbackCount,
+                self.fallbackLast ?: @"-"];
     }
 }
 
