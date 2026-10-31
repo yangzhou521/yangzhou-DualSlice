@@ -738,8 +738,11 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 - 图标：`file{look=58,hit=0}`（58 个素材全 miss）、`icon{look=4,miss=4,hit=0}`、
   `census{layer{ours=0},disp{ours=6}}`（`Icons.m` 纯指针比对必然不等）、
   `pix{screen{ours=0,stock=0}}`（主题图一张没上屏）、`dyn{seen=0}` + `clockv{last=noface}`（时钟日历没认出来）。
-- 角标：`badge{look=0,hit=0}`（主题角标素材一次都没用上）、`sys{…tree=SBDarkeningImageView}` 无 `*`、
-  `asset=25x25;canvas=25x19;fit=0.78`。
+- 角标：`sys{…tree=SBDarkeningImageView}` 无 `*`、`asset=25x25;canvas=25x19;fit=0.78`。
+  **别用 `badge{look=0,hit=0}` 判「素材没接上」** —— 那是 iOS 16.7 上两个角标背景方法不存在导致的恒 0，
+  与素材无关；真正在用的是 `txt{look=133,hit:133}`，主题 `SBBadgeBG@3x.png` 实测 75×75 px 是有的。
+  角标验收看三条：`sys{…tree=…*…}` 有 `*`（真清动过）、`sys{…host=N}` 的 N>0（contents 那步真执行了）、
+  屏幕只剩主题那一层（透明玻璃）没有系统红底。
 
 ### 其它历史状态
 
