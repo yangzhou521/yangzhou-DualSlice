@@ -45,9 +45,9 @@
 
 改完源码 push 到 `main`：只有 `ThemeCorePlus/**`、`Prefs/**`、`Support/ThemeCorePlus*`、
 `scripts/build-themecoreplus.sh`、工作流自身变动才会触发（paths 过滤），以免白白重建已经验过的包。
-同一次运行里发 Release（静态 tag 与包版本一致，当前 `themecoreplus-v0.9.19`，每次运行都重建资产，sha256/体积会变）。
+同一次运行里发 Release（静态 tag 与包版本一致，当前 `themecoreplus-v0.9.21`，每次运行都重建资产，sha256/体积会变）。
 Release 资产地址：
-`https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.9.19/com.yangzhou.themecoreplus_0.9.19_iphoneos-arm64e.deb`
+`https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v0.9.21/com.yangzhou.themecoreplus_0.9.21_iphoneos-arm64e.deb`
 
 **tag 必须与包版本一致**：改版本时 `scripts/build-themecoreplus.sh` 的 `VERSION` 与工作流的
 `env.VERSION`、`tag_name`、release 名、`deb-url` 注解要一起改。2026-10-30 17:19 那次只改了脚本
@@ -58,7 +58,7 @@ Release 资产地址：
 公开仓库的 annotations 匿名可读（`/repos/{owner}/{repo}/check-runs/{id}/annotations`）。
 本机没有 curl/wget/python3，查状态用 `icli probe` + `NSData`/`NSURLForString` 调 GitHub API。
 
-## 桌面图标布局保存（ThemeCorePlus 0.9.18 起，0.9.19 补诊断）
+## 桌面图标布局保存（ThemeCorePlus 0.9.18 起，0.9.19 补诊断，0.9.20 修 nomodel）
 
 用户的病灶：「图标注销/崩溃后不保存，回到旧摆位」。全部逻辑在 `ThemeCorePlus/Sources/ThemeCorePlusLayout.m`
 （**只改这一个文件**，Icons/Badges/Store 不碰）。诊断有两条：
@@ -69,8 +69,19 @@ Release 资产地址：
   读到的是那一刻的快照，别拿它判断定时器现在活没活。
 
 ```
-lay{rst=N,sav=N,tick=N,force=N,site=<挂上的保存方法|none>,last=<原因>}
+lay{rst=N,sav=N,tick=N,force=N,site=<挂上的保存方法|none>,model=<none|hooked:save|hooked:leaf>,last=<原因>,probe=<枚举到的候选方法>}
 ```
+
+- **0.9.20/0.9.21 修 `last=nomodel` 的根因**：旧代码用 `respondsToSelector:leafIcons` 判断「self 是不是模型」，
+  而 iOS 16.7 的零参数保存方法挂在 `SBIconModel` 上、模型未必响应 leafIcons → 活模型永远拿不到。
+  现在改成不猜：运行时枚举 `SBIconModel` 家族**自己声明**的方法（`class_copyMethodList`），
+  「零参数 + 名含 IconState 且含 save/persist/write/store」判为保存站，
+  「零参数 + leafIcons/allIcons/icons」判为图标列表站；两类站各挂各的槽（一站一槽，声明者才挂），
+  从站的 self 直接取得活模型与活图标数组。`model=` 写 `hooked:save`（拿到模型）还是 `hooked:leaf`
+  （只拿到图标数组）就一眼看出挂在哪；`probe=` 列出枚举到的候选方法名。
+- 0.9.20 那次 CI 编译失败（run 41158895611）真因：`ThemeCorePlusHooks.m:277` 用了 `TCPThemeStore`
+  而没声明 → 修法是在 `ThemeCorePlusHooks.h` 里 `#import "ThemeCorePlusStore.h"`（不改禁改的 Hooks.m）。
+  修好后 run 41159676651 成功，tag `themecoreplus-v0.9.21`。
 
 - **0.9.17 及以前的真正 bug：`tick=0`** —— `dispatch_source_t` 原来是 `TCPLayoutInstall()` 里的局部变量，
   文件用 `-fobjc-arc` 编译，函数返回时源被释放并取消，handler 一次都没跑过（恢复是同步调用，所以照跑）。
@@ -93,6 +104,10 @@ lay{rst=N,sav=N,tick=N,force=N,site=<挂上的保存方法|none>,last=<原因>}
   ③ 把 `IconState.plist` 挪走再注销 → `rst=1,last=restored`；④ `apelin_crash_list` 无新报告。
 - 已实测（2026-10-31）：0.9.17 装机后 `tick=0`（两分钟两次读数都不动）＝上表那条 ARC 根因；
   系统那份与备份内容只差一个 UUID 字符串（说明系统确实在写盘，摆位没丢）。
+- **状态（2026-10-31 10:2x）：0.9.21 已装机（磁盘 dylib 就是 0.9.21，含 `model=`/`probe=`），
+  但 SpringBoard 仍在跑 0.9.19** —— 注入型插件只在进程启动时加载，**还差一次注销**。
+  注销后诊断应变成 `v0.9.21` 且 `lay{...}` 里出现 `model=`/`probe=`、`last=` 不再是 `nomodel`；
+  注销后必查 `apelin_crash_list process=SpringBoard` 无新报告。
 - 查 CI：`icli probe scripts/ci-status.js`（匿名 GitHub API，列出最近 3 次 run 的 status/conclusion/sha）；
   下载：`icli probe scripts/download-tcp-09xx.js` → 写到 `/var/mobile/Documents/`。
 
