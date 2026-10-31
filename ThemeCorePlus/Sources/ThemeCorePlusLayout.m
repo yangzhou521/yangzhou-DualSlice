@@ -449,8 +449,9 @@ static void TCPLayoutHookSave(void) {
             if (kind < 0) {
                 // 判据没命中，但名字像：记下来（限 8 条），下一版就知道真实名字。
                 if (nearNames.count < 8 && TCPLayoutIsInterestingName(name)) {
-                    [nearNames addObject:[NSString stringWithFormat:@"%s%s", name,
-                                          method_getNumberOfArguments(methods[i]) == 2 ? "" : ":"];
+                    NSString *nm = [NSString stringWithUTF8String:name] ?: @"?";
+                    BOOL zeroArg = (method_getNumberOfArguments(methods[i]) == 2);
+                    [nearNames addObject:zeroArg ? nm : [nm stringByAppendingString:@":"]];
                 }
                 continue;
             }

@@ -1,6 +1,6 @@
 // 把某次 CI run 的 check-run annotations 原样打印（匿名可读）。
 // 用法：icli probe scripts/ci-annotations.js   （run id 改下面的 runId）
-var runId = '41158895611';
+var runId = '41170405550';
 var base = 'https://api.github.com/repos/yangzhou521/yangzhou-DualSlice';
 
 function getText(path) {
