@@ -255,23 +255,30 @@ apelin_conversation_list project: <folder|projectID>     # 逐个工程再列一
 3. **要「不说也知道别人在干嘛」** → `sh scripts/fleet-live.sh [分钟数]`：直接读
    `sessions/<sid>/events.jsonl` 的最后活动时间与最后一条意图，**不依赖任何人写任何东西**。
    这是目前唯一「实证派」的全队视图（本项目 `scripts/fleet-live.sh`，云端同名）。
-   **状态列怎么读（2026-10-31 12:28 修过一次误判）**：「在跑」= 最后一条工作事件晚于这一回合的
-   `finished`；「收工」= 真的停在 `finished` 上；「失败」= `finished.reason=failed`（多半是额度/限流）。
-   旧版本只看「有没有 finished」，而跑过多轮的对话文件尾必然有上一回合的 finished →
-   **正在干活的会被误报成「收工」，正好把最该看见的那条藏起来**。看到「收工」但你觉得它应该还在跑，
-   先 `apelin_conversation_read` 核一遍再下结论。
-4. **对账三问（每轮开工/收工各过一遍）**：
+   **状态列怎么读（2026-10-31 12:3x 修过两处误报）**：
+   - 「在跑」= 最后一条工作事件晚于这一回合的 `finished`（它正在干活）
+   - 「收工」= 真的停在 `finished` 上（回合结束，发消息会排队到下一回合）
+   - 「失败」= 最后一次 `finished.reason=failed` 且之后没有新事件（多半额度耗尽 / 限流）
+   - 「卡住?」= 判为在跑，但已经 `FLEET_STALL_MIN`（默认 8）分钟没有新事件
+   旧版本有两个误报，都实测踩过：只看「有没有 finished」→ 跑过多轮的对话文件尾必然带着上一回合的
+   finished，**正在干活的被报成「收工」**；直接取最后一条 failed → 历史轮次撞过限流的对话
+   **永远被报「失败」**。现在一律比较时间先后，别凭一个字眼下结论；不确定就 `apelin_conversation_read` 核。
+4. **对账四问（开工先问一遍，收工再问一遍）**：
+
    | 问 | 命令 | 判据 |
    | --- | --- | --- |
    | 还有谁在跑？ | `sh scripts/fleet-live.sh 30` | 「在跑」的那些就是要协调的对象 |
-   | 谁出事了要我管？ | `sh scripts/fleet-live.sh 30 alerts` | **失败 / 卡住?** 只列这两种，没有就一句 ✅ |
+   | 谁出事了要我管？ | `sh scripts/fleet-live.sh 30 alerts` | 只列 失败 / 卡住?，没有就一句 ✅ |
    | 它到底在干嘛？ | `apelin_conversation_read <sid> wait_seconds:30` | 看最后一条 message 与 pendingApprovals |
    | 我答应它的事做了吗？ | 翻自己的广播与回执 | 有承诺就必须有下文，没有就补一句「这条我还没做」 |
+
    **对账 ≠ 等通知**：别人不会主动来问你，你得自己去看；等对方来找你 = 空转。
-   **发现「失败」不要自己猜原因**：那多半是额度耗尽 / 限流（`finished.reason=failed`），它自己不会再动，
-   唯一解法是告诉用户去充值或换模型；先 `apelin_conversation_read` 确认最后一条报错，再向用户报。
-   `sh scripts/fleet-live.sh 30 ping` 会为每个失败/卡住的对话打印一段**现成的催办文本**（只打印不发送），
-   复制进 `apelin_conversation_send` 即可，省掉每次现编——这是「协调同步」最省事的一步。
-4. **要让用户知道** → 回复正文 + `scripts/hud-notify.sh`（胶囊）+ `apelin_notification_send`，
+   **看到「失败」不要猜原因**：先 `apelin_conversation_read` 看最后一条报错——多半是
+   `Credits exhausted / rate limit`，它自己不会再动，解法只有让用户充值或换模型，**不是改代码**。
+5. **催办用现成文本**：`sh scripts/fleet-live.sh 30 ping` 会为每个 失败/卡住 的对话打印一段可直接复制的
+   催办话术（**只打印、不发送**），拷进 `apelin_conversation_send` 就行，省掉每次现编、也不会漏掉谁。
+   对方回一句「在等 X／我卡在 Y」就够——**要的是让它说清状态，不是催它赶紧交活**。
+6. **要让用户知道** → 回复正文 + `scripts/hud-notify.sh`（胶囊）+ `apelin_notification_send`，
    见技能 `task-done-notify`。用户要的是**他自己看得见**，不是机器人之间的暗号。
-5. **规矩不变**：自己的活第一、第一时间回执、动设备前打招呼、交接三段式、绝不 stop 别人、绝不改别人文件。
+7. **规矩不变**：自己的活第一、第一时间回执、动设备前打招呼、交接三段式、绝不 stop 别人、绝不改别人文件。
+
