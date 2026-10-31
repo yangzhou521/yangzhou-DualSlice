@@ -194,6 +194,25 @@ static const CGFloat TCPMaskCoverageFloor = 0.30;
 
 // 按请求尺寸重画：底图 → (遮罩 | 圆角) → 图标 → overlay。
 // 合成顺序按需求：遮罩先，overlay 最后压在最上面。
+// 0.9.27：把一张图降采样成 12×12 灰度指纹，用来认「屏幕上那张 CA 复制过的图」是不是我们的。
+// 纯指针比对在 CA 复制 CGImage 后失效（layer{ours=0} 假阴性），指纹按内容认、不随复制变。
+// 取在主题改过的区域：我们合成的图与同 App 同尺寸 stock 图像素内容不同，指纹不会相撞。
+static NSData *TCPFingerprintOfCGImage(CGImageRef cg) {
+    if (cg == NULL) return nil;
+    const size_t S = 12;
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceGray();
+    CGContextRef ctx = CGBitmapContextCreate(NULL, S, S, 8, S, space, kCGImageAlphaNone);
+    CGColorSpaceRelease(space);
+    if (ctx == NULL) return nil;
+    CGContextSetInterpolationQuality(ctx, kCGInterpolationLow);
+    CGContextDrawImage(ctx, CGRectMake(0, 0, S, S), cg);
+    unsigned char *bits = CGBitmapContextGetData(ctx);
+    NSData *fp = nil;
+    if (bits != NULL) fp = [NSData dataWithBytes:bits length:S * S];
+    CGContextRelease(ctx);
+    return fp;
+}
+
 static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIImage *overlay,
                               CGSize size, CGFloat scale, CGFloat cornerRadius, BOOL roundCorners) {
     if (!icon || size.width <= 0 || size.height <= 0) return nil;
@@ -977,6 +996,24 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
                     [self.renderedCGPointers addObject:
                         [NSValue valueWithPointer:(const void *)rendered.CGImage]];
                 }
+                // 0.9.27：≥40pt（约 120px@3x）的图标才记指纹，小图不参与普查、记了易撞且无意义。
+                // 指纹在渲染时算一次存进 renderedFingerprints（带限量淘汰），普查时按指纹再认一遍
+                // CA 复制过的图（指针集认不出）。指纹缓存以 UIImage 指针为键，加速「能追溯到 UIImage」的场景。
+                CGFloat pxW = size.width * (scale > 0 ? scale : 1.0);
+                if (pxW >= 40.0) {
+                    NSData *fp = TCPFingerprintOfCGImage(rendered.CGImage);
+                    if (fp) {
+                        [self.fingerprintCache setObject:fp
+                                                  forKey:[NSValue valueWithPointer:(__bridge const void *)rendered]];
+                        if (self.renderedFingerprints.count > 600) {
+                            // 限量淘汰：保留一半，避免无限增长（发热比像素统计更狠）。
+                            NSMutableArray<NSData *> *all = [[self.renderedFingerprints allObjects] mutableCopy];
+                            [all removeObjectsInRange:NSMakeRange(0, all.count / 2)];
+                            [self.renderedFingerprints intersectSet:[NSSet setWithArray:all]];
+                        }
+                        [self.renderedFingerprints addObject:fp];
+                    }
+                }
             }
         }
         return rendered;
@@ -1008,7 +1045,15 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
 - (BOOL)isRenderedCGImagePointer:(const void *)ptr {
     if (ptr == NULL) return NO;
     @synchronized (self) {
-        return [self.renderedCGPointers containsObject:[NSValue valueWithPointer:ptr]];
+        // 第一道：未经 CA 复制的，指针直接中。
+        if ([self.renderedCGPointers containsObject:[NSValue valueWithPointer:ptr]]) return YES;
+        // 第二道（0.9.27）：CA 复制过 CGImage 的，指针变了但像素内容相同。
+        // 先查指纹缓存（这张图本身作为 UIImage 被我们合成过、普查刚问过）；
+        // 查不到再现场算它的指纹 —— 复制出来的 CGImage 没有对应的 UIImage 指针，只能按内容认。
+        NSData *fp = [self.fingerprintCache objectForKey:[NSValue valueWithPointer:ptr]];
+        if (fp == nil) fp = TCPFingerprintOfCGImage((CGImageRef)ptr);
+        if (fp && [self.renderedFingerprints containsObject:fp]) return YES;
+        return NO;
     }
 }
 

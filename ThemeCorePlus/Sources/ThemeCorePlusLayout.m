@@ -249,7 +249,34 @@ static IMP TCPLayoutOriginalFor(id self, SEL sel) {
     return NULL;
 }
 
-// 名字判据：保存站（零参数）——含 IconState，且含 save/persist/write/store。
+// ── 已学到的保存方法名（0.9.28 起）────────────────────────────────────────
+// 0.9.25 的 near() 会把「名字像保存方法、但没被判据认下」的方法名全部列出来。
+// 拿到真实名字后，把它们填进下面这张表（小写、不带冒号），判据立刻优先认它。
+// 这样既不用再赌通配规则，也不会误挂同名的无关方法。
+static const char *const kTCPLayoutLearnedSaveNames[] = {
+    // 例： "saveiconstate", "persisticonstate", "_saveiconstate",
+    NULL
+};
+
+static BOOL TCPLayoutIsKnownSaveName(const char *lower) {
+    if (lower == NULL) return NO;
+    for (size_t i = 0; kTCPLayoutLearnedSaveNames[i] != NULL; i++) {
+        if (strcmp(lower, kTCPLayoutLearnedSaveNames[i]) == 0) return YES;
+    }
+    return NO;
+}
+
+// 名字判据：保存站（零参数）——**0.9.28 起放宽**。
+//
+// 历史教训：0.9.19–0.9.27 一直要求名字里**同时**含 "iconstate" 与 save/persist/write/store 之一。
+// 0.9.25 的诊断（cand[]/near()）证明：iOS 16.7 上 SBIconModel 的保存方法未必带 "IconState" 字样，
+// 于是判据一个都不命中 → hooked=0 → 永远拿不到模型。
+//
+// 新判据：名字含 save/persist/write/store/flush/sync/commit 之一 **且** 含 icon/layout/state 之一。
+// 这比原来宽得多（原来还要求必须有 "iconstate" 这个完整单词），又不会误挂 -setNeedsSave 这类
+// 只有动词没有对象的方法；签名校验（只挂零参数 void）再兜一层。
+// 若某个系统版本的真实名字连这一档都命中不了，就把 0.9.25 的 near() 里读到的名字填进
+// kTCPLayoutLearnedSaveNames()，判据会优先认它。
 static BOOL TCPLayoutIsSaveName(const char *name) {
     if (name == NULL) return NO;
     char lower[128];
@@ -260,21 +287,32 @@ static BOOL TCPLayoutIsSaveName(const char *name) {
         lower[i] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
     }
     lower[n] = '\0';
-    if (strstr(lower, "iconstate") == NULL) return NO;
-    if (strstr(lower, "save") != NULL) return YES;
-    if (strstr(lower, "persist") != NULL) return YES;
-    if (strstr(lower, "write") != NULL) return YES;
-    if (strstr(lower, "store") != NULL) return YES;
+
+    // 已学到的确切名字（执行期填空，见 kTCPLayoutLearnedSaveNames 的注释）
+    if (TCPLayoutIsKnownSaveName(lower)) return YES;
+
+    BOOL verb = (strstr(lower, "save") != NULL || strstr(lower, "persist") != NULL ||
+                 strstr(lower, "write") != NULL || strstr(lower, "store") != NULL ||
+                 strstr(lower, "flush") != NULL || strstr(lower, "sync") != NULL ||
+                 strstr(lower, "commit") != NULL);
+    if (!verb) return NO;
+    // 必须同时带对象词，否则 -setNeedsSave 这类无关方法会被误当保存站。
+    if (strstr(lower, "icon") != NULL || strstr(lower, "layout") != NULL ||
+        strstr(lower, "state") != NULL) return YES;
     return NO;
 }
 
 // 名字判据：图标列表 getter（零参数）——leafIcons / allIcons / icons 之类。
+// 0.9.28 起也接受 leafIcon* / allIcon* 这类派生名（原来只认精确的几个）。
 static BOOL TCPLayoutIsLeafName(const char *name) {
     if (name == NULL) return NO;
     static const char *candidates[] = { "leafIcons", "allLeafIcons", "allIcons", "icons", "iconList" };
     for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
         if (strcmp(name, candidates[i]) == 0) return YES;
     }
+    // 派生名：leafIcon× / allIcon× / iconsForView 之类，只取零参数由签名校验兜底
+    if (strncmp(name, "leafIcon", 8) == 0) return YES;
+    if (strncmp(name, "allIcon", 7) == 0) return YES;
     return NO;
 }
 

@@ -224,8 +224,19 @@ static CGFloat sComposedLuminance = 0;
 static NSString *sComposedLast = nil;
 
 // 合完一张主题图立刻量它自己。全透明 = 就是我们把它抹没了，用户看到的就是「空白图标」。
+// 0.9.27：同一张 UIImage 只统计一次（指针作 key），避免每次取图都跑 24×24 像素统计（卡顿发热主嫌疑）。
+// 指针复用冲突概率极低（UIImage 生命周期短），NSCache 自动淘汰兜底；只影响「是否重复统计」，不影响行为。
+static NSCache<NSValue *, NSNumber *> *sComposedMemo = nil;
+static dispatch_once_t sComposedMemoOnce;
 static void TCPNoteComposedImage(UIImage *image, NSString *bundleID) {
     if (image == nil) return;
+    dispatch_once(&sComposedMemoOnce, ^{
+        sComposedMemo = [[NSCache alloc] init];
+        sComposedMemo.countLimit = 1024;
+    });
+    NSValue *memoKey = [NSValue valueWithPointer:(__bridge const void *)image];
+    if ([sComposedMemo objectForKey:memoKey] != nil) return;
+    [sComposedMemo setObject:@1 forKey:memoKey];
     sComposedCount++;
     TCPPixelStats stats = TCPPixelStatsForImage(image);
     if (!stats.valid) {

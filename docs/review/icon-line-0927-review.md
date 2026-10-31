@@ -49,10 +49,12 @@
 
 - 角标 `SBBadgeBG` 读取在 `Store.m:1059 imageForNamedAsset:@"SBBadgeBG"`，图标与角标**共用 Store 的
   namedMap 与 `imageForNamedAsset:`**。
-- **要求**：157b2985 只应动「判定端 `isRenderedCGImage:`」与「Icons 的 memo」，
-  **不应碰 `imageForNamedAsset:`、`cachedImageAtPath:`、namedMap 的构建**。
-  若它为「指纹需要取到素材内容」而改了共用取图逻辑，角标的 `txt{look,hit}` 可能受影响——
-  出包后对照 `git diff` 确认这几行没被改。
+- **硬判据（用户 2026-10-31 13:20 硬指令：角标冻结）**：157b2985 只应动「判定端
+  `isRenderedCGImage:`」与「Icons 的 memo」，**不许碰 `imageForNamedAsset:`、
+  `cachedImageAtPath:`、namedMap 的构建、`badgeBackgroundImageForScale:`、
+  `TCPMaterialKindOfFile`/`TCPIsImageFile`/`TCPStripScaleSuffix`**。用户已认可 0.9.23 的角标
+  效果、明确「不要再动角标」——图标线若动了角标素材链任一处，**直接判不合格**。
+  出包后对照 `git diff`，这几行/这几个符号被改 = 退回。
 
 ## 验收（第 2 轮注销后，只读，三组字段分开归因）
 
