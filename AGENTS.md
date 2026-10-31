@@ -155,6 +155,17 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   行为与 1.5.0 完全一致：不吃任何触摸。sid 只认「十六进制 + 连字符」形状（8~64 位），别的内容一律当没有。
   脚本用法：`HUD_SID=<对话 id> sh scripts/hud-notify.sh 8 "完成：<一句话>"`（不带 `HUD_SID` 就是老的纯文案）。
   诊断串末尾多了 `link=<sid>|none` 与 `taps=<累计点击次数>`；点一次 `taps` +1、`link` 就是跳去的那个对话。
+  **状态（2026-10-31 09:4x）：1.6.0 已装机、尚未加载。** CI run 41155920001（commit `c5981b5b`，
+  tag `countdownhud-v1.6.0`，deb 20780 B），`/Library/MobileSubstrate/DynamicLibraries/CountdownHUD.dylib`
+  里能搜到 `apelin://conversation/`、`link=…;taps=`；SpringBoard 仍在跑 **v1.5.0**（诊断无 `link=`/`taps=`）。
+  用户 09:2x 下令「谁要注销才能继续工作的队员就可以停止下去了」→ **本线暂停，不许 sbreload**。
+  注销加载后按这个顺序验：
+  ① 诊断出现 `v1.6.0`（shows 归零 = SpringBoard 换了新代码）；
+  ② `HUD_SID=<对话 id> sh scripts/hud-notify.sh 15 "完成：点击测试"` → 诊断 `link=<sid>`、`mode=plain`；
+  ③ 点胶囊（岛矩形约 `125,18,125,37`，中心 ≈ 187,36）→ `taps=1`，Apelin 被拉起并落到那条对话；
+  ④ 不带 `HUD_SID` 再来一次 → `link=none`，点胶囊**什么都不该发生**（不吃触摸）；
+  ⑤ 注销倒计时（`respring-guard.sh --confirm`）那条路仍不可点；
+  ⑥ `apelin_crash_list`（SpringBoard）无新报告才算装好。
 - 从 shell 写这个文件必须加真根前缀：`/rootfs/var/mobile/Library/Preferences/.countdownhud-request`
   （脚本已包好，见 `scripts/respring-guard.sh` 与 `scripts/hud-notify.sh`）。
 - **注销 / 装包前先来一下最弱的震动（v1.4.0 起）**：用户 2026-10-31 02:48 要求「有注销的打算时
