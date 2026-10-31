@@ -302,18 +302,32 @@ static void TCPNoteComposedImage(UIImage *image, NSString *bundleID) {
 // ── 时钟整套素材（用户 2026-10-31 05:15 给的路径）────────────────────────────
 // <主题>.theme/Bundles/com.apple.springboard/ 下有：ClockIconBackgroundSquare（表盘）、
 // ClockIconHourHand（时针）、ClockIconMinuteHand（分针）、ClockIconRedDot（针帽）。
-// 整个时钟图标都交给这套素材：系统表盘、系统指针一层都不画。
-static UIImage *TCPClockAssetImage(TCPThemeStore *store, NSString *name) {
+// 整个时钟图标都交给这套素材：
+// 1.0.11 支持按 scale 优先查找（@2x 优先，退回 @3x，退回无后缀），不再硬编码 @3x
+static UIImage *TCPClockAssetImageNamed(TCPThemeStore *store, NSString *baseName, CGFloat scale) {
     NSFileManager *fm = [NSFileManager defaultManager];
+    NSInteger wantScale = (NSInteger)round(scale > 0 ? scale : 2.0);
+    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+    if (wantScale >= 2) [candidates addObject:[NSString stringWithFormat:@"%@@%ldx.png", baseName, (long)wantScale]];
+    if (wantScale != 3) [candidates addObject:[NSString stringWithFormat:@"%@@3x.png", baseName]];
+    if (wantScale != 2) [candidates addObject:[NSString stringWithFormat:@"%@@2x.png", baseName]];
+    [candidates addObject:[NSString stringWithFormat:@"%@.png", baseName]];
+
     for (NSString *root in store.themePaths) {
-        NSString *p = [[root stringByAppendingPathComponent:@"Bundles/com.apple.springboard"]
-                       stringByAppendingPathComponent:name];
-        if ([fm fileExistsAtPath:p]) {
-            UIImage *img = [UIImage imageWithContentsOfFile:p];
-            if (img) return img;
+        NSString *dir = [root stringByAppendingPathComponent:@"Bundles/com.apple.springboard"];
+        for (NSString *cand in candidates) {
+            NSString *p = [dir stringByAppendingPathComponent:cand];
+            if ([fm fileExistsAtPath:p]) {
+                UIImage *img = [UIImage imageWithContentsOfFile:p];
+                if (img) return img;
+            }
         }
     }
     return nil;
+}
+
+static UIImage *TCPClockAssetImage(TCPThemeStore *store, NSString *name) {
+    return TCPClockAssetImageNamed(store, [name stringByDeletingPathExtension], 2.0);
 }
 
 // 画一根指针（定义在下面）：素材真实范围的「底边中点」对准表盘中心，按长度缩放后绕中心转 angle。
@@ -725,25 +739,9 @@ static UIImageView *TCPClockFindFaceView(UIView *view, NSInteger depth, NSMutabl
 }
 
 static void TCPClockEnsureOverlay(UIView *view, UIImage *themed) {
-    UIImageView *overlay = (UIImageView *)[view viewWithTag:kTCPClockOverlayTag];
-    if (overlay == nil) {
-        overlay = [[UIImageView alloc] initWithFrame:view.bounds];
-        overlay.tag = kTCPClockOverlayTag;
-        // 1.0.9：撤回 1.0.8 的三处错误 ——
-        //   ① 加「不透明底 + ScaleToFill」把圆表盘填成了**方形色块**（用户 21:38「显示不正常是方形的」）；
-        //   ② 清 view.layer.contents；③ 藏掉系统子视图。
-        //   ②③ 是安全模式的嫌疑（装 1.0.8 后触发），一律去掉。
-        // 回到 1.0.7 的几何：ScaleAspectFit + 透明，靠 z 序盖在系统层之上。
-        // 圆外的透明区域与系统图标同在一个圆形范围里，不会露出「第二套指针」。
-        overlay.contentMode = UIViewContentModeScaleAspectFit;
-        overlay.userInteractionEnabled = NO;
-        overlay.opaque = NO;
-        [view addSubview:overlay];
-    }
-    if (!CGRectEqualToRect(overlay.frame, view.bounds)) overlay.frame = view.bounds;
-    if (overlay.image != themed) overlay.image = themed;
-    // 系统后来又插进来的层要压回去：每拍都把它提到最上面。
-    if ([view.subviews lastObject] != overlay) [view bringSubviewToFront:overlay];
+    // 1.0.11：如果之前有盖过整图 overlay，把它移除掉，不再覆盖整张图
+    UIView *old = [view viewWithTag:kTCPClockOverlayTag];
+    if (old) [old removeFromSuperview];
 }
 
 static void TCPClockViewApply(UIView *view) {
@@ -752,68 +750,76 @@ static void TCPClockViewApply(UIView *view) {
     CGSize size = view.bounds.size;
     if (size.width < 8 || size.height < 8) return;
 
-    NSMutableArray<NSString *> *trace = [NSMutableArray array];
-    NSDictionary *faceInfo = TCPClockFindFace(view, 1, trace);
+    // 清理旧版本的整图覆盖层
+    TCPClockEnsureOverlay(view, nil);
+
     CGFloat scale = view.window.screen.scale > 0 ? view.window.screen.scale : 2.0;
-    // 1.0.7：不再用 Store 的静态表盘（Store 里 com.apple.mobiletimer 只登记了表盘、没有指针），
-    // 改用自己合成的「表盘 + 按当前时间画的指针 + 红点」—— 这样指针是活的。
-    UIImage *themed = TCPClockComposeImage(store, size.width, scale);
-    if (themed == nil) {
-        themed = [store iconImageForBundleID:@"com.apple.mobiletimer"
-                                       size:size
-                                      scale:scale
-                               cornerRadius:0];
+
+    // 1.0.11：借鉴 SnowBoard / MarkTheme —— 绝不自己合成整张静态图！
+    // 方案：逐层设置 contents，转动和动画完全交给系统：
+    // ① 表盘素材（ClockIconBackgroundSquare）：写进 view.layer.contents
+    UIImage *face = TCPClockAssetImageNamed(store, @"ClockIconBackgroundSquare", scale);
+    if (face == nil) {
+        face = [store iconImageForBundleID:@"com.apple.mobiletimer"
+                                      size:size
+                                     scale:scale
+                              cornerRadius:0];
     }
-    if (themed == nil) {
-        __sync_fetch_and_add(&sClockVMiss, 1);
-        sClockVLast = @"noasset";
-        return;
-    }
-    if (faceInfo == nil) {
-        // iOS 16.7 实测：SBHClockApplicationIconImageView 的子视图是 0 个（诊断 nosub）——
-        // 表盘和指针是它自己画（drawRect / 自己的 CALayer），既不是 UIImageView 也不是子视图的
-        // layer，前两条路都摸不到。1.0.6 起走第三条路：把主题的时钟图标作为自己的 UIImageView
-        // 盖在最上面。底下系统怎么画都不影响（那张图不透明），每拍再提一次到最前。
-        TCPClockEnsureOverlay(view, themed);
-        __sync_fetch_and_add(&sClockVHit, 1);
-        sClockVLast = [NSString stringWithFormat:@"overlay|layers=%lu|contents=%@|%.0fx%.0f@%.0f",
-                       (unsigned long)(view.layer.sublayers.count),
-                       view.layer.contents ? @"y" : @"n",
-                       themed.size.width, themed.size.height, scale];
-        return;
+    if (face && face.CGImage) {
+        if (view.layer.contents != (__bridge id)face.CGImage) {
+            view.layer.contents = (__bridge id)face.CGImage;
+        }
     }
 
-    NSString *faceType = faceInfo[@"type"];
-    if ([@"imgv" isEqualToString:faceType]) {
-        // 路径 A：UIImageView（旧版本/iOS 15 及以下）
-        UIImageView *face = faceInfo[@"value"];
-        if (face.image == themed) return;
-        face.image = themed;
-        __sync_fetch_and_add(&sClockVHit, 1);
-        sClockVLast = [NSString stringWithFormat:@"imgv:%@|%.0fx%.0f@%.0f",
-                       NSStringFromClass([face class]), themed.size.width, themed.size.height, scale];
-    } else if ([@"layer" isEqualToString:faceType]) {
-        // 路径 B：CALayer（iOS 16+ 自绘表盘）
-        CALayer *faceLayer = faceInfo[@"value"];
-        UIView *host = faceInfo[@"host"];
-        CGImageRef themedCG = themed.CGImage;
-        // 避免重复设置同一张图
-        CFTypeRef currentContents = (__bridge CFTypeRef)faceLayer.contents;
-        if (currentContents) {
-            CFTypeID currentType = CFGetTypeID(currentContents);
-            if (currentType == CGImageGetTypeID() && currentContents == (CFTypeRef)themedCG) {
-                return;
-            }
+    // ② 指针素材（时针、分针、红点/秒针中轴）：写入系统那 5 个 sublayer 的 contents
+    // 诊断证实结构：
+    //   l0: 10x22 (时针)   -> ClockIconHourHand
+    //   l1: 10x32 (分针)   -> ClockIconMinuteHand
+    //   l2: 10x10 (中轴)   -> ClockIconRedDot / ClockIconBlackDot
+    //   l3: 2x28  (秒针)   -> ClockIconSecondHand
+    //   l4: 2x2   (秒针帽) -> ClockIconRedDot
+    NSArray<CALayer *> *sublayers = view.layer.sublayers;
+    NSUInteger layerCount = sublayers.count;
+    if (layerCount >= 3) {
+        UIImage *hourHand = TCPClockAssetImageNamed(store, @"ClockIconHourHand", scale);
+        UIImage *minHand = TCPClockAssetImageNamed(store, @"ClockIconMinuteHand", scale);
+        UIImage *redDot = TCPClockAssetImageNamed(store, @"ClockIconRedDot", scale);
+        if (redDot == nil) redDot = TCPClockAssetImageNamed(store, @"ClockIconBlackDot", scale);
+        UIImage *secHand = TCPClockAssetImageNamed(store, @"ClockIconSecondHand", scale);
+
+        // l0: 时针
+        if (hourHand && hourHand.CGImage && sublayers[0].contents != (__bridge id)hourHand.CGImage) {
+            sublayers[0].contents = (__bridge id)hourHand.CGImage;
         }
-        faceLayer.contents = (__bridge id)themedCG;
+        // l1: 分针
+        if (minHand && minHand.CGImage && sublayers[1].contents != (__bridge id)minHand.CGImage) {
+            sublayers[1].contents = (__bridge id)minHand.CGImage;
+        }
+        // l2: 中轴
+        if (redDot && redDot.CGImage && sublayers[2].contents != (__bridge id)redDot.CGImage) {
+            sublayers[2].contents = (__bridge id)redDot.CGImage;
+        }
+        // l3: 秒针（若存在）
+        if (layerCount >= 4 && secHand && secHand.CGImage && sublayers[3].contents != (__bridge id)secHand.CGImage) {
+            sublayers[3].contents = (__bridge id)secHand.CGImage;
+        }
+        // l4: 秒针帽
+        if (layerCount >= 5 && redDot && redDot.CGImage && sublayers[4].contents != (__bridge id)redDot.CGImage) {
+            sublayers[4].contents = (__bridge id)redDot.CGImage;
+        }
         __sync_fetch_and_add(&sClockVHit, 1);
-        sClockVLast = [NSString stringWithFormat:@"layer:%@|host:%@|%.0fx%.0f@%.0f",
-                       NSStringFromClass([faceLayer class]),
-                       host ? NSStringFromClass([host class]) : @"-",
-                       themed.size.width, themed.size.height, scale];
+        sClockVLast = [NSString stringWithFormat:@"layers:subs=%lu|face=%@|h=%@|m=%@|dot=%@",
+                       (unsigned long)layerCount,
+                       face ? @"y" : @"n",
+                       hourHand ? @"y" : @"n",
+                       minHand ? @"y" : @"n",
+                       redDot ? @"y" : @"n"];
+    } else if (face) {
+        __sync_fetch_and_add(&sClockVHit, 1);
+        sClockVLast = [NSString stringWithFormat:@"face_only|subs=%lu", (unsigned long)layerCount];
     } else {
         __sync_fetch_and_add(&sClockVMiss, 1);
-        sClockVLast = [NSString stringWithFormat:@"unknown_type:%@", faceType ?: @"nil"];
+        sClockVLast = @"noasset";
     }
 }
 

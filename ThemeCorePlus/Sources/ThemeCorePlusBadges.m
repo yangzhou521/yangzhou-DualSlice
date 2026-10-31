@@ -600,7 +600,11 @@ static void TCPDrawBadgePill(UIImage *asset, CGRect rect) {
         return;
     }
     // 放不下（多位数字）：两端各一个完整圆头，中间填本色。
-    CGFloat cap = MIN(side, asset.size.width);
+    // 1.0.11 修微信等两位以上角标变形：
+    //   一个圆头的宽度是半径（side * 0.5），不是整圆直径！
+    //   旧代码 cap = MIN(side, asset.size.width) 把整圆当成半圆，导致两端裁出的不是半圆而是
+    //   两个完整的整圆，盖上去之后严重重叠，把角标挤成哑铃/畸形异形。
+    CGFloat r = side * 0.5;   // 圆头半宽 = 半径
     UIColor *fill = TCPBadgeAssetFillColor(asset);
     if (fill == nil) {
         // 1.0.8：取不到素材本色（素材几乎全透明、或画布异常）时，**不能**只画两端 ——
@@ -611,35 +615,33 @@ static void TCPDrawBadgePill(UIImage *asset, CGRect rect) {
     }
     // 先填中间（用素材本色），两端圆头再盖上去。
     CGContextRef ctx = UIGraphicsGetCurrentContext();
-    if (ctx != NULL && rect.size.width > cap * 2.0) {
+    if (ctx != NULL && rect.size.width > r * 2.0) {
         CGContextSaveGState(ctx);
         CGContextSetFillColorWithColor(ctx, fill.CGColor);
-        CGContextFillRect(ctx, CGRectMake(rect.origin.x + cap, rect.origin.y,
-                                          rect.size.width - cap * 2.0, side));
+        CGContextFillRect(ctx, CGRectMake(rect.origin.x + r, rect.origin.y,
+                                          rect.size.width - r * 2.0, side));
         CGContextRestoreGState(ctx);
     }
-    // 左圆头：素材的左边 cap 宽，等比缩到 side 高；右圆头同理。
-    // UIImage 没有「裁剪后绘制」的方法，所以从 CGImage 裁出那两段再画。
+    // 左圆头：原素材的左半边（0 ~ pw/2），等比画进 [0, 0, r, side]；
+    // 右圆头：原素材的右半边（pw/2 ~ pw），等比画进 [width - r, 0, r, side]。
     CGImageRef cg = asset.CGImage;
     if (cg != NULL) {
         size_t pw = CGImageGetWidth(cg), ph = CGImageGetHeight(cg);
         if (pw > 0 && ph > 0) {
-            CGFloat capPx = MIN((CGFloat)pw, (CGFloat)cap / MAX(0.0001, side) * (CGFloat)ph);
-            if (capPx < 1) capPx = 1;
-            size_t capI = (size_t)capPx;
-            if (capI > pw) capI = pw;
-            CGRect pxLeft = CGRectMake(0, 0, (CGFloat)capI, (CGFloat)ph);
-            CGRect pxRight = CGRectMake((CGFloat)(pw - capI), 0, (CGFloat)capI, (CGFloat)ph);
+            size_t halfW = pw / 2;
+            if (halfW < 1) halfW = 1;
+            CGRect pxLeft = CGRectMake(0, 0, (CGFloat)halfW, (CGFloat)ph);
+            CGRect pxRight = CGRectMake((CGFloat)(pw - halfW), 0, (CGFloat)halfW, (CGFloat)ph);
             CGImageRef leftCG = CGImageCreateWithImageInRect(cg, pxLeft);
             CGImageRef rightCG = CGImageCreateWithImageInRect(cg, pxRight);
             if (leftCG != NULL) {
                 UIImage *leftImg = [UIImage imageWithCGImage:leftCG scale:asset.scale orientation:UIImageOrientationUp];
-                [leftImg drawInRect:CGRectMake(rect.origin.x, rect.origin.y, cap, side)];
+                [leftImg drawInRect:CGRectMake(rect.origin.x, rect.origin.y, r, side)];
                 CGImageRelease(leftCG);
             }
             if (rightCG != NULL) {
                 UIImage *rightImg = [UIImage imageWithCGImage:rightCG scale:asset.scale orientation:UIImageOrientationUp];
-                [rightImg drawInRect:CGRectMake(rect.origin.x + rect.size.width - cap, rect.origin.y, cap, side)];
+                [rightImg drawInRect:CGRectMake(rect.origin.x + rect.size.width - r, rect.origin.y, r, side)];
                 CGImageRelease(rightCG);
             }
         }
