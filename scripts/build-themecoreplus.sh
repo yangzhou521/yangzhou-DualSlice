@@ -25,7 +25,7 @@ set -eu
 PRODUCT=ThemeCorePlus
 PREFS_BUNDLE=ThemeCorePlusPrefs
 PACKAGE_ID=com.yangzhou.themecoreplus
-VERSION=0.9.31
+VERSION=1.0.0
 NAME_ZH="主题美化 +"
 AUTHOR=yangzhou
 DESCRIPTION="MarkTheme 式主题引擎：读 SnowBoard / IconBundles 主题原素材，改主屏与文件夹图标、角标底图与系统图片覆盖；支持多主题叠加，面板里点「刷新图标」即可当场生效、不用注销。作者 yangzhou。"
@@ -97,8 +97,8 @@ FRAMEWORKS="-framework Foundation -framework UIKit -framework CoreGraphics"
 SHARED_SRCS="$SRC/ThemeCorePlusPaths.m $SRC/ThemeCorePlusConfig.m \
 $SRC/ThemeCorePlusPreferences.m $SRC/ThemeCorePlusStore.m $SRC/ThemeCorePlusLog.m"
 TWEAK_SRCS="$SHARED_SRCS $SRC/ThemeCorePlusIcons.m $SRC/ThemeCorePlusFolders.m \
-$SRC/ThemeCorePlusBadges.m $SRC/ThemeCorePlusFiles.m $SRC/ThemeCorePlusHooks.m \
-$SRC/ThemeCorePlusLayout.m $SRC/ThemeCorePlusMain.m"
+$SRC/ThemeCorePlusBadges.m $SRC/ThemeCorePlusHooks.m \
+$SRC/ThemeCorePlusMain.m"
 
 BUILD=build/themecoreplus
 DY="$BUILD/out/$PRODUCT.dylib"

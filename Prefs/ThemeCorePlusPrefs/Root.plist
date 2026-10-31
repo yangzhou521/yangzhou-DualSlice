@@ -4,11 +4,49 @@
 <dict>
 	<key>items</key>
 	<array>
+		<!-- 通用：启用插件 -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>主题美化 +</string>
+			<string>通用</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>启用插件</string>
+			<key>key</key>
+			<string>Enabled</string>
+			<key>defaults</key>
+			<string>com.yangzhou.themecoreplus</string>
+			<key>default</key>
+			<true/>
+			<key>PostNotification</key>
+			<string>com.yangzhou.themecoreplus.preferences-changed</string>
+		</dict>
+		<!-- 主题：选择主题 + 刷新图标 -->
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>主题</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>label</key>
+			<string>选择主题</string>
+			<key>detail</key>
+			<string>TCThemeListController</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>刷新图标</string>
+			<key>action</key>
+			<string>refreshIcons</string>
 		</dict>
 	</array>
 </dict>

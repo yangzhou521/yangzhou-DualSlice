@@ -62,10 +62,9 @@ static void TCPWriteDiagnostics(void) {
 
     // 像素自检（gen{}/pix{}）原来写好了却没接进来，诊断里一直看不到 —— 2026-10-30 15:4x 接上：
     // 「图标没换」到底是①我们合成把图抹透明了、还是②屏幕上挂的压根不是我们那张图，靠这组数区分。
-    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
                       [store diagnostics], TCPDisplayProbeReport(), TCPRefreshProbeReport(),
-                      TCPIconProbeReport(), TCPDynamicProbeReport(), TCPClockViewProbeReport(),
-                      TCPLayoutDiagnostics(),
+                      TCPIconProbeReport(),
                       TCPBadgeProbeReport(), TCPIconPixelProbeReport(),
                       TCPScreenCensusReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
@@ -150,11 +149,8 @@ static void TCPRelayoutIcons(void) {
 static void TCPReload(BOOL refreshImages) {
     [[TCPThemeStore shared] reload];
     TCPInstallIconSites();
-    TCPInstallClockViewSite();
     TCPInstallDisplaySites();
     TCPInstallBadgeSites();
-    TCPInstallFolderSites();
-    TCPInstallFileSites();
     TCPRelayoutIcons();
 
     // 每次重载记一行「这一轮解析成什么样」，另起一行贴素材快照：面板「运行日志」里看到的就是
@@ -228,9 +224,8 @@ __attribute__((constructor)) static void TCPInitialize(void) {
                    TCP_VERSION, [[NSBundle mainBundle] bundleIdentifier] ?: @"?",
                    (int)[NSProcessInfo processInfo].processIdentifier);
 
-        // 桌面图标布局：先把上次的备份放回原位（早于 SBIconModel 读它），
-        // 之后系统每次保存布局都跟着存一份 —— 注销/崩溃不再丢布局。
-        TCPLayoutInstall();
+        // 桌面图标布局：由 iOS 系统自己保存（IconState.plist），插件不再插手。
+        // 精简版砍掉了 ThemeCorePlusLayout.m 的备份/恢复逻辑（它本来在做系统已经做好的事）。
 
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
                                         NULL,
@@ -245,6 +240,18 @@ __attribute__((constructor)) static void TCPInitialize(void) {
                                          (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 TCPReload(NO);
+            });
+        }
+
+        // 「注销后自动生效」（精简版 2026-10-31）：图标视图都建好之后，安全地自动刷一次。
+        // 这是用户要的核心效果 —— 选好主题注销回来，图标和角标自己出现，不必手动点「刷新图标」。
+        // 与当年安全模式（2026-10-30）的区别：那次是「启动即强刷 + 走 clearIconImageInfo」，
+        // 现在 TCPRefreshIconImages 已改成走 -updateImageAnimated:NO 的安全路径，且这里
+        // 只在 SpringBoard 进程、延迟 3 秒、刷一次，不再连刷。
+        if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"]) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                TCPRefreshIconImages();
             });
         }
 

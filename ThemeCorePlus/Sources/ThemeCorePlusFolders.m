@@ -15,14 +15,7 @@ UIImage *TCPThemedFolderBackground(CGFloat scale) {
 }
 
 void TCPInstallFolderSites(void) {
-    NSArray<NSString *> *prefixes = @[ @"SBFolderIcon", @"SBFolderBackground", @"SBFolderView",
-                                       @"SBFolderScroll", @"SBFolderPage" ];
-    NSArray<NSString *> *excluding = @[ @"Cache", @"Snapshot", @"Animator", @"Transition" ];
-    NSArray<NSString *> *selectors = @[ @"_folderBackgroundImage", @"folderBackgroundImage",
-                                        @"backgroundImage", @"_backgroundImage" ];
-    NSUInteger installed = TCPInstallSitesForClassPrefixes(prefixes, excluding, selectors,
-                                                           TCPSiteKindFolderBackground);
-    if (installed > 0) {
-        os_log(TCPLogHandle(), "TCPS_FOLDER_SITES +%lu", (unsigned long)installed);
-    }
+    // 精简版（2026-10-31）：只加载图标 + 角标，文件夹底板不接管。
+    // 保留本文件编译是因为 Hooks.m 的文件夹槽位仍引用 TCPThemedFolderBackground，
+    // 但这里不再挂任何文件夹站。
 }
