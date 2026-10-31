@@ -9,7 +9,7 @@
 #
 # 三种用法：
 #   sh scripts/respring-guard.sh 5 注销             # ① 只警告：屏幕胶囊 + 终端正文，退出码 3，什么都不做
-#   sh scripts/respring-guard.sh --ask 60 注销      # ② 屏幕上弹系统确认框，用户点「立即注销」才倒计时 + sbreload
+#   sh scripts/respring-guard.sh --ask 5 注销      # ② 屏幕上弹系统确认框，用户点「立即注销」才倒计时 + sbreload
 #   sh scripts/respring-guard.sh --confirm 5 注销   # ③ 用户已在对话里明确答应，直接 5 秒倒计时 + sbreload
 #
 # 铁律：--confirm 只能用在「用户本轮明确答应了注销」之后。用户没回话、回的是「取消/先别」、
@@ -33,7 +33,7 @@
 #
 # 用法：
 #   sh scripts/respring-guard.sh 5 注销                      # 只警告（退出码 3）
-#   sh scripts/respring-guard.sh --ask 60 注销               # 弹系统确认框，点头才注销
+#   sh scripts/respring-guard.sh --ask 5 注销               # 弹系统确认框，点头才注销
 #   sh scripts/respring-guard.sh --confirm 5 注销            # 用户答应后才：5 秒倒计时 + 注销
 #   RESPRING_GUARD_NO_RESPRING=1 sh scripts/respring-guard.sh --confirm 5 装包   # 只倒计时
 #
@@ -106,8 +106,8 @@ wait_answer() {   # $1=本次请求的 epoch $2=最多等几秒
 
 # ---------- ① 警告：不注销，等用户决定 ----------
 if [ "$CONFIRM" != "1" ] && [ "$ASK" != "1" ]; then
-  if hud_request 45 "!⚠️ 要注销吗？在 Apelin 回「注销」或「取消」"; then
-    echo "respring-guard: 已在屏幕胶囊上弹出注销警告（45 秒）"
+  if hud_request 5 "!⚠️ 要注销吗？在 Apelin 回「注销」或「取消」"; then
+    echo "respring-guard: 已在屏幕胶囊上弹出注销警告（5 秒）"
   else
     echo "respring-guard: 写 HUD 请求失败（多半没装 CountdownHUD），只在这里警告"
   fi
