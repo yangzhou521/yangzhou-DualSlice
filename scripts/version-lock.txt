@@ -17,7 +17,19 @@
 # deb_sha256   = 机上对应那个 deb 的指纹。
 
 owner=f8fbdbd5-7f8c-402e-820f-73b6872c394b
-version=0.9.23
+version=0.9.30
+#
+# ===== 冻结清单（2026-10-31 14:21，用户两条硬指令）=====
+# ① 角标冻结（13:20）：「现在桌面角标加载正常了，保持现状不要再动它了」
+#    不改 ThemeCorePlusBadges.m、不装 0.9.24/0.9.26、不碰 Store.m 的
+#    imageForNamedAsset: / namedMap / SBBadgeBG 那条共用链。
+#    基线（0.9.30 实测，用户认可）：text{look=133,hit=133}、badge=4、asset=25x25、
+#    canvas=19x19、gate=composed、sys{look=135,hid=3,wait=2,skip=242,host=0,tree=SBDarkeningImageView}。
+#    **回滚/升版后必须逐项比对，任何一项变化即视为动到角标，立即回退。**
+# ② 设置面板冻结（14:21）：「设置内的面板锁死不要再动了」
+#    不改 Prefs/ThemeCorePlusPrefs/**（TCRootListController.m、Root.plist、Info.plist…），
+#    不出任何设置面板相关版本。用户在用的面板就按现状。
+# 受冻结约束的版本：0.9.24、0.9.26（角标）永不再装；任何 Prefs/ 改动一律不做。
 dylib_sha256=a4d186d1
 # 上面这个指纹是 **0.9.23 装机后机上那份** 的 sha256 前缀（572928 B，2026-10-31 12:20 落盘实测）。
 # 别再把「deb 包内 dylib 的哈希」写进这一行 —— 那会让 safemode-check 每轮都误报「版本漂移」。

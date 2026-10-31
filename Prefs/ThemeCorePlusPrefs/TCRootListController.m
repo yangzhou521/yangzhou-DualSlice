@@ -286,7 +286,7 @@ static NSArray<NSString *> *TCPStoredThemeChain(void) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.tableView.rowHeight = 62.0;   // 开关行与主题行都带一句副标题，56 会被截
+    self.tableView.rowHeight = 44.0;   // 2026-10-31 14:23 副标题去掉后回到标准行高（原 62 是给两行副标题留的）
     // 多选页勾完不自动返回（要继续勾别的），所以给一个明确的出口；Preferences 的返回按钮同样能回去。
     self.navigationItem.rightBarButtonItem =
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonItemStyleDone
@@ -355,10 +355,16 @@ static NSArray<NSString *> *TCPStoredThemeChain(void) {
     return index == NSNotFound ? 0 : (NSInteger)index + 1;
 }
 
-// 行的副标题：这一层排第几（叠加顺序靠后的覆盖靠前的）+ 这个目录里各类素材各有几件。
-// 本次修：这一行以前从来没被赋过值 —— rowHeight 62 给副标题留的位置一直是空的，
-// 用户看不出「哪一层在上面」，也看不出一个主题到底带了什么（四个分类开关已经删了）。
+// 行的副标题：**2026-10-31 14:23 用户要求整串去掉**（「第 N 层 · 图标 84 · 文件夹 1 · 角标 2 · 界面图 7」
+// 这类灰色小字），面板上主题行只留主题名 + 右端开关。
+// 历史：这串字本来是 2026-10-30 16:59/17:00 删掉「四类素材开关」时的替代物（把素材件数写进副标题），
+// 现在按用户要求也一并去掉 —— 面板回到最简：一行一个主题，右端一颗系统开关。
 - (NSString *)tcpSubtitleForPath:(NSString *)path layer:(NSInteger)layer total:(NSInteger)total {
+    return nil;
+}
+
+// 旧实现（保留备查，不再调用）：第几层（叠加顺序靠后的覆盖靠前的）+ 各类素材件数。
+- (NSString *)tcpSubtitleForPathLegacy:(NSString *)path layer:(NSInteger)layer total:(NSInteger)total {
     NSMutableArray<NSString *> *parts = [NSMutableArray array];
 
     if (layer > 0) {

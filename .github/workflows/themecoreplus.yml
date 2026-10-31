@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.30
+  VERSION: 0.9.31
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.30)
+    name: Release (themecoreplus-v0.9.31)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,10 +185,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.30
-          name: ThemeCorePlus v0.9.30
+          tag_name: themecoreplus-v0.9.31
+          name: ThemeCorePlus v0.9.31
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.30 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.31 —— MarkTheme 式的主题引擎，作者 yangzhou。
+
+            v0.9.31（**时钟/日历取证**）：用户 14:15 报时钟与日历图标一直没正常换过。诊断 `dyn{clock=0,cal=0,seen=0}`
+            说明 `TCPCompositeDynamicIcon` 那条主链一次没被调用，`clockv{noface}` 说明视图层找表盘也失败。
+            这一版只加取证、不改行为：① `dyn{}` 新增 `c[…]`，在 SpringBoard 进程内报
+            `SBHClockApplicationIconImageView` / `SBHClockApplicationIcon` / `SBHCalendarApplicationIcon` / `SBIconImageView`
+            四个类存不存在（外部 icli 探针看不到私有类，只能插件自己问）；② `clockv{}` 的 `noface`
+            改为带上本视图尺寸与子视图树（类名|尺寸|图片尺寸，最多 8 条），一次装包就能定位表盘在哪一层、
+            是不是根本不是 UIImageView。装完读这两项即可决定 0.9.32 怎么修时钟日历。
 
             v0.9.30（**主屏图标空/文件夹有 —— 根因修 + 安全网**）：参考开源实现 IconBundles（nickfrey，MIT）——
             它读主题 `Info.plist` 的 `IB-MaskIcons`，true 表示素材**已自带圆角与底**、引擎不该再套遮罩。
@@ -431,7 +439,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.30/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.31/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'

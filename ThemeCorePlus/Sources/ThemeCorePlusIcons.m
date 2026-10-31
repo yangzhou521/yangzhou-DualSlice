@@ -415,10 +415,27 @@ static NSString *TCPSiteClassSummary(void) {
     return parts.count > 0 ? [parts componentsJoinedByString:@","] : @"-";
 }
 
+// 0.9.31：时钟/日历取证 —— 它们各自的类在**本进程**里到底有没有。
+// icli 之类的外部探针看不到 SpringBoard 私有类，只有插件自己能在 SpringBoard 里问。
+// （时钟钩子的 look 计数由 clockv{} 单独报，这里只报类存在性，避免跨节引用。）
+static NSString *TCPDynamicClassProbe(void) {
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    NSArray<NSString *> *names = @[ @"SBHClockApplicationIconImageView",
+                                    @"SBHClockApplicationIcon",
+                                    @"SBHCalendarApplicationIcon",
+                                    @"SBIconImageView" ];
+    for (NSString *name in names) {
+        Class cls = NSClassFromString(name);
+        [parts addObject:[NSString stringWithFormat:@"%@%@", name, cls ? @"+" : @"-"]];
+    }
+    return [parts componentsJoinedByString:@","];
+}
+
 NSString *TCPDynamicProbeReport(void) {
-    return [NSString stringWithFormat:@"dyn{clock=%ld,cal=%ld,fail=%ld,seen=%ld,noimg=%ld,last=%@,cls[%@]}",
+    return [NSString stringWithFormat:@"dyn{clock=%ld,cal=%ld,fail=%ld,seen=%ld,noimg=%ld,last=%@,cls[%@],c[%@]}",
             (long)sDynClock, (long)sDynCalendar, (long)sDynFail,
-            (long)sDynSeen, (long)sDynNotImage, sDynLast ?: @"-", TCPSiteClassSummary()];
+            (long)sDynSeen, (long)sDynNotImage, sDynLast ?: @"-", TCPSiteClassSummary(),
+            TCPDynamicClassProbe()];
 }
 
 BOOL TCPIconNeedsSystemComposite(id icon) {
@@ -523,10 +540,22 @@ static NSString *sClockVLast = @"-";
 
 // 在视图里找「表盘」那张图：尺寸（点）与本视图大致相等的 UIImageView。
 // 只往下一层（系统把表盘放在自己的 imageView 里），找不到就什么都不做。
-static UIImageView *TCPClockFindFaceView(UIView *view, NSInteger depth) {
+// 0.9.31：加了 trace —— noface 时把看到的子视图树一并记进诊断，下次装包就知道表盘到底在哪一层、
+// 是不是根本不是 UIImageView（iOS 16.7 很可能是 CALayer / 自绘）。
+static UIImageView *TCPClockFindFaceView(UIView *view, NSInteger depth, NSMutableArray<NSString *> *trace) {
     CGSize bounds = view.bounds.size;
     if (bounds.width < 8) return nil;
     for (UIView *sub in view.subviews) {
+        if (trace != nil && trace.count < 8) {
+            NSString *line = [NSString stringWithFormat:@"%@|%.0fx%.0f",
+                              NSStringFromClass([sub class]), sub.bounds.size.width, sub.bounds.size.height];
+            if ([sub isKindOfClass:[UIImageView class]]) {
+                UIImage *im = ((UIImageView *)sub).image;
+                if (im) line = [line stringByAppendingFormat:@"|img%.0fx%.0f", im.size.width, im.size.height];
+                else line = [line stringByAppendingString:@"|noimg"];
+            }
+            [trace addObject:line];
+        }
         if ([sub isKindOfClass:[UIImageView class]]) {
             UIImage *image = ((UIImageView *)sub).image;
             CGSize size = image.size;
@@ -535,7 +564,7 @@ static UIImageView *TCPClockFindFaceView(UIView *view, NSInteger depth) {
             }
         }
         if (depth > 0) {
-            UIImageView *found = TCPClockFindFaceView(sub, depth - 1);
+            UIImageView *found = TCPClockFindFaceView(sub, depth - 1, trace);
             if (found != nil) return found;
         }
     }
@@ -548,10 +577,14 @@ static void TCPClockViewApply(UIView *view) {
     CGSize size = view.bounds.size;
     if (size.width < 8 || size.height < 8) return;
 
-    UIImageView *face = TCPClockFindFaceView(view, 1);
+    NSMutableArray<NSString *> *trace = [NSMutableArray array];
+    UIImageView *face = TCPClockFindFaceView(view, 1, trace);
     if (face == nil) {
         __sync_fetch_and_add(&sClockVMiss, 1);
-        sClockVLast = @"noface";
+        // 0.9.31：noface 时把子视图树记下来（最多 8 条），一次装包就能定位表盘在哪。
+        sClockVLast = [NSString stringWithFormat:@"noface|%.0fx%.0f[%@]",
+                       size.width, size.height,
+                       trace.count > 0 ? [trace componentsJoinedByString:@";"] : @"nosub"];
         return;
     }
     CGFloat scale = view.window.screen.scale > 0 ? view.window.screen.scale : 2.0;
