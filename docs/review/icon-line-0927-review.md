@@ -68,3 +68,40 @@
 指纹接线方向对；但「≥40px」只是性能闸不是判别闸，**真正防误判靠指纹算法取在主题改过的区域**；
 指纹集要带淘汰（进 NSCache 或限量），别只增不减；memo 的 key 加图片身份防陈旧；
 别把新初始化挪进构造阶段；别碰角标共用的 `imageForNamedAsset:`。
+
+---
+
+## 出包前复核结论（2026-10-31 13:2x，对照 commit `88a3de2e43` 的 patch，只读）
+
+> 0.9.27 的源码改动就在 commit `88a3de2e43`（那次 run 被取消，随后 `352ab3e7` 只改 yml 重触发，
+> run `41172682266` 正在编）。patch 已拿到，逐条判：
+
+### ① 指纹假阳性 —— ⚠️ 需装机验证，算法本身有理论风险但可接受
+- `TCPFingerprintOfCGImage`：降采样 12×12 灰度 = 144 字节。注释自己写「取在主题改过的区域」，
+  但实际算法是**整图降采样**，并没有只取主题改过的区域——区分力取决于「themed 图与同 App 同尺寸
+  stock 图在 12×12 灰度上是否不同」。大多数主题确实会改整体配色/底图，相撞概率低；但**纯换角标
+  或只改局部小区域的图标**，12×12 灰度可能撞 → 假阳性把 stock 图认成 ours。
+- **这不会让图标变坏**（只是普查统计 `layer{ours}` 偏高），最坏后果是「计数失真」，不是「图标错」。
+  可接受，但装机后若 `layer{ours}` 异常高（接近全屏），要怀疑假阳性。
+- **限量淘汰 OK**：`count > 600` 时保留一半（`removeObjectsInRange(0, count/2)` + `intersectSet`），
+  `fingerprintCache` 是 NSCache（countLimit 512）。不会无限涨。✅
+
+### ② memo 陈旧图 —— ✅ 安全（只跳过统计，不影响图本身）
+- `sComposedMemo` key = UIImage **指针**，countLimit 1024。注释写明「只影响是否重复统计，不影响行为」。
+- 「generation 不变但图换了」确实会命中旧 memo 跳过统计，但跳过的只是**像素自检统计**（诊断用），
+  不影响实际渲染的图。诊断 `gen{}` 可能旧一帧，可接受。✅
+
+### ③ 构造阶段 UIKit / 隐根路径 —— ✅ 合规
+- memo 用 `dispatch_once` 惰性创建，非 dyld 构造函数。指纹函数 `TCPFingerprintOfCGImage` 纯 CoreGraphics
+  （CGBitmapContext），不碰 UIKit。无路径字面量。✅
+
+### ④ 角标素材链 —— ✅ 符合硬判据（用户角标冻结指令）
+- patch 只动 Icons.m 的 memo 段 + Store.m 的指纹段。**未触碰** `imageForNamedAsset:`、
+  `cachedImageAtPath:`、namedMap 构建、`badgeBackgroundImageForScale:`、
+  `TCPMaterialKindOfFile`/`TCPIsImageFile`/`TCPStripScaleSuffix`。✅
+
+### 复核结论
+- 四条全部通过或可接受，**没有需要退回的硬伤**。
+- 唯一装机后要盯的：`layer{ours}` 若异常高（接近全屏图标数）→ 怀疑 12×12 灰度指纹假阳性，
+  那时才需要收紧指纹算法（取更细粒度或只取主题改过的区域）。
+- 角标素材链零改动，符合用户「不要再动角标」硬指令。
