@@ -601,17 +601,22 @@ static void TCPDrawBadgePill(UIImage *asset, CGRect rect) {
     }
     // 放不下（多位数字）：两端各一个完整圆头，中间填本色。
     CGFloat cap = MIN(side, asset.size.width);
+    UIColor *fill = TCPBadgeAssetFillColor(asset);
+    if (fill == nil) {
+        // 1.0.8：取不到素材本色（素材几乎全透明、或画布异常）时，**不能**只画两端 ——
+        // 那样中间是空的，多位数字角标会「断成两半」（复核发现，本机 25×25 素材没暴露）。
+        // 这时退回「素材按比例铺满」，宁可形状被拉长一点，也不留空洞。
+        TCPDrawAssetAspectFitted(asset, rect);
+        return;
+    }
     // 先填中间（用素材本色），两端圆头再盖上去。
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     if (ctx != NULL && rect.size.width > cap * 2.0) {
-        UIColor *fill = TCPBadgeAssetFillColor(asset);
-        if (fill != nil) {
-            CGContextSaveGState(ctx);
-            CGContextSetFillColorWithColor(ctx, fill.CGColor);
-            CGContextFillRect(ctx, CGRectMake(rect.origin.x + cap, rect.origin.y,
-                                              rect.size.width - cap * 2.0, side));
-            CGContextRestoreGState(ctx);
-        }
+        CGContextSaveGState(ctx);
+        CGContextSetFillColorWithColor(ctx, fill.CGColor);
+        CGContextFillRect(ctx, CGRectMake(rect.origin.x + cap, rect.origin.y,
+                                          rect.size.width - cap * 2.0, side));
+        CGContextRestoreGState(ctx);
     }
     // 左圆头：素材的左边 cap 宽，等比缩到 side 高；右圆头同理。
     // UIImage 没有「裁剪后绘制」的方法，所以从 CGImage 裁出那两段再画。
