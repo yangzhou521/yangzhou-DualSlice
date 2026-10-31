@@ -153,7 +153,11 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   返回胶囊（屏幕别处照旧返回 nil 穿透，不会因为这一改吃掉触摸），点一下先收起胶囊、再
   `openURL: apelin://conversation/<sid>` 打开那条对话；没有第 4 段（老脚本、注销倒计时、`?` 弹窗）
   行为与 1.5.0 完全一致：不吃任何触摸。sid 只认「十六进制 + 连字符」形状（8~64 位），别的内容一律当没有。
-  脚本用法：`HUD_SID=<对话 id> sh scripts/hud-notify.sh 8 "完成：<一句话>"`（不带 `HUD_SID` 就是老的纯文案）。
+  脚本用法：`HUD_SID=<对话 id> sh scripts/hud-notify.sh 8 "完成：<一句话>"`。
+  **不给 `HUD_SID` 也不再是老的纯文案**：脚本会**自动认出本会话**（在 `~/Documents/wiki.qaq.apelin/sessions/`
+  里找「最后一次发起 `hud-notify.sh` 调用的那个会话」，也就是正在跑这条通知的对话），照样生成可点胶囊。
+  早期版本按「全局最近一条用户消息」认，会被别的对话抢走链接 —— 已改（2026-10-31）。
+  并发跑多条线时仍可能认错，那种场合显式传 `HUD_SID=<自己的 session id>`。
   诊断串末尾多了 `link=<sid>|none` 与 `taps=<累计点击次数>`；点一次 `taps` +1、`link` 就是跳去的那个对话。
   **状态（2026-10-31 10:1x）：1.6.0 已装、已加载、已实测通过。** CI run 41155920001（commit `c5981b5b`，
   tag `countdownhud-v1.6.0`，deb 20780 B）；`/Library/MobileSubstrate/DynamicLibraries/CountdownHUD.dylib`
