@@ -12,15 +12,27 @@
 //    1) 恢复：SpringBoard 启动最早的时刻（构造函数）比较「系统那份」与「备份」——
 //       系统那份读得出来、而且与备份内容一致 → 一个字节都不动（keepsource）；
 //       系统那份不见了 / 读不出来 → 用备份回填；备份更新（崩溃前系统没来得及写）→ 用备份回填。
-//    2) 系统保存布局时跟着存一份（-saveIconState 一族，哪个存在挂哪个，诊断 site= 里能看到）。
+//    2) 系统保存布局时跟着存一份（保存站；诊断 site= 里能看到挂了哪些）。
 //    3) 5 秒一拍的主线程定时器（0.9.18 修）：
 //       · 源文件比备份新 → 跟存；
-//       · 活的 SBIconModel 摆位签名变了（用户动过图标）而系统还没写盘 → 主动让它写，再跟存。
+//       · 活的模型摆位签名变了（用户动过图标）而系统还没写盘 → 主动让它写，再跟存。
 //
 //  0.9.17 及以前 tick 恒为 0 的原因：dispatch_source_t 在 ARC 下是对象，
 //  原来把它存在 TCPLayoutInstall() 的局部变量里 —— 函数返回即被释放，源随之被取消，
 //  handler 一次都没跑过（恢复能跑是因为它是同步调用，所以 sav 只有启动那一次）。
 //  现在源存在文件级静态变量 sLayoutTimer 里，活到进程结束。
+//
+//  0.9.19 → 0.9.20 的真病灶（诊断 lay{... last=nomodel, sav=1}）：
+//  上一版靠猜 `[SBIconController sharedInstance]` → `-iconModel` 拿活模型，iOS 16.7 上不通；
+//  而保存站虽然挂上了（sav=1 说明它确实被系统调用过一次），却用「respondsToSelector:leafIcons」
+//  来判断「self 是不是模型」，于是 self 是模型也认不出来，模型永远拿不到。
+//  0.9.20 改成**不猜**：
+//    · 运行时枚举 SBIconModel 家族（及其子类）**自己声明的**方法（class_copyMethodList），
+//      把「零参数 + 名字含 IconState 且含 save/persist/write/store」的判成保存站，
+//      把「零参数 + 名字是 leafIcons / allIcons / icons 之类」的判成图标列表站；
+//    · 两类站都挂（各挂各的槽），从站的 self 直接拿到**活的模型实例**和**活的图标数组**；
+//    · 「是不是模型」改成「类名链里有没有 IconModel」或「响应 leafIcons」，不再是唯一判据。
+//  签名（谁动了图标）直接用图标列表站返回的数组算，不再自己再去问模型。
 //
 //  备份位置：/var/mobile/Library/ThemeCorePlus/IconState.backup.plist
 //  （SpringBoard 以 mobile 身份运行，这个目录它写得了；CountdownHUD 也在这个目录下写过请求文件。）
@@ -41,25 +53,27 @@ static volatile int sLayoutTicks = 0;
 static volatile int sLayoutForced = 0;
 static NSString *sLayoutLast = @"-";
 
-// 挂上的保存站（诊断 site= 用的就是这里）。
-#define TCPLayoutMaxSlots 6
+// ── 保存站 / 图标列表站（一站一槽：每个 (类, 选择器) 一格，绝不按 self 的类反查总表）──
+#define TCPLayoutMaxSlots 48
+enum { TCPLayoutKindSave = 0, TCPLayoutKindLeaf = 1 };
 typedef struct {
     Class cls;
     SEL sel;
     IMP orig;
+    int kind;
 } TCPLayoutSlot;
 static TCPLayoutSlot sLayoutSlots[TCPLayoutMaxSlots];
 static int sLayoutSlotCount = 0;
-static NSString *sLayoutSite = @"none";
+static NSString *sLayoutSite = @"none";      // 挂了哪些站（诊断 site=）
+static NSString *sLayoutProbe = @"-";        // 枚举到的候选方法（诊断 probe=）
 
 // 定时器必须由本文件长期持有（见文件头第 3 条）。
 static dispatch_source_t sLayoutTimer = NULL;
 
-// 活的模型实例与「走了哪条路拿到它」（0.9.20：保存站捕获 / 控制器 KVC / 扫类表）。
-static id sLayoutModel = nil;
-static id sLayoutController = nil;      // 找到模型的那只控制器（主动保存时再试一次它）
-static NSString *sLayoutModelPath = @"-";
-static BOOL TCPLayoutLooksLikeModel(id object);
+// 活的模型实例、活的图标数组与「走了哪条路拿到它」。
+static id sLayoutModel = nil;                // SBIconModel（或其子类）的实例
+static id sLayoutLeaves = nil;               // 图标列表（图标列表站返回的数组）
+static NSString *sLayoutModelPath = @"-";    // hooked:save / hooked:leaf / none:…
 
 // 主动保存后要确认系统真写了盘：记下请求那一刻源文件的 mtime，下一拍比对。
 static NSDate *sLayoutPendingMtime = nil;
@@ -185,172 +199,208 @@ static void TCPLayoutRestore(void) {
     }
 }
 
-// ── 保存站 ────────────────────────────────────────────────────────────────
+// ── 站的工具 ──────────────────────────────────────────────────────────────
+
+// 类的继承链上有没有名字含 needle 的类（IconModel 家族判定用）。
+static BOOL TCPLayoutClassChainHas(Class cls, const char *needle) {
+    for (Class c = cls; c != Nil; c = class_getSuperclass(c)) {
+        const char *n = class_getName(c);
+        if (n != NULL && strstr(n, needle) != NULL) return YES;
+    }
+    return NO;
+}
+
+// 「这个对象是不是图标模型」：类名链里有 IconModel，或者它响应 leafIcons。
+static BOOL TCPLayoutLooksLikeModel(id object) {
+    if (object == nil) return NO;
+    if (TCPLayoutClassChainHas(object_getClass(object), "IconModel")) return YES;
+    return [object respondsToSelector:NSSelectorFromString(@"leafIcons")];
+}
+
+// 一个方法的原 IMP：按 self 的类链从具体到泛型找同一格（一站一槽，不查总表）。
+static IMP TCPLayoutOriginalFor(id self, SEL sel) {
+    for (Class c = object_getClass(self); c != Nil; c = class_getSuperclass(c)) {
+        for (int i = 0; i < sLayoutSlotCount; i++) {
+            if (sLayoutSlots[i].cls == c && sel_isEqual(sLayoutSlots[i].sel, sel)) {
+                return sLayoutSlots[i].orig;
+            }
+        }
+    }
+    return NULL;
+}
+
+// 名字判据：保存站（零参数）——含 IconState，且含 save/persist/write/store。
+static BOOL TCPLayoutIsSaveName(const char *name) {
+    if (name == NULL) return NO;
+    char lower[128];
+    size_t n = strlen(name);
+    if (n >= sizeof(lower)) n = sizeof(lower) - 1;
+    for (size_t i = 0; i < n; i++) {
+        char c = name[i];
+        lower[i] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    }
+    lower[n] = '\0';
+    if (strstr(lower, "iconstate") == NULL) return NO;
+    if (strstr(lower, "save") != NULL) return YES;
+    if (strstr(lower, "persist") != NULL) return YES;
+    if (strstr(lower, "write") != NULL) return YES;
+    if (strstr(lower, "store") != NULL) return YES;
+    return NO;
+}
+
+// 名字判据：图标列表 getter（零参数）——leafIcons / allIcons / icons 之类。
+static BOOL TCPLayoutIsLeafName(const char *name) {
+    if (name == NULL) return NO;
+    static const char *candidates[] = { "leafIcons", "allLeafIcons", "allIcons", "icons", "iconList" };
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        if (strcmp(name, candidates[i]) == 0) return YES;
+    }
+    return NO;
+}
+
+// ── 站 ────────────────────────────────────────────────────────────────────
 
 static void tcpLayoutSaveHook(id self, SEL _cmd) {
-    // 系统自己保存时顺手把模型实例留下：0.9.20 起这是「拿到活模型」最可靠的一条路
-    // （控制器那几条在 iOS 16.7 上不保证找得到）。
+    // 系统自己保存时顺手把模型实例留下：站的 self 就是活的 SBIconModel。
     if (TCPLayoutLooksLikeModel(self)) {
         sLayoutModel = self;
         sLayoutModelPath = @"hooked:save";
     }
-    IMP orig = NULL;
-    for (int i = 0; i < sLayoutSlotCount; i++) {
-        if (sel_isEqual(sLayoutSlots[i].sel, _cmd)) { orig = sLayoutSlots[i].orig; break; }
-    }
+    IMP orig = TCPLayoutOriginalFor(self, _cmd);
     if (orig != NULL) ((void (*)(id, SEL))orig)(self, _cmd);
     TCPLayoutBackup(@"saveIconState");
 }
 
-// 挂保存站。构造函数里 SBIconModel / SBIconController 可能还没被 dyld 载进来，
-// 所以定时器每一拍都会再试一次，挂上就不再试。
-//
-// 只挂「零参数」的保存方法：钩子签名是 (id, SEL)，带参数的版本（saveIconStateAndWait: 之类）
-// 被系统调用时原参数会被我们丢掉，反而会坏事 —— 那种一律不碰。
-static void TCPLayoutHookSave(void) {
-    if (sLayoutSlotCount > 0) return;
-    NSArray<NSString *> *names = @[ @"saveIconState", @"_saveIconState", @"persistIconState" ];
-    NSArray<NSString *> *classNames = @[ @"SBIconModel", @"SBIconController" ];
-    NSMutableArray<NSString *> *hooked = [NSMutableArray array];
+static id tcpLayoutLeafHook(id self, SEL _cmd) {
+    IMP orig = TCPLayoutOriginalFor(self, _cmd);
+    id result = nil;
+    if (orig != NULL) result = ((id (*)(id, SEL))orig)(self, _cmd);
+    // 图标列表站的 self 就是模型，result 就是活的图标数组 —— 摆位签名直接用它算。
+    if (TCPLayoutLooksLikeModel(self)) {
+        sLayoutModel = self;
+        sLayoutModelPath = @"hooked:leaf";
+        if (result != nil) sLayoutLeaves = result;
+    }
+    return result;
+}
 
-    for (NSString *className in classNames) {
-        Class cls = objc_getClass(className.UTF8String);
-        if (cls == Nil) continue;
-        for (NSString *name in names) {
+// ── 挂站：运行时枚举 SBIconModel 家族自己声明的零参数方法 ──────────────────
+
+// 候选类：SBIconModel 及其子类（SBHomeScreenIconModel 之类）。
+static NSArray<Class> *TCPLayoutCandidateClasses(void) {
+    NSMutableArray *out = [NSMutableArray array];
+    Class base = objc_getClass("SBIconModel");
+    if (base == Nil) return out;
+    int count = objc_getClassList(NULL, 0);
+    if (count <= 0) return out;
+    Class *classes = (Class *)malloc(sizeof(Class) * (size_t)count);
+    if (classes == NULL) return out;
+    count = objc_getClassList(classes, count);
+    for (int i = 0; i < count; i++) {
+        Class c = classes[i];
+        if (c == base) { [out addObject:c]; continue; }
+        if (class_isMetaClass(c)) continue;
+        if ([c isSubclassOfClass:base]) [out addObject:c];
+    }
+    free(classes);
+    return out;
+}
+
+// 挂站。构造函数里 SBIconModel 可能还没被 dyld 载进来，所以定时器每一拍都会再试一次，
+// 挂上就不再重挂（同一 (类,选择器) 只挂一次）。
+static void TCPLayoutHookSave(void) {
+    NSArray<Class> *classes = TCPLayoutCandidateClasses();
+    if (classes.count == 0) return;
+
+    NSMutableArray<NSString *> *hooked = [NSMutableArray array];
+    NSMutableArray<NSString *> *probe = [NSMutableArray array];
+
+    for (Class cls in classes) {
+        unsigned int count = 0;
+        Method *methods = class_copyMethodList(cls, &count);
+        if (methods == NULL) continue;
+        NSMutableArray<NSString *> *saveNames = [NSMutableArray array];
+        NSMutableArray<NSString *> *leafNames = [NSMutableArray array];
+
+        for (unsigned int i = 0; i < count; i++) {
+            SEL sel = method_getName(methods[i]);
+            const char *name = sel_getName(sel);
+            if (name == NULL) continue;
+            // 铁律：只挂零参数方法（self + _cmd）。带参数的保存方法（saveIconStateAndWait: 之类）
+            // 被我们无参调用会丢掉参数，把系统写盘弄坏 —— 一律不碰。
+            if (method_getNumberOfArguments(methods[i]) != 2) continue;
+
+            int kind = -1;
+            if (TCPLayoutIsSaveName(name)) kind = TCPLayoutKindSave;
+            else if (TCPLayoutIsLeafName(name)) kind = TCPLayoutKindLeaf;
+            if (kind < 0) continue;
+
+            // 同一 (类,选择器) 只挂一次。
+            BOOL already = NO;
+            for (int k = 0; k < sLayoutSlotCount; k++) {
+                if (sLayoutSlots[k].cls == cls && sel_isEqual(sLayoutSlots[k].sel, sel)) { already = YES; break; }
+            }
+            if (already) continue;
             if (sLayoutSlotCount >= TCPLayoutMaxSlots) break;
-            SEL sel = NSSelectorFromString(name);
-            Method method = class_getInstanceMethod(cls, sel);
-            if (method == NULL) continue;
-            if (method_getNumberOfArguments(method) != 2) continue;   // self + _cmd，多一个都不挂
+
             IMP orig = NULL;
-            MSHookMessageEx(cls, sel, (IMP)tcpLayoutSaveHook, (IMP *)&orig);
+            MSHookMessageEx(cls, sel,
+                            kind == TCPLayoutKindSave ? (IMP)tcpLayoutSaveHook : (IMP)tcpLayoutLeafHook,
+                            (IMP *)&orig);
             if (orig == NULL) continue;
+
             sLayoutSlots[sLayoutSlotCount].cls = cls;
             sLayoutSlots[sLayoutSlotCount].sel = sel;
             sLayoutSlots[sLayoutSlotCount].orig = orig;
+            sLayoutSlots[sLayoutSlotCount].kind = kind;
             sLayoutSlotCount++;
-            [hooked addObject:[NSString stringWithFormat:@"-%@:%@", className, name]];
+
+            NSString *entry = [NSString stringWithFormat:@"-%@:%@",
+                               NSStringFromClass(cls), NSStringFromSelector(sel)];
+            [hooked addObject:entry];
+            [probe addObject:[NSString stringWithFormat:@"%@{%@:%@}",
+                              NSStringFromClass(cls),
+                              kind == TCPLayoutKindSave ? @"save" : @"leaf",
+                              NSStringFromSelector(sel)]];
+            if (kind == TCPLayoutKindSave) [saveNames addObject:NSStringFromSelector(sel)];
+            else [leafNames addObject:NSStringFromSelector(sel)];
+        }
+        free(methods);
+
+        if (saveNames.count > 0 || leafNames.count > 0) {
+            [probe addObject:[NSString stringWithFormat:@"%@[%@]",
+                              NSStringFromClass(cls),
+                              [[saveNames arrayByAddingObjectsFromArray:leafNames]
+                               componentsJoinedByString:@","]]];
         }
     }
-    sLayoutSite = hooked.count ? [hooked componentsJoinedByString:@","] : @"none";
+
+    if (hooked.count > 0) {
+        sLayoutSite = [hooked componentsJoinedByString:@","];
+        sLayoutProbe = [probe componentsJoinedByString:@";"];
+    }
 }
 
-// ── 活的模型 ──────────────────────────────────────────────────────────────
-//
-// 0.9.19 装机后诊断是 lay{rst=0,sav=2,tick=13,force=0,site=-SBIconModel:_saveIconState,last=nomodel}：
-// 定时器活了、保存站也挂上了，但每拍都拿不到模型 —— 原来只试
-// `[SBIconController sharedInstance]` + `-iconModel` 这一条路，iOS 16.7 上显然不通
-// （要么类名不对，要么这个 getter 换了地方）。改成三条退路 + 自己记录走了哪条：
-//   ① 保存站被系统调用时顺手把 self（SBIconModel 实例）留下 —— 最可靠，但要有系统保存才发生；
-//   ② 控制器上按 KVC 找 iconModel / model，再退到它的 iconManager 上找；
-//   ③ 还不行就扫一遍类表，找名字带 IconController / IconManager 的类试同样的路。
-// 找到一次就缓存（进程内是单例），不再每拍重扫。
-static BOOL TCPLayoutLooksLikeModel(id object) {
-    if (object == nil) return NO;
-    return [object respondsToSelector:NSSelectorFromString(@"leafIcons")];
+// 模型身上有没有零参数保存方法（挂着的那几站）。
+static BOOL TCPLayoutHasSaveStationFor(id model) {
+    if (model == nil) return NO;
+    for (int i = 0; i < sLayoutSlotCount; i++) {
+        if (sLayoutSlots[i].kind != TCPLayoutKindSave) continue;
+        if (![model isKindOfClass:sLayoutSlots[i].cls]) continue;
+        if (!sel_isEqual(sLayoutSlots[i].sel, NSSelectorFromString("saveIconState")) &&
+            sLayoutSlots[i].orig == NULL) continue;
+        return YES;
+    }
+    return NO;
 }
 
-// KVC：找不到 key 会抛 NSUndefinedKeyException，必须接住。
-static id TCPLayoutValue(id object, NSString *key) {
-    if (object == nil || key.length == 0) return nil;
+// ── 摆位签名 ──────────────────────────────────────────────────────────────
+
+static NSString *TCPLayoutSignatureOfLeaves(id leaves) {
+    if (leaves == nil) return nil;
+    if (![leaves respondsToSelector:NSSelectorFromString(@"count")]) return nil;
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
     @try {
-        return [object valueForKey:key];
-    } @catch (NSException *e) {
-        return nil;
-    }
-}
-
-static id TCPLayoutModelFromHolder(id holder, NSString *prefix) {
-    for (NSString *key in @[ @"iconModel", @"model" ]) {
-        id candidate = TCPLayoutValue(holder, key);
-        if (!TCPLayoutLooksLikeModel(candidate)) continue;
-        sLayoutModel = candidate;
-        sLayoutModelPath = [prefix stringByAppendingString:key];
-        return candidate;
-    }
-    return nil;
-}
-
-static id TCPLayoutModelFromController(id controller, NSString *prefix) {
-    id model = TCPLayoutModelFromHolder(controller, prefix);
-    if (model != nil) return model;
-    for (NSString *managerKey in @[ @"iconManager", @"homeScreenIconManager" ]) {
-        id manager = TCPLayoutValue(controller, managerKey);
-        if (manager == nil) continue;
-        model = TCPLayoutModelFromHolder(manager, [prefix stringByAppendingFormat:@"%@.", managerKey]);
-        if (model != nil) return model;
-    }
-    return nil;
-}
-
-// 扫类表兜底：只在上面全部失败时跑一次。
-static id TCPLayoutModelFromScan(void) {
-    int count = objc_getClassList(NULL, 0);
-    if (count <= 0) return nil;
-    Class *classes = (Class *)malloc(sizeof(Class) * (size_t)count);
-    if (classes == NULL) return nil;
-    count = objc_getClassList(classes, count);
-    id found = nil;
-    for (int i = 0; i < count && found == nil; i++) {
-        const char *name = class_getName(classes[i]);
-        if (name == NULL) continue;
-        // 只认 IconController：名字里带 IconManager 的类太多，而且它们的 sharedInstance
-        // 未必是现成的单例，乱调有副作用。
-        if (strstr(name, "IconController") == NULL) continue;
-        SEL shared = NSSelectorFromString(@"sharedInstance");
-        if (![(id)classes[i] respondsToSelector:shared]) continue;
-        id instance = nil;
-        @try {
-            instance = ((id (*)(id, SEL))objc_msgSend)((id)classes[i], shared);
-        } @catch (NSException *e) { instance = nil; }
-        if (instance == nil) continue;
-        NSString *prefix = [NSString stringWithFormat:@"scan:%s.", name];
-        found = TCPLayoutModelFromController(instance, prefix);
-        if (found != nil) sLayoutController = instance;
-    }
-    free(classes);
-    return found;
-}
-
-static id TCPLayoutIconModel(void) {
-    if (TCPLayoutLooksLikeModel(sLayoutModel)) return sLayoutModel;
-
-    Class controllerClass = objc_getClass("SBIconController");
-    if (controllerClass != Nil) {
-        for (NSString *selName in @[ @"sharedInstance", @"sharedIconController" ]) {
-            SEL sel = NSSelectorFromString(selName);
-            if (![(id)controllerClass respondsToSelector:sel]) continue;
-            id controller = nil;
-            @try {
-                controller = ((id (*)(id, SEL))objc_msgSend)((id)controllerClass, sel);
-            } @catch (NSException *e) { controller = nil; }
-            if (controller == nil) continue;
-            id model = TCPLayoutModelFromController(controller, @"controller.");
-            if (model != nil) { sLayoutController = controller; return model; }
-        }
-        sLayoutModelPath = @"none:nocontroller";
-    } else {
-        sLayoutModelPath = @"none:noclass";
-    }
-
-    // 扫类表很贵（SpringBoard 里上万个类），只在没别的路可走时每 30 秒试一次。
-    if (sLayoutTicks % 6 == 0) {
-        id scanned = TCPLayoutModelFromScan();
-        if (scanned != nil) return scanned;
-    }
-    if ([sLayoutModelPath hasPrefix:@"none:"]) sLayoutModelPath = @"none:noiconmodel";
-    return nil;
-}
-
-// 摆位签名：每个图标的标识 + 位置。用户动过图标它才会变。
-static NSString *TCPLayoutSignature(id model) {
-    @try {
-        SEL leavesSel = NSSelectorFromString(@"leafIcons");
-        if (![model respondsToSelector:leavesSel]) return nil;
-        id leaves = ((id (*)(id, SEL))objc_msgSend)(model, leavesSel);
-        if (leaves == nil) return nil;
-
-        NSMutableArray<NSString *> *parts = [NSMutableArray array];
         for (id icon in leaves) {
             NSString *ident = nil;
             for (NSString *key in @[ @"leafIdentifier", @"uniqueIdentifier" ]) {
@@ -376,36 +426,40 @@ static NSString *TCPLayoutSignature(id model) {
     }
 }
 
-// 让系统自己把当前布局写进 IconState.plist（走我们挂上的那站，会顺带跟存备份）。
-// 只调零参数版本：多一个参数的保存方法（saveIconStateAndWait: 之类）被我们无参调用会丢掉参数。
-static BOOL TCPLayoutAskObjectToSave(id object) {
-    if (object == nil) return NO;
-    for (NSString *name in @[ @"saveIconState", @"_saveIconState", @"persistIconState" ]) {
-        SEL sel = NSSelectorFromString(name);
-        Method method = class_getInstanceMethod(object_getClass(object), sel);
-        if (method == NULL) continue;
-        if (method_getNumberOfArguments(method) != 2) continue;
-        @try {
-            ((void (*)(id, SEL))objc_msgSend)(object, sel);
-            return YES;
-        } @catch (NSException *e) {}
+// 图标数组：优先用图标列表站返回的（那是活的），否则自己问模型要。
+static id TCPLayoutCurrentLeaves(id model) {
+    if (sLayoutLeaves != nil) return sLayoutLeaves;
+    if (model == nil) return nil;
+    SEL sel = NSSelectorFromString(@"leafIcons");
+    if (![model respondsToSelector:sel]) return nil;
+    @try {
+        id leaves = ((id (*)(id, SEL))objc_msgSend)(model, sel);
+        if (leaves != nil) sLayoutLeaves = leaves;
+        return leaves;
+    } @catch (NSException *e) {
+        return nil;
     }
-    return NO;
 }
 
+// ── 主动保存 ──────────────────────────────────────────────────────────────
+
+// 让系统自己把当前布局写进 IconState.plist。
+// 只调零参数版本：多一个参数的保存方法（saveIconStateAndWait: 之类）被我们无参调用会丢掉参数。
 static BOOL TCPLayoutAskSystemToSave(id model) {
-    if (TCPLayoutAskObjectToSave(model)) return YES;
-    // 有的系统版本把保存挂在控制器上而不是模型上。
-    if (TCPLayoutAskObjectToSave(sLayoutController)) return YES;
-    Class controllerClass = objc_getClass("SBIconController");
-    if (controllerClass == Nil) return NO;
-    SEL sharedSelector = NSSelectorFromString(@"sharedInstance");
-    if (![controllerClass respondsToSelector:sharedSelector]) return NO;
-    id controller = nil;
-    @try {
-        controller = ((id (*)(id, SEL))objc_msgSend)((id)controllerClass, sharedSelector);
-    } @catch (NSException *e) { controller = nil; }
-    return TCPLayoutAskObjectToSave(controller);
+    if (model == nil) return NO;
+    for (int i = 0; i < sLayoutSlotCount; i++) {
+        if (sLayoutSlots[i].kind != TCPLayoutKindSave) continue;
+        if (![model isKindOfClass:sLayoutSlots[i].cls]) continue;
+        IMP orig = sLayoutSlots[i].orig;
+        if (orig == NULL) continue;
+        @try {
+            ((void (*)(id, SEL))orig)(model, sLayoutSlots[i].sel);
+            return YES;
+        } @catch (NSException *e) {
+            continue;
+        }
+    }
+    return NO;
 }
 
 // ── 每 5 秒一拍（主线程） ─────────────────────────────────────────────────
@@ -415,7 +469,7 @@ static void TCPLayoutTickBody(void) {
 
     TCPLayoutBackupIfNewer(@"timer");    // 系统自己写过 → 跟存
 
-    // 上一拍请求过保存：看源文件有没有真被写（0.9.20 新增，避免「以为保存了其实没写」）。
+    // 上一拍请求过保存：看源文件有没有真被写（避免「以为保存了其实没写」）。
     if (sLayoutPendingMtime != nil) {
         NSDate *now = TCPLayoutSourceMtime();
         if (now != nil && [now compare:sLayoutPendingMtime] == NSOrderedDescending) {
@@ -427,14 +481,22 @@ static void TCPLayoutTickBody(void) {
         }
     }
 
-    id model = TCPLayoutIconModel();
-    if (model == nil) { TCPLayoutNote(@"nomodel"); return; }
-    NSString *signature = TCPLayoutSignature(model);
+    id model = sLayoutModel;
+    if (!TCPLayoutLooksLikeModel(model)) {
+        if (objc_getClass("SBIconModel") == Nil) { TCPLayoutNote(@"noclass"); return; }
+        if (sLayoutModel == nil) { TCPLayoutNote(@"noinstance"); return; }
+    }
+
+    id leaves = TCPLayoutCurrentLeaves(model);
+    if (leaves == nil) { TCPLayoutNote(@"nosignature"); return; }
+    NSString *signature = TCPLayoutSignatureOfLeaves(leaves);
     if (signature == nil) { TCPLayoutNote(@"nosignature"); return; }
     NSString *previous = sLayoutSignature;
     sLayoutSignature = signature;
     if (previous == nil) { TCPLayoutNote(@"baseline"); return; }   // 第一次只记基线
     if ([previous isEqualToString:signature]) return;              // 没动过
+
+    if (!TCPLayoutHasSaveStationFor(model)) { TCPLayoutNote(@"nosavemethod"); return; }
 
     sLayoutPendingMtime = TCPLayoutSourceMtime();
     sLayoutPendingTick = sLayoutTicks;
@@ -451,7 +513,7 @@ static void TCPLayoutTickBody(void) {
 // 单独一条轻量诊断键：主诊断（Main.m 那条）只在启动那几轮和面板改设置时才重写，
 // 里面嵌的 lay{} 会停在启动那一刻 —— 2026-10-31 09:0x 就被它骗过一次（读到 tick=0
 // 无法区分「定时器没跑」和「诊断没刷新」）。所以这里每拍自己写一次：
-// 状态（rst/sav/force/site/last）变了立刻写，没变也最多每 12 拍（60 秒）写一次，
+// 状态（rst/sav/force/site/model/last）变了立刻写，没变也最多每 12 拍（60 秒）写一次，
 // 保证读到的 tick 最多旧一分钟，而且不刷整个主诊断（那要跑普查，太重）。
 static void TCPLayoutPublish(void) {
     static NSString *publishedState = nil;
@@ -514,7 +576,7 @@ void TCPLayoutInstall(void) {
 }
 
 NSString *TCPLayoutDiagnostics(void) {
-    return [NSString stringWithFormat:@"lay{rst=%d,sav=%d,tick=%d,force=%d,site=%@,model=%@,last=%@}",
+    return [NSString stringWithFormat:@"lay{rst=%d,sav=%d,tick=%d,force=%d,site=%@,model=%@,last=%@,probe=%@}",
             (int)sLayoutRestored, (int)sLayoutSaved, (int)sLayoutTicks, (int)sLayoutForced,
-            sLayoutSite, sLayoutModelPath, sLayoutLast];
+            sLayoutSite, sLayoutModelPath, sLayoutLast, sLayoutProbe];
 }
