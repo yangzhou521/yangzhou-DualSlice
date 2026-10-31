@@ -158,7 +158,7 @@ if [ "$DO_TAP" = 1 ]; then
     else
       bad "taps 还是 $TAPS1（没吃到触摸：窗口层级 / hitTest 问题）"
     fi
-    FRONT=$(icli app frontmost 2>/dev/null | sed -n 's/.*"bundleIdentifier"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+    FRONT=$(icli app frontmost 2>/dev/null | sed -n 's/.*"\(bundle_id\|bundleIdentifier\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' | head -n 1)
     if [ -z "$FRONT" ]; then
       info "前台读不到（icli app frontmost 失败），自己看一眼 Apelin 有没有被拉起"
     elif [ "$FRONT" = "wiki.qaq.apelin" ]; then

@@ -155,10 +155,16 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   行为与 1.5.0 完全一致：不吃任何触摸。sid 只认「十六进制 + 连字符」形状（8~64 位），别的内容一律当没有。
   脚本用法：`HUD_SID=<对话 id> sh scripts/hud-notify.sh 8 "完成：<一句话>"`（不带 `HUD_SID` 就是老的纯文案）。
   诊断串末尾多了 `link=<sid>|none` 与 `taps=<累计点击次数>`；点一次 `taps` +1、`link` 就是跳去的那个对话。
-  **状态（2026-10-31 09:4x）：1.6.0 已装机、尚未加载。** CI run 41155920001（commit `c5981b5b`，
-  tag `countdownhud-v1.6.0`，deb 20780 B），`/Library/MobileSubstrate/DynamicLibraries/CountdownHUD.dylib`
-  里能搜到 `apelin://conversation/`、`link=…;taps=`；SpringBoard 仍在跑 **v1.5.0**（诊断无 `link=`/`taps=`）。
-  用户 09:2x 下令「谁要注销才能继续工作的队员就可以停止下去了」→ **本线暂停，不许 sbreload**。
+  **状态（2026-10-31 10:1x）：1.6.0 已装、已加载、已实测通过。** CI run 41155920001（commit `c5981b5b`，
+  tag `countdownhud-v1.6.0`，deb 20780 B）；`/Library/MobileSubstrate/DynamicLibraries/CountdownHUD.dylib`
+  里能搜到 `apelin://conversation/`、`link=…;taps=`；用户注销后 SpringBoard 跑 **v1.6.0**。
+  `sh scripts/verify-countdownhud.sh --sid <对话 id>` 实测 **10 项全过**：① 版本 v1.6.0；
+  ② 带 sid → `link=<sid>`、`mode=plain`；③ 点胶囊 → `taps` +1 且**前台变成 Apelin**
+  （`apelin://conversation/<sid>` 生效）；④ 不带 sid → `link=none`；⑤ 再点胶囊 `taps` 不变
+  （老行为没被改坏）；⑥ `apelin_crash_list`（SpringBoard）无报告。窗口层级 `lvl=20000000`
+  的 CHWindow **能吃到胶囊那一小块**的触摸，胶囊外照旧穿透。
+  验收脚本自己踩过的坑：`device.sh read` 有的版本直接打印诊断串、有的打印 JSON（从 `"value"` 行取）；
+  `icli app frontmost` 的字段是 **`bundle_id`**（不是 `bundleIdentifier`）。
   注销加载后按这个顺序验（**已做成脚本**：`sh scripts/verify-countdownhud.sh --sid <对话 id>`，
   自动跑 ①~⑤，`--no-tap` 跳过点屏幕，`--selftest` 不碰设备只验解析）：
   ① 诊断出现 `v1.6.0`（shows 归零 = SpringBoard 换了新代码）；
