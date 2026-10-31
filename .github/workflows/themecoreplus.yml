@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 0.9.19
+  VERSION: 0.9.20
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v0.9.19)
+    name: Release (themecoreplus-v0.9.20)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,31 +185,34 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v0.9.19
-          name: ThemeCorePlus v0.9.19
+          tag_name: themecoreplus-v0.9.20
+          name: ThemeCorePlus v0.9.20
           body: |
-            主题美化 +（ThemeCorePlus）v0.9.19 —— MarkTheme 式的主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v0.9.20 —— MarkTheme 式的主题引擎，作者 yangzhou。
 
-            v0.9.19：
+            v0.9.20：
 
-            1. **桌面图标布局真的会保存了**（用户 2026-10-31 09:07 报「图标不保存」）：
-               0.9.17 及以前诊断里 `lay{tick=0}` —— 兜底定时器一次都没跑过。
-               原因是 `dispatch_source_t` 在 ARC 下是对象，原来存在 `TCPLayoutInstall()` 的局部变量里，
-               函数返回就被释放、源随之取消（恢复是同步调用所以 `sav` 只有启动那一次）。
-               现在源存在文件级静态变量里，活到进程结束，5 秒一拍。
-            2. **动过图标就主动让系统写盘**：定时器每拍在主线程取活的 `SBIconModel`，
-               比较「图标标识 + 摆位」签名，变了就调用系统的保存方法写 `IconState.plist`，再跟存备份。
-               不用等系统自己想写 —— 注销/崩溃前最多丢 5 秒的摆位改动。
-            3. **恢复改成「谁新用谁，内容一样一个字节都不动」**：系统那份读得出来且与备份一致 →
-               `keepsource`；系统那份不见了/坏了 → 回填；备份比系统那份新（崩溃前没写盘）→ 回填。
-               不再无条件覆盖（那是 0.9.16 的老毛病）。
-            4. **诊断可核对**：`lay{rst,sav,tick,force,site,last}` —— `tick` 必须持续增长，
-               `site=` 写明挂上了哪个保存方法（`none` = 一个都没挂上）。
-            5. **0.9.19：`lay{}` 改成每拍现写**（键 `ThemeCorePlusLayout`）。主诊断只在启动那几轮重写，
-               里面嵌的 `lay{}` 会停在启动那一刻，`tick=0` 分不清「定时器没跑」还是「诊断没刷新」。
-               现在状态一变立刻写、没变也最多每 60 秒写一次；`last=` 另外会写
-               `baseline`/`nomodel`/`nosignature`/`forced:changed`/`forcefail`，一眼看出这一拍在干什么。
-               主动保存也补了「控制器上的零参数保存方法」这条退路（仍然只调零参数版本）。
+            1. **桌面图标布局保存**（用户 2026-10-31 09:07「图标不保存」）：0.9.17 及以前 `lay{tick=0}`
+               —— 兜底定时器一次都没跑过（`dispatch_source_t` 在 ARC 下是对象，原来存在
+               `TCPLayoutInstall()` 的局部变量里，函数返回即释放、源随之取消）。0.9.18 起存在
+               文件级静态变量里、跑主队列，5 秒一拍，`tick` 现在真的在涨。
+            2. **0.9.20 修「拿不到活模型」**：0.9.19 装机后 `lay{...tick=13,site=-SBIconModel:_saveIconState,
+               last=nomodel}` —— 定时器活了、保存站挂上了，但 `[SBIconController sharedInstance]` +
+               `-iconModel` 这条唯一的路在 iOS 16.7 上不通，于是每拍 `nomodel`、`force=0`。
+               现在三条退路：① 系统调用保存站时顺手留下 `SBIconModel` 实例；② 控制器上按 KVC 找
+               `iconModel` / `model`，再退到它的 `iconManager` 上找；③ 还不行就扫类表找
+               `*IconController*`（每 30 秒最多一次）。诊断多了 `model=`，写明是走哪条路拿到的。
+            3. **0.9.20 主动保存后确认真写盘**：请求保存前记下源文件 mtime，下一拍比对 ——
+               写了记 `forced:wrote`，30 秒还没写记 `forced:nowrite`，不再「以为保存了其实没写」。
+               主动保存只调零参数版本（`saveIconState` / `_saveIconState` / `persistIconState`），
+               带参数的版本一律不碰。
+            4. **恢复「谁新用谁，内容一样一个字节都不动」**：系统那份读得出来且与备份一致 →
+               `keepsource`；系统那份不见了/坏了 → 回填；备份比系统那份新 → 回填 `restored:newer`。
+               不再无条件覆盖（0.9.16 的老毛病）。
+            5. **诊断可核对**：轻量键 `ThemeCorePlusLayout` 每拍现写
+               `lay{rst,sav,tick,force,site,model,last}` —— `tick` 必须持续增长，`site=` 写明挂上了
+               哪个保存方法（`none` = 没挂上），`last=` 是这一拍干了什么。主诊断里嵌的那条是启动快照，
+               只作参考。
 
             v0.9.11：
 
@@ -317,7 +320,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.19/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v0.9.20/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'
