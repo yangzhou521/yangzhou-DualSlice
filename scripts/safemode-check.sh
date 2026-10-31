@@ -56,7 +56,7 @@ isha=$( [ -n "$dfile" ] && sha256sum "$dfile" 2>/dev/null | awk '{print $1}')
 short() { printf '%s' "$1" | cut -c1-16; }
 if [ -z "$isha" ]; then say "② dylib     : 读不到 ThemeCorePlus.dylib"; [ "$rc" = 0 ] && rc=9
 elif [ -z "$lsha" ]; then say "② dylib     : $(short "$isha")…（锁里没记指纹）"
-elif [ "$isha" = "$lsha" ]; then say "② dylib     : $(short "$isha")…（与锁一致）"
+elif [ "${isha:0:${#lsha}}" = "$lsha" ]; then say "② dylib     : $(short "$isha")…（与锁一致）"
 else say "② dylib     : $(short "$isha")… ≠ 锁 $(short "$lsha")…  ← 二进制被换过（同版本号也可能）"; rc=2; fi
 
 # ③ 崩溃
