@@ -25,6 +25,7 @@ static NSString *const TCPLayoutBackupPath = @"/var/mobile/Library/ThemeCorePlus
 
 static volatile int sLayoutRestored = 0;
 static volatile int sLayoutSaved = 0;
+static volatile int sLayoutTicks = 0;
 static NSString *sLayoutLast = @"-";
 
 static BOOL TCPLayoutCopy(NSString *from, NSString *to) {
@@ -62,10 +63,24 @@ static BOOL TCPLayoutUsable(NSString *path) {
 }
 
 // 把备份放回原位（只在 SpringBoard 启动最早的时刻调用一次）。
+//
+// 0.9.17 改：**只在「系统那份布局不见了 / 读不出来」时才回填**。
+// 原来是无条件覆盖 —— 用户 2026-10-31 08:37 报「桌面图标注销没有保存功能」：
+// 备份停在 05:23，此后每次注销启动都把 05:23 的旧布局糊回 IconState.plist，
+// 用户改过的摆位（以及新装的图标）每注销一次丢一次。回填是给「崩溃/文件损坏」兜底的，
+// 不是每次开机都强制回滚；系统自己有文件、而且读得出来，就一个字节都不许动。
 static void TCPLayoutRestore(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
     if (![fm fileExistsAtPath:TCPLayoutBackupPath]) { sLayoutLast = @"nobackup"; return; }
-    if (![fm fileExistsAtPath:TCPLayoutSourcePath]) { sLayoutLast = @"nosource"; return; }
+    if ([fm fileExistsAtPath:TCPLayoutSourcePath]) {
+        if (TCPLayoutUsable(TCPLayoutSourcePath)) {
+            // 系统那份好着 —— 以它为准，顺手把备份刷新成这一份（下次真出事回填的就是最新的）。
+            sLayoutLast = @"keepsource";
+            TCPLayoutBackup(@"startup");
+            return;
+        }
+        sLayoutLast = @"sourcebad";
+    }
     if (!TCPLayoutUsable(TCPLayoutBackupPath)) { sLayoutLast = @"backupbad"; return; }
     if (TCPLayoutCopy(TCPLayoutBackupPath, TCPLayoutSourcePath)) {
         __sync_fetch_and_add(&sLayoutRestored, 1);
@@ -118,6 +133,7 @@ void TCPLayoutInstall(void) {
                                   5 * NSEC_PER_SEC,
                                   2 * NSEC_PER_SEC);
         dispatch_source_set_event_handler(timer, ^{
+            __sync_fetch_and_add(&sLayoutTicks, 1);
             NSFileManager *fm = [NSFileManager defaultManager];
             NSDictionary *source = [fm attributesOfItemAtPath:TCPLayoutSourcePath error:NULL];
             NSDictionary *backup = [fm attributesOfItemAtPath:TCPLayoutBackupPath error:NULL];
@@ -133,6 +149,6 @@ void TCPLayoutInstall(void) {
 }
 
 NSString *TCPLayoutDiagnostics(void) {
-    return [NSString stringWithFormat:@"lay{rst=%d,sav=%d,last=%@}",
-            (int)sLayoutRestored, (int)sLayoutSaved, sLayoutLast];
+    return [NSString stringWithFormat:@"lay{rst=%d,sav=%d,tick=%d,last=%@}",
+            (int)sLayoutRestored, (int)sLayoutSaved, (int)sLayoutTicks, sLayoutLast];
 }

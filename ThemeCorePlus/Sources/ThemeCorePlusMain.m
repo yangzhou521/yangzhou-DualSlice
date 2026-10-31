@@ -62,9 +62,10 @@ static void TCPWriteDiagnostics(void) {
 
     // 像素自检（gen{}/pix{}）原来写好了却没接进来，诊断里一直看不到 —— 2026-10-30 15:4x 接上：
     // 「图标没换」到底是①我们合成把图抹透明了、还是②屏幕上挂的压根不是我们那张图，靠这组数区分。
-    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
                       [store diagnostics], TCPDisplayProbeReport(), TCPRefreshProbeReport(),
-                      TCPIconProbeReport(), TCPDynamicProbeReport(), TCPLayoutDiagnostics(),
+                      TCPIconProbeReport(), TCPDynamicProbeReport(), TCPClockViewProbeReport(),
+                      TCPLayoutDiagnostics(),
                       TCPBadgeProbeReport(), TCPIconPixelProbeReport(),
                       TCPScreenCensusReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
@@ -149,6 +150,7 @@ static void TCPRelayoutIcons(void) {
 static void TCPReload(BOOL refreshImages) {
     [[TCPThemeStore shared] reload];
     TCPInstallIconSites();
+    TCPInstallClockViewSite();
     TCPInstallDisplaySites();
     TCPInstallBadgeSites();
     TCPInstallFolderSites();

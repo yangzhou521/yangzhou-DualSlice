@@ -462,6 +462,92 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
     return result;
 }
 
+// —— 时钟图标的视图层（0.9.17）——
+//
+// 为什么非要在视图上动手：诊断里 dyn{clock=0,seen=16} 说明 SBHClockApplicationIconImageView
+// 从来不走 iconImageWithInfo: / generateIconImageWithInfo: 那几站（它自己画表盘和指针），
+// 所以「表盘 + 按当前时间画的指针」那个合成站一次都没为时钟跑过 —— 主题素材当然永远不出现。
+// 这里挂它的 layoutSubviews：系统排完版之后，把它自己那张「表盘」图换成主题表盘。
+// 只换一张图的 image，不删子视图、不加子视图、不动指针层（指针是系统另外画的，继续走时间）。
+static void (*sClockLayoutOrig)(id, SEL) = NULL;
+static NSInteger sClockVLook = 0, sClockVHit = 0, sClockVMiss = 0;
+static NSString *sClockVLast = @"-";
+
+// 在视图里找「表盘」那张图：尺寸（点）与本视图大致相等的 UIImageView。
+// 只往下一层（系统把表盘放在自己的 imageView 里），找不到就什么都不做。
+static UIImageView *TCPClockFindFaceView(UIView *view, NSInteger depth) {
+    CGSize bounds = view.bounds.size;
+    if (bounds.width < 8) return nil;
+    for (UIView *sub in view.subviews) {
+        if ([sub isKindOfClass:[UIImageView class]]) {
+            UIImage *image = ((UIImageView *)sub).image;
+            CGSize size = image.size;
+            if (size.width > 1 && fabs(size.width - bounds.width) <= bounds.width * 0.25) {
+                return (UIImageView *)sub;
+            }
+        }
+        if (depth > 0) {
+            UIImageView *found = TCPClockFindFaceView(sub, depth - 1);
+            if (found != nil) return found;
+        }
+    }
+    return nil;
+}
+
+static void TCPClockViewApply(UIView *view) {
+    TCPThemeStore *store = [TCPThemeStore shared];
+    if (!store.active || !store.iconsEnabled) return;
+    CGSize size = view.bounds.size;
+    if (size.width < 8 || size.height < 8) return;
+
+    UIImageView *face = TCPClockFindFaceView(view, 1);
+    if (face == nil) {
+        __sync_fetch_and_add(&sClockVMiss, 1);
+        sClockVLast = @"noface";
+        return;
+    }
+    CGFloat scale = view.window.screen.scale > 0 ? view.window.screen.scale : 2.0;
+    UIImage *themed = [store iconImageForBundleID:@"com.apple.mobiletimer"
+                                             size:size
+                                            scale:scale
+                                     cornerRadius:0];
+    if (themed == nil) {
+        __sync_fetch_and_add(&sClockVMiss, 1);
+        sClockVLast = @"noasset";
+        return;
+    }
+    if (face.image == themed) return;
+    face.image = themed;
+    __sync_fetch_and_add(&sClockVHit, 1);
+    sClockVLast = [NSString stringWithFormat:@"%@|%.0fx%.0f@%.0f",
+                   NSStringFromClass([face class]), themed.size.width, themed.size.height, scale];
+}
+
+static void TCPClockLayoutHook(id self, SEL _cmd) {
+    if (sClockLayoutOrig != NULL) sClockLayoutOrig(self, _cmd);
+    __sync_fetch_and_add(&sClockVLook, 1);
+    @try {
+        TCPClockViewApply((UIView *)self);
+    } @catch (__unused NSException *e) {
+        sClockVLast = @"throw";
+    }
+}
+
+void TCPInstallClockViewSite(void) {
+    static BOOL installed = NO;
+    if (installed) return;
+    Class cls = NSClassFromString(@"SBHClockApplicationIconImageView");
+    if (cls == Nil) return;   // 类还没加载，下一轮 TCPReload 再试
+    MSHookMessageEx(cls, @selector(layoutSubviews), (IMP)TCPClockLayoutHook, (IMP *)&sClockLayoutOrig);
+    installed = YES;
+    os_log(TCPLogHandle(), "TCPS_CLOCK_VIEW hooked");
+}
+
+NSString *TCPClockViewProbeReport(void) {
+    return [NSString stringWithFormat:@"clockv{look=%ld,hit=%ld,miss=%ld,last=%@}",
+            (long)sClockVLook, (long)sClockVHit, (long)sClockVMiss, sClockVLast];
+}
+
 // —— 视图层：屏幕上到底挂了什么 ——
 static NSInteger sPixelViews = 0;
 static NSInteger sPixelThemed = 0;        // 视图 displayedImage 交出来的就是我们合的图

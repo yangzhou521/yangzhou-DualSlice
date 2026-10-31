@@ -133,6 +133,9 @@ BOOL TCPIconNeedsSystemComposite(id icon);
 UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *systemImage);
 // 动态图标合成打点：各叠了几张、混合模式、最后一次的像素量，写进诊断。
 NSString *TCPDynamicProbeReport(void);
+// 时钟图标的视图层（0.9.17）：时钟从不走图标取图那几站，只能挂它的 layoutSubviews 换表盘。
+void TCPInstallClockViewSite(void);
+NSString *TCPClockViewProbeReport(void);
 // 桌面图标布局的备份/恢复（用户 2026-10-31 05:30）：注销或 SpringBoard 崩溃后保住之前的图标布局。
 // 由 ThemeCorePlusLayout.m 实现；只在 SpringBoard 进程里动手。
 void TCPLayoutInstall(void);
