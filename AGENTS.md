@@ -200,6 +200,15 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   注销后诊断 `v1.6.0;shows=N;mode=plain|count;...;alerts=N;ans=confirm|cancel|-;link=<sid>|none;taps=N`，
   crash list **无新报告**，不在安全模式。纯文案（`!`）不震已实测；别的 App 在前台时胶囊照样消费请求（已实测）。
   验收矩阵见 `docs/cases/countdownhud-1.6.0-acceptance.md`。
+  **续验（2026-10-31 10:2x–10:4x，接手 `?` 确认框那条线）**：
+  ① `?` 注销确认框的**四个出口全部端到端验过** —— `cancel` → 退出码 4 未注销；
+  `confirm` → 读到答案后倒计时 5 秒，`NO_RESPRING=1` 时「只倒计时，不注销」、退出码 0、屏幕不黑；
+  `timeout`（弹窗 45 秒无人应答，插件自己写 `timeout`）→ 退出码 5；脚本判 `none` 同样退出码 5，
+  **四条路都绝不自动注销**。
+  ② `?` 弹窗在**别的 App 前台**照样弹：切到「设置」前台后写请求，`alerts` 4→5、`mode=alert`、
+  45 秒后 `ans=timeout`（SpringBoard 顶层窗口 `lvl=20000000`，盖得住任何 App）。
+  ③ 本轮操作后 `apelin_crash_list process=SpringBoard` **为空**。
+  ④ 仍缺：点胶囊后是否**精确落在**那一条会话（宿主拒绝在 Apelin 前台代点，需用户亲手点胶囊确认）。
   技能 `respring-notify-countdown` 的「零、八」一节已写死这条。
 - 验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`
   → `v1.6.0;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N;mode=count;haptic=N;alerts=N;ans=-;link=<sid>|none;taps=N`；

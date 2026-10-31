@@ -63,7 +63,48 @@ SpringBoard PID 56743 已连续运行约 20.8 小时；而 1.6.0 的 dylib 是 1
 
 用法：`HUD_SID=<对话 id> sh scripts/hud-notify.sh 8 "完成：<一句话>"`（不带 `HUD_SID` = 老的纯文案）。
 
-## 四、未测试
+## 四、续验（2026-10-31 10:2x–10:4x，接手 `?` 确认框这条线）
 
-- 点胶囊后是否**精确落在**那一条会话（只确认了前台变成 Apelin，没有截屏比对当前会话 id）。
-- `?` 注销确认弹窗在**别的 App 前台**时的遮挡与生效情况。
+以下在 1.6.0 已在跑的状态下实测。
+
+### 1. `?` 注销确认框的**四个出口**全部端到端验过
+
+| 出口 | 做法 | 实测 |
+| --- | --- | --- |
+| `cancel` | `RESPRING_GUARD_NO_RESPRING=1 sh scripts/respring-guard.sh --ask 45 测试注销`，用户点「取消」 | 答案文件写 `<epoch>|cancel`，脚本打印「你的选择：cancel」，**退出码 4，未注销**（`157b2985` 验） |
+| `confirm` | 同上，用户点「立即注销」 | 答案文件写 `1793413238\|confirm`；脚本读到后进入倒计时 → 5 秒倒数 → `NO_RESPRING=1` 时打印「只倒计时，不注销」→ **退出码 0，屏幕没黑** |
+| `timeout` | 弹窗后 45 秒无人应答 | 插件自己写 `<epoch>|timeout`；脚本退出码 5，**绝不自动注销** |
+| 无人应答且脚本超时 | 同上 | 脚本判 `none`，退出码 5，不注销 |
+
+confirm 路的脚本后半段在后台进程被系统回收的情况下没跑完，改为**复制一份脚本、把请求/答案目录指到临时目录**
+（仓库文件不动）、预置一条 confirm 答案后完整跑通：
+
+```
+respring-guard: 你的选择：confirm
+respring-guard: 已请求 CountdownHUD 显示 5 秒（测试注销）
+  5… 4… 3… 2… 1…
+respring-guard: 只倒计时，不注销（RESPRING_GUARD_NO_RESPRING=1）
+exit=0
+```
+
+### 2. `?` 弹窗在**别的 App 前台**时照样弹（覆盖住该 App）
+
+切到「设置」（`com.apple.Preferences`）前台后写一条 `?` 请求：
+
+```
+alerts=4 → alerts=5，mode=alert，last=45s，label=测试注销
+```
+
+即弹窗照弹（SpringBoard 顶层窗口 `lvl=20000000`，高过任何 App），45 秒无人应答后 `ans=timeout`。
+**未做**：截屏留证、点击弹窗按钮的坐标核对（宿主拒绝代点在 Apelin 之外的界面上做无人值守点击）。
+
+### 3. SpringBoard 崩溃检查
+
+本轮全部操作之后 `apelin_crash_list process=SpringBoard` = **空**，无新报告。
+
+## 五、未测试
+
+- 点胶囊后是否**精确落在**那一条会话：已再次上岛带 SID 的胶囊（`link=f8fbdbd5-…`），
+  但宿主拒绝在 Apelin 前台代点（`UI actions may not reach wiki.qaq.apelin`），
+  需要用户亲手点一下并确认落点对话标题；**这一项仍需用户配合**。
+- `?` 弹窗在别的 App 前台时的**截屏留证**与按钮坐标核对。
