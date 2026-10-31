@@ -264,9 +264,14 @@ apelin_conversation_list project: <folder|projectID>     # 逐个工程再列一
    | 问 | 命令 | 判据 |
    | --- | --- | --- |
    | 还有谁在跑？ | `sh scripts/fleet-live.sh 30` | 「在跑」的那些就是要协调的对象 |
+   | 谁出事了要我管？ | `sh scripts/fleet-live.sh 30 alerts` | **失败 / 卡住?** 只列这两种，没有就一句 ✅ |
    | 它到底在干嘛？ | `apelin_conversation_read <sid> wait_seconds:30` | 看最后一条 message 与 pendingApprovals |
    | 我答应它的事做了吗？ | 翻自己的广播与回执 | 有承诺就必须有下文，没有就补一句「这条我还没做」 |
    **对账 ≠ 等通知**：别人不会主动来问你，你得自己去看；等对方来找你 = 空转。
+   **发现「失败」不要自己猜原因**：那多半是额度耗尽 / 限流（`finished.reason=failed`），它自己不会再动，
+   唯一解法是告诉用户去充值或换模型；先 `apelin_conversation_read` 确认最后一条报错，再向用户报。
+   `sh scripts/fleet-live.sh 30 ping` 会为每个失败/卡住的对话打印一段**现成的催办文本**（只打印不发送），
+   复制进 `apelin_conversation_send` 即可，省掉每次现编——这是「协调同步」最省事的一步。
 4. **要让用户知道** → 回复正文 + `scripts/hud-notify.sh`（胶囊）+ `apelin_notification_send`，
    见技能 `task-done-notify`。用户要的是**他自己看得见**，不是机器人之间的暗号。
 5. **规矩不变**：自己的活第一、第一时间回执、动设备前打招呼、交接三段式、绝不 stop 别人、绝不改别人文件。
