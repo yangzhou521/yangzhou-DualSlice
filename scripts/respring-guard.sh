@@ -68,6 +68,9 @@ esac
 REQ_DIR=/rootfs/var/mobile/Library/Preferences
 REQ="$REQ_DIR/.countdownhud-request"
 ANSWER="$REQ_DIR/.countdownhud-answer"
+# v1.6.1 起：CountdownHUD 点了「立即注销」会自己 spawn sbreload（不再等本脚本）。
+# 这个标记文件存在时插件只写答案、不注销 —— 即 RESPRING_GUARD_NO_RESPRING=1 的「只倒计时」安全验法。
+NOMARK="$REQ_DIR/.countdownhud-no-respring"
 
 hud_request() {   # $1=秒数 $2=标签
   [ -d "$REQ_DIR" ] || return 1
@@ -121,6 +124,13 @@ fi
 
 # ---------- ② 在屏幕上问用户：系统确认框 ----------
 if [ "$ASK" = "1" ] && [ "$CONFIRM" != "1" ]; then
+  # v1.6.1：插件点了「立即注销」会自己注销。只倒计时安全验法（NO_RESPRING=1）必须同时管住插件，
+  # 否则「只倒计时」会变成真注销 —— 用标记文件，退出时（含异常）一定删掉。
+  if [ "$NO_RESPRING" = "1" ]; then
+    : > "$NOMARK" 2>/dev/null || true
+    trap 'rm -f "$NOMARK"' EXIT INT TERM HUP
+    echo "respring-guard: RESPRING_GUARD_NO_RESPRING=1 → 已置 $NOMARK（插件只写答案，不会真注销）"
+  fi
   # 先清掉上一次的答复，免得到点读到旧答案。
   : > "$ANSWER" 2>/dev/null || true
   NOW=$(date +%s)
