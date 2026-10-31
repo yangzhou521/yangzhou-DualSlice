@@ -3,21 +3,37 @@
 # 只有 owner 这一条对话可以改本文件、可以装包、可以注销。
 # 其它对话一律：不装、不滚、不注销；要变版本必须先在对话里找 owner 申请。
 #
-# owner   = 唯一「修复线」的 session id（当前 = 6c78afa4…，角标/卡顿线；0.9.24 由它编写与安装）
-# version = 当前唯一允许装在机上的版本（装别的版本 = 违规回滚）
-# dylib_sha256 = 该版本 dylib 的指纹；机上对不上 = 有人装过别的版本或回滚过
-# deb_sha256   = 允许装的那个 deb 的指纹；空 = 还没定（首次装前由 owner 填）
+# owner   = 唯一「修复线」的 session id。
+#   2026-10-31 12:55 起 = f8fbdbd5-7f8c-402e-820f-73b6872c394b（统一调度台「继续操作」）：
+#   注销回来后由它合并全员信息、整合、统一排程；装包与注销统一由它执行，
+#   各线只改码+出包，把「run 号 + deb 文件名 + deb sha256 + dylib sha256」报给它即可。
+#   理由：多条线各自装包各自注销 → 用户被反复黑屏，且改动混在同一进程里分不清是谁的。
+# version = 当前**实际装在机上**的版本（以 dpkg 为准，不是「允许装的版本」）。
+#   待装版本写在下面的 pending= 行里，别提前写进 version=。
+# dylib_sha256 = **机上那份** dylib 的指纹（装完实测，不是包内那份）。
+#   注意：CI 每次运行都重建资产，同版本号的 deb 字节会变（sha256/体积都变）；
+#   装机时 ellekit/irisin 可能重签 dylib，包内哈希与机上哈希必然不同。
+#   所以这一行只记「当前机上这一份」，换了包由 owner 在验过无崩溃后更新。
+# deb_sha256   = 机上对应那个 deb 的指纹。
 
-owner=6c78afa4-a447-48cd-879b-db11ef2ebb5e
-version=0.9.24
-dylib_sha256=0a7f540218697ff54bd68954394767cf2fd092d60b82032617e0336a4ba744bd
-# 上面这个指纹取自 0.9.24 的 deb 内 Library/MobileSubstrate/DynamicLibraries/ThemeCorePlus.dylib
-# （2026-10-31 12:29 由 owner 6c78afa4 解包实测，573040 B）。装机后若 ellekit 会重签/改写这份 dylib，
-# 机上 ${jbroot}/usr/lib/TweakInject/ThemeCorePlus.dylib 的 sha256 会与此不同 —— 那时以机上值为准更新本行，
-# 别把「重签导致的差异」当成有人回滚。
-# 注意：CI 每次运行都重建资产，同版本号的 deb 字节会变（sha256/体积都变）。
-# 所以「哪个版本」以 version= 与 dpkg 为准，dylib_sha256 只记「当前机上这一份」的指纹，
-# 换了包就由 owner 在验过无崩溃后更新这一行；对不上 = 有人装过别的包，先问 owner。
-deb_sha256=da13ecbc519a05be55a85997aba53776ff99486fac1d73b1d6fc92f13fc1f664
-updated=2026-10-31 12:30
-note=0.9.24 = 角标双层修复（ourHost 的底色从没被清过 → 现在两种写法都照清，只跳过清图/清 contents；cleared>0 才挂已收拾标记；两条独立失败计数，各 8 次放弃）。0.9.23 = 0.9.22 的纯诊断版（probe=/hooked=），Release 已发不覆盖。0.9.22 已实测修好安全模式（无新崩溃）。0.9.21 作废永不复用。
+owner=f8fbdbd5-7f8c-402e-820f-73b6872c394b
+version=0.9.23
+dylib_sha256=a4d186d1
+# 上面这个指纹是 **0.9.23 装机后机上那份** 的 sha256 前缀（572928 B，2026-10-31 12:20 落盘实测）。
+# 别再把「deb 包内 dylib 的哈希」写进这一行 —— 那会让 safemode-check 每轮都误报「版本漂移」。
+# （2026-10-31 12:20–12:30 期间本行记的是包内哈希 0a7f5402…，导致每轮体检误报，已修。）
+deb_sha256=
+# 待装（pending，还没上机）：
+#   0.9.24 = 角标双层修复（ourHost 的底色从没被清过 → 现在两种写法都照清，只跳过清图/清 contents；
+#             cleared>0 才挂已收拾标记；两条独立失败计数，各 8 次放弃）。
+#             Release themecoreplus-v0.9.24，deb 142844 B，sha256 da13ecbc…，CI run 41168497476（cb3a307b，success）。
+#   0.9.25 = 布局保存诊断扩展（18b20213）：把 probe= 改成**无条件**写出候选类数与真实方法名，
+#             并把 SBIconController 家族并进候选。根因：Layout.m:454 只在 hooked/skipped 非空时才写 probe，
+#             于是「找到类但没有名字匹配的方法」被伪装成「什么都没找到」（probe 保持初始值 `-`）。
+#             Release themecoreplus-v0.9.25，deb 142772 B，sha256 108b7a92…，
+#             CI run 41170666488（提交 96225051，success；前一个 run 41170405550 失败于 Layout.m:453 少一个 `]`）。
+#   0.9.26 = 角标新版本（6c78afa4 在出，0.9.24 之后）。
+#   0.9.27 = 图标加载修复（157b2985 在出：Icons.m/Store.m 指纹接线 + 像素统计 memo）。
+#   HUD 1.6.1 = countdownhud-v1.6.1（3e983c10，run 41168223032 success，deb 21976 B）。
+updated=2026-10-31 12:55
+note=0.9.23 = 0.9.22 的纯诊断版（probe=/hooked=），Release 已发不覆盖，是**当前机上实际在跑的版本**。0.9.22 已实测修好安全模式（无新崩溃）。0.9.21 作废永不复用。0.9.24+0.9.25+0.9.26+0.9.27 与 HUD 1.6.1 计划**合并成一次装机 + 一次注销**（HUD 1.6.1 单独一轮已放行给 3e983c10）。
