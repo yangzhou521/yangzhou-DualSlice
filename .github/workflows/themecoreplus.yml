@@ -38,7 +38,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 1.0.9
+  VERSION: 1.0.10
 
 jobs:
   build:
@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v1.0.9)
+    name: Release (themecoreplus-v1.0.10)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -185,10 +185,20 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v1.0.9
-          name: ThemeCorePlus v1.0.9
+          tag_name: themecoreplus-v1.0.10
+          name: ThemeCorePlus v1.0.10
           body: |
-            主题美化 +（ThemeCorePlus）v1.0.9 —— MarkTheme 式主题引擎，作者 yangzhou。
+            主题美化 +（ThemeCorePlus）v1.0.10 —— MarkTheme 式主题引擎，作者 yangzhou。
+
+            **v1.0.10：只加时钟取证，不改任何行为。**
+
+            1.0.8 那种"盖一张含指针的整图"被证明是死路（把圆表盘填成方形、还让 SpringBoard 连崩进安全模式），
+            已经全部撤回。这一版不碰任何绘制逻辑，只把时钟视图的**完整结构**写进诊断 `clockv{st=…}`：
+            视图自己的 layer 有没有 contents、有几个子 layer、每个子视图/子 layer 的类名与尺寸、
+             哪些是我们自己盖的那层（标 OURS）。
+            目的是看清系统把「表盘」和「指针」分别画在哪一层 —— 知道之后才能只换表盘、让系统继续画指针。
+
+            设备上运行的仍是 1.0.7，行为完全一致；本版仅用于取证。
 
             **v1.0.9：撤回 1.0.8 的时钟改动（1.0.8 会让 SpringBoard 反复崩溃进安全模式）。**
 
@@ -526,7 +536,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v1.0.9/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v1.0.10/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'

@@ -837,14 +837,62 @@ void TCPInstallClockViewSite(void) {
     os_log(TCPLogHandle(), "TCPS_CLOCK_VIEW hooked");
 }
 
+// 1.0.10 取证（只读，不改任何状态）：把时钟视图的完整结构摊开。
+// 目的：看清系统把「表盘」和「指针」分别画在哪一层 —— 是子视图、子 layer，还是自己 drawRect。
+// 知道之后才能只换表盘、不碰指针（1.0.8 那种"盖一张含指针的整图"必然和系统指针重复）。
+static BOOL TCPDisplayIsCGImage(id object);   // 定义在文件后面
+
+static NSString *TCPClockStructureTrace(UIView *view) {
+    if (view == nil) return @"nilview";
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+
+    // ① 视图自己的 layer：有没有 contents、几层子 layer。
+    NSString *own = [NSString stringWithFormat:@"v=%@|%.0fx%.0f|own=%@|sub=%lu",
+                     NSStringFromClass([view class]),
+                     view.bounds.size.width, view.bounds.size.height,
+                     view.layer.contents ? @"y" : @"n",
+                     (unsigned long)view.layer.sublayers.count];
+    [lines addObject:own];
+
+    // ② 子视图（最多 6 个）：类名 | 尺寸 | image 或 layer.contents | 是否我们自己盖的。
+    NSInteger n = 0;
+    for (UIView *sub in view.subviews) {
+        if (n++ >= 6) break;
+        NSString *tag = (sub.tag == kTCPClockOverlayTag) ? @"OURS" : @"sys";
+        NSString *kind = @"-";
+        if ([sub isKindOfClass:[UIImageView class]]) {
+            UIImage *im = ((UIImageView *)sub).image;
+            kind = im ? [NSString stringWithFormat:@"img%.0fx%.0f", im.size.width, im.size.height] : @"noimg";
+        } else if (sub.layer.contents != NULL) {
+            kind = TCPDisplayIsCGImage(sub.layer.contents) ? @"cgimg" : @"contents";
+        }
+        [lines addObject:[NSString stringWithFormat:@"s:%@|%.0fx%.0f|%@|%@",
+                          NSStringFromClass([sub class]),
+                          sub.bounds.size.width, sub.bounds.size.height, kind, tag]];
+    }
+
+    // ③ layer 子树（最多 6 层）：类名 | 尺寸 | contents 有没有。
+    n = 0;
+    for (CALayer *lay in view.layer.sublayers) {
+        if (n++ >= 6) break;
+        [lines addObject:[NSString stringWithFormat:@"l:%@|%.0fx%.0f|%@",
+                          NSStringFromClass([lay class]),
+                          lay.bounds.size.width, lay.bounds.size.height,
+                          lay.contents ? (TCPDisplayIsCGImage(lay.contents) ? @"cg" : @"obj") : @"nil"]];
+    }
+    return [lines componentsJoinedByString:@";"];
+}
+
 // 1.0.7：主动刷新计数（诊断 clockv{tick=,found=}）。
 static NSInteger sClockTickCount = 0;
 static NSInteger sClockTickFound = 0;
+static NSString *sClockStructure = nil;   // 1.0.10 取证：时钟视图的完整结构（只读）
 
 NSString *TCPClockViewProbeReport(void) {
-    return [NSString stringWithFormat:@"clockv{look=%ld,hit=%ld,miss=%ld,tick=%ld,found=%ld,last=%@}",
+    return [NSString stringWithFormat:@"clockv{look=%ld,hit=%ld,miss=%ld,tick=%ld,found=%ld,last=%@,st=%@}",
             (long)sClockVLook, (long)sClockVHit, (long)sClockVMiss,
-            (long)sClockTickCount, (long)sClockTickFound, sClockVLast];
+            (long)sClockTickCount, (long)sClockTickFound, sClockVLast,
+            sClockStructure ?: @"-"];
 }
 
 // 1.0.7：主动找时钟视图并重画。
@@ -872,6 +920,8 @@ void TCPClockTick(void) {
         [stack removeLastObject];
         if ([view isKindOfClass:cls]) {
             found++;
+            // 1.0.10：只读记录结构，不碰任何状态。
+            @try { sClockStructure = TCPClockStructureTrace(view); } @catch (__unused NSException *e) { }
             @try { TCPClockViewApply(view); } @catch (__unused NSException *e) { }
         }
         [stack addObjectsFromArray:view.subviews];
@@ -1271,8 +1321,7 @@ static NSMutableArray<NSString *> *sCensusIconSamples = nil;
 static NSMutableArray<NSString *> *sCensusBadgeTree = nil;
 static BOOL sCensusRunning = NO;
 
-// 定义在文件后面的显示层小工具，这里先声明。
-static BOOL TCPDisplayIsCGImage(id object);
+// TCPDisplayIsCGImage 的前向声明已在前面（时钟取证那段），这里不用重复。
 
 static void TCPCensusClassifyUIImage(UIImage *image) {
     if (image == nil) return;
