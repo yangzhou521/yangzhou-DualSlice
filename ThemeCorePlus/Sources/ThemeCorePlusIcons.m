@@ -874,10 +874,11 @@ void TCPRunScreenCensus(void) {
                     sPixelQuietDisplayCounters = YES;
                     id value = ((id (*)(id, SEL))objc_msgSend)(view, displayed);
                     sPixelQuietDisplayCounters = NO;
+                    BOOL ours = NO;   // 0.9.29：提到这一层，像素自检（在原 if 之外）也要用它
                     if ([value isKindOfClass:[UIImage class]]) {
                         sCensusDisplayedTotal++;
                         sCensusIconViews++;
-                        BOOL ours = [[TCPThemeStore shared] isRenderedImage:(UIImage *)value];
+                        ours = [[TCPThemeStore shared] isRenderedImage:(UIImage *)value];
                         if (ours) {
                             sCensusDisplayedOurs++;
                             sCensusIconOurs++;
