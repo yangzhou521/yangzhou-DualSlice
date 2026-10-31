@@ -34,6 +34,19 @@
 //    · 「是不是模型」改成「类名链里有没有 IconModel」或「响应 leafIcons」，不再是唯一判据。
 //  签名（谁动了图标）直接用图标列表站返回的数组算，不再自己再去问模型。
 //
+//  ── 0.9.22：0.9.21 把 SpringBoard 打进安全模式（连崩 5 次，consecutiveCrashCount=5）──
+//  崩溃栈：dyld 构造函数 → TCPLayoutInstall() → TCPLayoutHookSave() → TCPLayoutCandidateClasses()
+//          → `objc_getClassList` 枚举出的某个类 → `-[NSObject isSubclassOfClass:]`。
+//  病灶：构造函数里枚举**全进程所有类**，并对每一个（包括 dyld 还没 realize 的根类，
+//        崩时寄存器里是 ISOverlayEmbossedFolder）发消息。构造函数阶段 UIKit/Foundation
+//        还没就绪，消息一进转发就 SIGTRAP，dyld 直接 abort —— 连崩 5 次进安全模式。
+//  0.9.22 四条修法（AGENTS.md「构造函数硬规矩」）：
+//    ① 判类关系一律用 C 函数 class_getSuperclass() 往上走，绝不对运行时枚举出来的类发消息；
+//    ② 枚举类 + 挂站（重活）搬出构造函数，交给主队列第一拍（2 秒后）；
+//    ③ 重活前写启动护栏文件，跑完删；下次启动还在 = 上次崩在这里 → 整段跳过（safeskip=1）；
+//    ④ 挂站前用 method_getNumberOfArguments + method_getTypeEncoding 验真实签名（v@:），
+//       宁可一个都不挂，也不挂错。
+//
 //  备份位置：/var/mobile/Library/ThemeCorePlus/IconState.backup.plist
 //  （SpringBoard 以 mobile 身份运行，这个目录它写得了；CountdownHUD 也在这个目录下写过请求文件。）
 //
@@ -46,11 +59,16 @@
 static NSString *const TCPLayoutSourcePath = @"/var/mobile/Library/SpringBoard/IconState.plist";
 static NSString *const TCPLayoutBackupDir  = @"/var/mobile/Library/ThemeCorePlus";
 static NSString *const TCPLayoutBackupPath = @"/var/mobile/Library/ThemeCorePlus/IconState.backup.plist";
+// 启动护栏（0.9.22 起）：重活前写，跑完删。下次启动它还在 = 上次崩在重活里。
+static NSString *const TCPLayoutGuardPath  = @"/var/mobile/Library/ThemeCorePlus/.tcp-launch-guard";
 
 static volatile int sLayoutRestored = 0;
 static volatile int sLayoutSaved = 0;
 static volatile int sLayoutTicks = 0;
 static volatile int sLayoutForced = 0;
+static volatile int sLayoutSafeSkip = 0;       // 上次崩在重活里 → 这次整段跳过（诊断 safeskip=1）
+static volatile int sLayoutEnumRan = 0;        // 类枚举真的跑过一遍（护栏可以撤了）
+static volatile int sLayoutGuardCleared = 0;
 static NSString *sLayoutLast = @"-";
 
 // ── 保存站 / 图标列表站（一站一槽：每个 (类, 选择器) 一格，绝不按 self 的类反查总表）──
@@ -258,6 +276,31 @@ static BOOL TCPLayoutIsLeafName(const char *name) {
     return NO;
 }
 
+// 判类关系一律用 C 函数沿父类链往上走 —— **绝不对运行时枚举出来的类发消息**。
+// 0.9.21 就是在构造函数里对 objc_getClassList 枚举出的每个类发 -isSubclassOfClass:，
+// 撞上还没 realize 的根类（崩时是 ISOverlayEmbossedFolder）→ SIGTRAP → 安全模式。
+static BOOL TCPLayoutClassDescendsFrom(Class cls, Class base) {
+    if (cls == Nil || base == Nil) return NO;
+    for (Class c = cls; c != Nil; c = class_getSuperclass(c)) {
+        if (c == base) return YES;
+    }
+    return NO;
+}
+
+// 挂站前先验真实签名：零参数（self + _cmd）且返回 void。
+// 带参数的保存方法（saveIconStateAndWait: 之类）被我们无参调用会丢参数，把系统写盘弄坏；
+// 返回值不是 void 的也不碰 —— 宁可一个都不挂。
+static BOOL TCPLayoutSignatureHookable(Method m) {
+    if (m == NULL) return NO;
+    if (method_getNumberOfArguments(m) != 2) return NO;
+    const char *enc = method_getTypeEncoding(m);
+    if (enc == NULL) return NO;
+    if (enc[0] != 'v') return NO;                 // 返回类型必须是 void
+    if (strchr(enc, '@') == NULL) return NO;      // 必须有 self
+    if (strchr(enc, ':') == NULL) return NO;      // 必须有 _cmd
+    return YES;
+}
+
 // ── 站 ────────────────────────────────────────────────────────────────────
 
 static void tcpLayoutSaveHook(id self, SEL _cmd) {
@@ -298,9 +341,10 @@ static NSArray<Class> *TCPLayoutCandidateClasses(void) {
     count = objc_getClassList(classes, count);
     for (int i = 0; i < count; i++) {
         Class c = classes[i];
-        if (c == base) { [out addObject:c]; continue; }
+        if (c == Nil) continue;
         if (class_isMetaClass(c)) continue;
-        if ([c isSubclassOfClass:base]) [out addObject:c];
+        // 只用 C 函数往上走父类链，绝不发消息（见 TCPLayoutClassDescendsFrom 的注释）。
+        if (TCPLayoutClassDescendsFrom(c, base)) [out addObject:c];
     }
     free(classes);
     return out;
@@ -311,8 +355,10 @@ static NSArray<Class> *TCPLayoutCandidateClasses(void) {
 static void TCPLayoutHookSave(void) {
     NSArray<Class> *classes = TCPLayoutCandidateClasses();
     if (classes.count == 0) return;
+    sLayoutEnumRan = 1;                  // 类枚举真跑过了：启动护栏可以撤
 
     NSMutableArray<NSString *> *hooked = [NSMutableArray array];
+    NSMutableArray<NSString *> *skipped = [NSMutableArray array];
     NSMutableArray<NSString *> *probe = [NSMutableArray array];
 
     for (Class cls in classes) {
@@ -326,14 +372,24 @@ static void TCPLayoutHookSave(void) {
             SEL sel = method_getName(methods[i]);
             const char *name = sel_getName(sel);
             if (name == NULL) continue;
-            // 铁律：只挂零参数方法（self + _cmd）。带参数的保存方法（saveIconStateAndWait: 之类）
-            // 被我们无参调用会丢掉参数，把系统写盘弄坏 —— 一律不碰。
-            if (method_getNumberOfArguments(methods[i]) != 2) continue;
 
             int kind = -1;
             if (TCPLayoutIsSaveName(name)) kind = TCPLayoutKindSave;
             else if (TCPLayoutIsLeafName(name)) kind = TCPLayoutKindLeaf;
             if (kind < 0) continue;
+
+            // 铁律：只挂零参数、返回 void 的方法（隐式 self + _cmd 两个参数）。
+            // 带参数的保存方法（saveIconStateAndWait: 之类）被我们无参调用会丢掉参数，
+            // 把系统写盘弄坏 —— 一律不碰。0.9.22 起连零参数也要验真实签名
+            // （method_getTypeEncoding），宁可一个都不挂。
+            if (!TCPLayoutSignatureHookable(methods[i])) {
+                if (skipped.count < 6) {
+                    [skipped addObject:[NSString stringWithFormat:@"%@:%s(%s)",
+                                        NSStringFromClass(cls), name,
+                                        method_getTypeEncoding(methods[i]) ?: "?"]];
+                }
+                continue;
+            }
 
             // 同一 (类,选择器) 只挂一次。
             BOOL already = NO;
@@ -375,8 +431,12 @@ static void TCPLayoutHookSave(void) {
         }
     }
 
-    if (hooked.count > 0) {
-        sLayoutSite = [hooked componentsJoinedByString:@","];
+    if (skipped.count > 0) {
+        [probe addObject:[NSString stringWithFormat:@"skip[%@]",
+                          [skipped componentsJoinedByString:@","]]];
+    }
+    if (hooked.count > 0) sLayoutSite = [hooked componentsJoinedByString:@","];
+    if (hooked.count > 0 || skipped.count > 0) {
         sLayoutProbe = [probe componentsJoinedByString:@";"];
     }
 }
@@ -537,6 +597,13 @@ static void TCPLayoutTick(void) {
     __sync_fetch_and_add(&sLayoutTicks, 1);
     TCPLayoutTickBody();
     TCPLayoutPublish();                  // 每拍（或状态一变）现写，tick 才可信
+
+    // 重活（枚举类 + 挂站）已经跑完了 → 撤掉启动护栏文件。
+    // 类迟迟不出现（枚举根本没跑）也在 24 拍（约 2 分钟）后撤，免得护栏永久留着把功能锁死。
+    if (!sLayoutGuardCleared && (sLayoutEnumRan || sLayoutTicks >= 24)) {
+        sLayoutGuardCleared = 1;
+        [[NSFileManager defaultManager] removeItemAtPath:TCPLayoutGuardPath error:NULL];
+    }
 }
 
 void TCPLayoutInstall(void) {
@@ -548,20 +615,36 @@ void TCPLayoutInstall(void) {
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
     if (![bundleID isEqualToString:@"com.apple.springboard"]) return;
 
-    // 1) 恢复。构造函数阶段，早于 SBIconModel 读布局。
+    // 0) 启动护栏（0.9.22 起）：重活之前先写一个文件，重活跑完就删掉（见 TCPLayoutTick）。
+    //    下次启动它还在 = 上次就崩在这段重活里 → 整段跳过（诊断 safeskip=1），
+    //    宁可布局功能不生效，也绝不再把 SpringBoard 送进安全模式。
+    //    恢复干净：删掉 TCPLayoutGuardPath 这一个文件，下次启动就会重新尝试。
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:TCPLayoutGuardPath]) {
+        sLayoutSafeSkip = 1;
+        TCPLayoutNote(@"safeskip");
+        TCPLayoutPublish();
+        return;
+    }
+    [fm createDirectoryAtPath:TCPLayoutBackupDir withIntermediateDirectories:YES attributes:nil error:NULL];
+    [fm createFileAtPath:TCPLayoutGuardPath contents:[NSData data] attributes:nil];
+
+    // 1) 恢复。构造函数阶段，早于 SBIconModel 读布局；只做文件读写，不碰任何运行时类。
     TCPLayoutRestore();
 
-    // 2) 系统保存布局后同步备份（类没载进来也没关系，定时器每拍补挂）。
-    TCPLayoutHookSave();
+    // 2) 系统保存布局后同步备份 —— 挂站这一步**不再在构造函数里做**。
+    //    ⚠️ 0.9.21 就是死在这里：构造函数里调 TCPLayoutHookSave()，它枚举全进程所有类并
+    //    逐个发 -isSubclassOfClass:（枚举到还没 realize 的根类就 SIGTRAP），连崩 5 次进安全模式。
+    //    0.9.22 起交给主队列第一拍（2 秒后），构造函数里只留纯赋值与定时器创建。
 
-    // 3) 5 秒一拍：mtime 兜底 + 「动过图标就主动让系统写盘」。
-    //    主队列上跑，所以碰 SBIconModel 是安全的；第一次触发在 5 秒后，不拖慢启动。
+    // 3) 5 秒一拍：第一拍（2 秒后）枚举类 + 挂站，之后每拍 mtime 兜底 + 「动过图标就让系统写盘」。
+    //    主队列上跑，所以碰 SBIconModel 是安全的；不拖慢启动。
     if (sLayoutTimer == NULL) {
         sLayoutTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
                                              dispatch_get_main_queue());
         if (sLayoutTimer != NULL) {
             dispatch_source_set_timer(sLayoutTimer,
-                                      dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
+                                      dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
                                       5 * NSEC_PER_SEC,
                                       1 * NSEC_PER_SEC);
             dispatch_source_set_event_handler(sLayoutTimer, ^{
@@ -576,7 +659,7 @@ void TCPLayoutInstall(void) {
 }
 
 NSString *TCPLayoutDiagnostics(void) {
-    return [NSString stringWithFormat:@"lay{rst=%d,sav=%d,tick=%d,force=%d,site=%@,model=%@,last=%@,probe=%@}",
+    return [NSString stringWithFormat:@"lay{rst=%d,sav=%d,tick=%d,force=%d,site=%@,model=%@,last=%@,probe=%@,safeskip=%d}",
             (int)sLayoutRestored, (int)sLayoutSaved, (int)sLayoutTicks, (int)sLayoutForced,
-            sLayoutSite, sLayoutModelPath, sLayoutLast, sLayoutProbe];
+            sLayoutSite, sLayoutModelPath, sLayoutLast, sLayoutProbe, (int)sLayoutSafeSkip];
 }
