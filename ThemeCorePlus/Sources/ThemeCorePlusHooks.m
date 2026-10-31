@@ -255,6 +255,33 @@ static const IMP kBadgeTupleHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_
 
 typedef id (*TCPBadgeTextFn)(id, SEL, NSString *, UIFont *, BOOL);
 
+// —— 0.9.18 卡顿/发热：角标成图缓存 ——
+// 这个站每被问一次就重新 UIGraphics 合成一张**新** UIImage，而系统是按「图对象变了没」决定
+// 要不要重画角标：每次都给新对象，它就一直重画、一直再回来问，主线程被锁在
+// 「合成 → 重画 → 再问」的环里（用户 2026-10-31 09:13「应用图标主题和角标素材 手机特别卡」
+// 「发热烫手」）。同样的（主题代 / 文字 / 字体 / 倍率 / 盒子 / 单层闸门）只合成一次，
+// 之后原样交回**同一张**图 —— 图没变，系统就不重画，环断掉。
+static NSCache<NSString *, UIImage *> *sBadgeTextImageCache = nil;
+
+static NSCache<NSString *, UIImage *> *TCPBadgeTextCache(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        sBadgeTextImageCache = [NSCache new];
+        sBadgeTextImageCache.countLimit = 128;
+    });
+    return sBadgeTextImageCache;
+}
+
+static NSString *TCPBadgeTextCacheKey(NSString *text, UIFont *font, CGFloat scale,
+                                      CGSize box, BOOL backgroundServed) {
+    TCPThemeStore *store = [TCPThemeStore shared];
+    return [NSString stringWithFormat:@"%lu|%@|%@|%.1f|%.2fx%.2f|%d|%d|%.1f",
+            (unsigned long)store.generation, text ?: @"-",
+            font.fontName ?: @"-", (double)font.pointSize,
+            (double)box.width, (double)box.height,
+            (int)backgroundServed, store.active ? 1 : 0, (double)scale];
+}
+
 static id TCPBadgeTextHandle(IMP *slot, id self, SEL _cmd, NSString *text, UIFont *font, BOOL highlighted) {
     IMP original = *slot;
     if (original == NULL) return nil;
@@ -265,9 +292,15 @@ static id TCPBadgeTextHandle(IMP *slot, id self, SEL _cmd, NSString *text, UIFon
     // 单层闸门（0.9.4）：底板站这一轮已经换过底板了，这里就只交数字（透明底）——
     // 两站都画底板的话屏幕上就是同一张底板叠两层（用户说的「二个图层」）。
     BOOL backgroundServed = TCPBadgeBackgroundServed();
-    UIImage *themed = backgroundServed
-        ? TCPThemedBadgeTextOnlyImage(text, font, TCPUIScale(), box)
-        : TCPThemedBadgeTextImage(text, font, TCPUIScale(), box);
+    CGFloat scale = TCPUIScale();
+    NSString *key = text.length > 0 ? TCPBadgeTextCacheKey(text, font, scale, box, backgroundServed) : nil;
+    UIImage *themed = key != nil ? [TCPBadgeTextCache() objectForKey:key] : nil;
+    if (themed == nil) {
+        themed = backgroundServed
+            ? TCPThemedBadgeTextOnlyImage(text, font, scale, box)
+            : TCPThemedBadgeTextImage(text, font, scale, box);
+        if (themed != nil && key != nil) [TCPBadgeTextCache() setObject:themed forKey:key];
+    }
     // 0.9.11：交出去的是「底板 + 数字」整图时，角标视图侧要把系统自己那层底板藏掉，
     // 否则屏幕上就是「系统底板 + 主题底板」两层（本机 iOS 16.7 底板站根本不存在，
     // 永远是这条路：诊断 gate=composed）。

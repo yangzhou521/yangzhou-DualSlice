@@ -103,6 +103,22 @@ static BOOL TCPBadgeLayerIsOurs(CALayer *layer) {
     return NO;
 }
 
+// —— 0.9.18 卡顿/发热：收拾过就不再收拾 ——
+// -layoutSubviews 是桌面滚动时最热的回调：一次布局，屏幕上每个角标都要进来一遍。
+// 下面这套「遍历子树 + KVC backgroundView + 认 64 张自己的图 + 清 layer」以前每次布局都全跑，
+// 一屏 20 个角标 × 每秒几十次布局 = 主线程一直在做无用功（用户 2026-10-31 09:13
+// 「应用图标主题和角标素材 手机特别卡」「发热烫手」）。
+// 收拾完把标记挂在视图上（关联对象），之后的布局只读一个指针就返回；
+// 只有「文字变了」（_configureAnimatedForText:）和「重新上屏」（didMoveToWindow）才清掉标记重做。
+static const void *TCPBadgeCleanedKey = &TCPBadgeCleanedKey;
+static NSInteger sBadgeSysSkip = 0;
+
+static void TCPBadgeSetCleaned(UIView *view, BOOL cleaned) {
+    if (view == nil) return;
+    objc_setAssociatedObject(view, TCPBadgeCleanedKey, cleaned ? @YES : nil,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
 // 把角标收拾成一层：只清「系统底板」的底色，绝不动我们那张图所在的节点。
 // 本机结构（probe 实测）：SBIconBadgeView → backgroundView(SBDarkeningImageView，系统红底)
 // → UIImageView(我们的整图)。所以 backgroundView 是**祖先**，不能藏，只能清色。
@@ -110,6 +126,10 @@ static BOOL TCPBadgeLayerIsOurs(CALayer *layer) {
 static void TCPBadgeHideSystemBackground(UIView *view) {
     if (view == nil || !sBadgeComposedServed || sBadgeHiding) return;
     if (![view isKindOfClass:[UIView class]]) return;
+    if (objc_getAssociatedObject(view, TCPBadgeCleanedKey) != nil) {
+        sBadgeSysSkip++;   // 这一格已经收拾干净，布局再进来就是空转
+        return;
+    }
     sBadgeHiding = YES;
     sBadgeSysLook++;
 
@@ -212,6 +232,8 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
     // 取证：底板节点是谁、清没清掉（带 * = 清过，带 ! = 被藏），装完机不看屏幕也知道做对没有。
     sBadgeSysTree = names.count > 0 ? [names componentsJoinedByString:@","] : @"-";
 
+    // 收拾完了：挂标记，后面每一次布局都在上面那个早退处返回（0.9.18）。
+    TCPBadgeSetCleaned(view, YES);
     sBadgeHiding = NO;
 }
 
@@ -243,13 +265,14 @@ BOOL TCPBadgeBackgroundServed(void) {
 NSString *TCPBadgeProbeReport(void) {
     return [NSString stringWithFormat:
             @"%@;bg{look=%ld,hit=%ld};tup{look=%ld,hit=%ld};txt{look=%ld,hit=%ld};gate=%@;"
-            @"sys{look=%ld,hid=%ld,wait=%ld,tree=%@};v{lay=%ld,cfg=%ld,mv=%ld,lo=%ld}",
+            @"sys{look=%ld,hid=%ld,wait=%ld,skip=%ld,tree=%@};v{lay=%ld,cfg=%ld,mv=%ld,lo=%ld}",
             sBadgeProbe ?: @"badge=-",
             (long)sBadgeBackLook, (long)sBadgeBackHit,
             (long)sBadgeTupleLook, (long)sBadgeTupleHit,
             (long)sBadgeTextLook, (long)sBadgeTextHit,
             TCPBadgeBackgroundServed() ? @"text-only" : @"composed",
             (long)sBadgeSysLook, (long)sBadgeSysHidden, (long)sBadgeSysWait,
+            (long)sBadgeSysSkip,
             sBadgeSysTree ?: @"-",
             (long)sBadgeLayoutCalls, (long)sBadgeConfigCalls, (long)sBadgeMoveCalls,
             (long)sBadgeLayCalls];
@@ -447,6 +470,8 @@ static void TCPBadgeConfigHook(id self, SEL _cmd, NSString *text, BOOL highlight
         ((void (*)(id, SEL, NSString *, BOOL, id))sBadgeConfigOrig)(self, _cmd, text, highlighted, animator);
     }
     sBadgeConfigCalls++;
+    // 文字换了 → 角标要重新收拾一遍（0.9.18：布局那条路默认早退，只有这里放行）。
+    TCPBadgeSetCleaned((UIView *)self, NO);
     TCPBadgeHideSystemBackground(self);
 }
 
@@ -460,6 +485,8 @@ static void TCPBadgeLayHook(id self, SEL _cmd, id arg) {
 static void TCPBadgeMoveHook(id self, SEL _cmd) {
     if (sBadgeMoveOrig) ((void (*)(id, SEL))sBadgeMoveOrig)(self, _cmd);
     sBadgeMoveCalls++;
+    // 重新上屏（角标视图被复用、或换了一格）→ 系统会把底板重新画回来，得再收拾一遍。
+    TCPBadgeSetCleaned((UIView *)self, NO);
     TCPBadgeHideSystemBackground(self);
 }
 

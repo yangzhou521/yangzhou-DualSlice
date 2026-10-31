@@ -260,6 +260,12 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 @property (nonatomic, strong) NSMutableArray<UIImage *> *renderedImages;   // 我们合成的图（强引用，限量）
 @property (nonatomic, strong) NSMutableSet<NSValue *> *renderedImagePointers; // 合成图指针（O(1) 身份索引）
 @property (nonatomic, strong) NSMutableSet<NSValue *> *renderedCGPointers; // 合成图背后的 CGImage 指针
+// 0.9.18 修法 A：像素指纹。系统只要复制/重绘/经 SBHIconImageCache 转一手，指针就变了，
+// 于是「屏幕上这张就是我们的图」被误判成 stock（0.9.16 现场：disp{ours=6} 而 layer{ours=0}）。
+// 指纹在渲染时算一次（12×12 灰度），判定时按指纹再比一遍，指针不中不代表不是我们的。
+@property (nonatomic, strong) NSMutableSet<NSData *> *renderedFingerprints;
+// 同一张图在一次次普查里会被反复问：算过就记住，别每次都把它缩到 12×12 一遍（主线程，会卡桌面）。
+@property (nonatomic, strong) NSCache<NSValue *, NSData *> *fingerprintCache;
 @property (nonatomic, strong) NSMutableArray<NSString *> *missSamples;
 // 反过来：实际被换成主题图的 bundle id。诊断里能看出「换了哪几个 App」，不用靠肉眼。
 @property (nonatomic, strong) NSMutableArray<NSString *> *hitSamples;
@@ -305,6 +311,9 @@ enum {
         _renderedImages = [NSMutableArray array];
         _renderedImagePointers = [NSMutableSet set];
         _renderedCGPointers = [NSMutableSet set];
+        _renderedFingerprints = [NSMutableSet set];
+        _fingerprintCache = [[NSCache alloc] init];
+        _fingerprintCache.countLimit = 512;
         _missSamples = [NSMutableArray array];
         _hitSamples = [NSMutableArray array];
         _featureFlags = TCPFeatureIcons | TCPFeatureFolders | TCPFeatureBadges | TCPFeatureFiles;
@@ -398,6 +407,8 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         [self.renderedImages removeAllObjects];
         [self.renderedImagePointers removeAllObjects];
         [self.renderedCGPointers removeAllObjects];
+        [self.renderedFingerprints removeAllObjects];
+        [self.fingerprintCache removeAllObjects];
         // 遮罩体检（0.9.4，修「图标空白」）：把遮罩的 alpha 覆盖量一遍 —— 玻璃 / 细环那类遮罩
         // 几乎全透明，拿去裁图标只会把主体裁没。低于门槛的**不使用**，让图标保持素材原样。
         CGFloat coverage = 1.0;
