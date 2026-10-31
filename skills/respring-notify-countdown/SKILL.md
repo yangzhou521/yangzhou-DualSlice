@@ -1,11 +1,11 @@
 ---
 name: respring-notify-countdown
-description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 cross-chat-coordination），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用；注销前必须先让用户在屏幕上真看见倒计时（回复正文 + 灵动岛胶囊；通知不算知情），并读 CountdownHUD 诊断确认胶囊真显示了；装入 SpringBoard 的新插件，注销后必须查 crash list，无新报告才算装好。
+description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 cross-chat-coordination），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用；注销前必须先让用户在屏幕上真看见倒计时（回复正文 + 灵动岛胶囊；通知不算知情），并读 CountdownHUD 诊断确认胶囊真显示了；装入 SpringBoard 的新插件，注销后必须查 crash list，无新报告才算装好。 **注销必须用户点头**：`scripts/respring-guard.sh` 不带 `--confirm` 只警告、退出码 3、不注销，等用户明确回「注销/确定」才真注销。
 ---
 
 ---
 name: respring-notify-countdown
-description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 cross-chat-coordination），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用；注销前必须先让用户在屏幕上真看见倒计时（回复正文 + 灵动岛胶囊；通知不算知情），并读 CountdownHUD 诊断确认胶囊真显示了；装入 SpringBoard 的新插件，注销后必须查 crash list，无新报告才算装好。
+description: 注销、装 deb、重启目标进程前，必须先和本机其它工程/对话同步、别打断它们的工作（技能 cross-chat-coordination），再让用户真的看见「5 秒后执行」并倒计时；离开 Apelin 取证后必须自己回到 Apelin；注销前先查崩溃循环，避免把 SpringBoard 打进安全模式。任何工程、任何对话都适用；注销前必须先让用户在屏幕上真看见倒计时（回复正文 + 灵动岛胶囊；通知不算知情），并读 CountdownHUD 诊断确认胶囊真显示了；装入 SpringBoard 的新插件，注销后必须查 crash list，无新报告才算装好。 **注销必须用户点头**：`scripts/respring-guard.sh` 不带 `--confirm` 只警告、退出码 3、不注销，等用户明确回「注销/确定」才真注销。
 ---
 
 # 通知 + 倒计时 5 秒，取证后回 Apelin
@@ -96,7 +96,8 @@ v1.3.0 起：拿不到 scene 就**不显示、也不消费这条请求**（0.5 �
 
 ```sh
 # 1) 发请求（respring-guard.sh 已包好；只想上岛提醒用 hud-notify.sh）
-sh scripts/respring-guard.sh 5 注销        # 加 RESPRING_GUARD_NO_RESPRING=1 只倒计时、不注销
+sh scripts/respring-guard.sh 5 注销        # 只警告、不注销（退出码 3）
+sh scripts/respring-guard.sh --confirm 5 注销  # 用户已明确答应后：倒计时 5 秒 + sbreload
 # 2) 读诊断：shows 必须比上一次大，win= 里必须有真实场景与层级
 icli prefs read com.apple.springboard CountdownHUDDiagnostics
 #   v1.3.0;shows=3;last=5s;label=注销;font=12.3;island=…|x,y,w,h;src=aperture;cand=4;
@@ -166,7 +167,7 @@ sh scripts/device.sh read com.apple.springboard <Tweak>Diagnostics
   Apelin 的 `apelin_device_respring`、`apelin_package_confirm_loaded`（`respring: true`）同样算注销。
 - 重启目标进程：`icli app kill <bundle-id> --force`
 
-**固定四步，顺序不能变（第 0 步＝先和别的对话同步，见上一节）：**
+**固定五步，顺序不能变（第 0 步＝先和别的对话同步，见上一节）：**
 
 1. **前置检查（新增，最重要）**：`apelin_crash_list`（process 填目标进程，如 SpringBoard），
    读最新报告的 `consecutiveCrashCount` 与崩溃栈。
@@ -175,8 +176,9 @@ sh scripts/device.sh read com.apple.springboard <Tweak>Diagnostics
    - 刚装上的包还没验证过不崩 → 先别注销；要注销就在通知里写明「可能再进安全模式」。
 2. `apelin_notification_send`：标题 ≤40 字，正文一两句说清「动了什么 + 为什么 + 下一步」，
    并**同时把「5 秒后注销」写进回复正文**（通知在 Apelin 前台时看不见）。
-3. 真的等 5 秒：`sh scripts/respring-guard.sh 5` 或 `sleep 5`。走过场不算。
-4. 才执行安装 / 注销 / 杀进程。
+3. **注销先只警告**：`sh scripts/respring-guard.sh 5 <标签>` —— 只弹胶囊警告、终端打印、**退出码 3、不注销**（用户 2026-10-31 05:33 原话：「以后注销事件给我一个警告⚠️弹窗 让我决定要不注销！」）。
+4. **用户明确回「注销 / 确定」之后**，同一个动作才 `sh scripts/respring-guard.sh --confirm 5 <标签>` 真等 5 秒并 `sbreload`；没回话、回「取消」、或只是自己觉得该注销了 → 一律停在③，绝不加 `--confirm`。
+5. 才执行安装 / 杀进程（装包这类要接着做动作：`RESPRING_GUARD_NO_RESPRING=1 sh scripts/respring-guard.sh --confirm 5 装包`）。
 
 通知配额：每回合最多 3 条、间隔 ≥30 秒。一次动作链（装包 → 随后注销）第一条通知里就说清
 「装完会注销」，注销前若已过 30 秒，再发第二条。

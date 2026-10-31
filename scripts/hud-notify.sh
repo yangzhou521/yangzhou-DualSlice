@@ -47,6 +47,38 @@ fi
 # v1.6.0：可选的对话 id —— 有它胶囊才可点（点一下跳回发消息的对话）。
 # 只认 UUID 那种形状（十六进制 + 连字符），别的内容一律当没有，免得拼出奇怪的 URL。
 SID="${HUD_SID:-}"
+
+# 没给 HUD_SID 时自己认出「本会话」：Apelin 的会话目录里，每个会话的 events.jsonl
+# 会记录它自己发起的 toolCall。**本脚本当前这次调用**（命令里含 hud-notify.sh）正被写进
+# 正在跑它的那个会话的事件流里 —— 取「最后一次提到 hud-notify.sh 的事件」最新的那个会话，
+# 就是发这条通知的对话（点胶囊要回到这里）。
+# 注意：不能用「全局最近一条用户消息」来认 —— 别的对话一说话就会把链接抢走。
+# 并发跑几条线时可能认错 —— 那种场合用 HUD_SID 显式指定。
+auto_sid() {
+  DIR="$HOME/Documents/wiki.qaq.apelin/sessions"
+  [ -d "$DIR" ] || return 0
+  LIST=""
+  for d in $(ls -t "$DIR" 2>/dev/null | head -12); do
+    f="$DIR/$d/events.jsonl"
+    [ -f "$f" ] || continue
+    line=$(tail -c 600000 "$f" 2>/dev/null | grep -F 'hud-notify.sh' | grep -F 'toolCall' | tail -1)
+    [ -n "$line" ] || continue
+    dt=$(printf '%s' "$line" | sed 's/.*"date":"\([^"]*\)".*/\1/')
+    [ -n "$dt" ] || continue
+    LIST="$LIST$dt $d
+"
+  done
+  [ -n "$LIST" ] || return 0
+  printf '%s' "$LIST" | sort -r | head -1 | awk '{print $2}'
+}
+
+if [ -z "$SID" ]; then
+  SID=$(auto_sid)
+  if [ -n "$SID" ]; then
+    echo "hud-notify: 未给 HUD_SID，自动认出发消息的对话 $SID"
+  fi
+fi
+
 case "$SID" in
   ''|*[!0-9a-fA-F-]*) SID="" ;;
 esac

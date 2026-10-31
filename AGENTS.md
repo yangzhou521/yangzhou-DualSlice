@@ -191,13 +191,14 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   案例文档：`docs/cases/countdownhud-safe-mode.md`（根因 / 三步修法 / 复发处理流程）。
 - **装入 SpringBoard 的新插件，注销后必须查 crash list**：`apelin_crash_list`（process=SpringBoard），
   有比本次注销更新的报告 = 装坏了（先 `irisin-cli remove` 回滚再排查），**无新报告才算装好**。
-  已装并实测通过：**1.4.2**（CI run 41119016871，commit d60538cf，tag `countdownhud-v1.4.2`，
-  2026-10-31 03:5x 装机 1.4.1→1.4.2，注销后诊断 `v1.4.2;shows=6;mode=count;
-  scene=SBSystemApertureWindowScene;haptic=4`，crash list 最新仍是 03:43 旧基线、**无新报告**，
-  不在安全模式）。纯文案（`!`）不震已实测；别的 App 在前台时胶囊照样消费请求（已实测）。
+  已装并实测通过：**1.6.0**（当前版本，CI run 41155920001，commit c5981b5b，tag `countdownhud-v1.6.0`，
+  deb 20780 B，2026-10-31 09:34 装机；1.4.2 是历史版本，早已不是当前版本）。
+  注销后诊断 `v1.6.0;shows=N;mode=plain|count;...;alerts=N;ans=confirm|cancel|-;link=<sid>|none;taps=N`，
+  crash list **无新报告**，不在安全模式。纯文案（`!`）不震已实测；别的 App 在前台时胶囊照样消费请求（已实测）。
+  验收矩阵见 `docs/cases/countdownhud-1.6.0-acceptance.md`。
   技能 `respring-notify-countdown` 的「零、八」一节已写死这条。
 - 验证：`icli prefs read com.apple.springboard CountdownHUDDiagnostics`
-  → `v1.4.2;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N;mode=count;haptic=N`；
+  → `v1.6.0;shows=N;last=5s;label=注销;font=12.3;island=<类名>|x,y,w,h;src=aperture;cand=N;mode=count;haptic=N;alerts=N;ans=-;link=<sid>|none;taps=N`；
   量到的候选清单：`icli prefs read com.apple.springboard CountdownHUDIslandCandidates`
   （最多 8 行 `A|<类名>|x,y,w,h`，前缀 A = 在 Aperture 窗口里）；
   日志 `icli log syslog --subsystem com.yangzhou.countdownhud`。
