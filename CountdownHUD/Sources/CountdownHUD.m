@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.2";
+static NSString *const CHVersion = @"1.6.3";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -146,6 +146,7 @@ static NSString *gLinkSession;
 @end
 
 static CHWindow *gWindow = nil;
+static CHAlertWindow *gAlertWindow = nil; // v1.6.3：提前声明，供诊断串记录弹窗 windowScene
 static UILabel *gLabel = nil;
 static NSTimer *gTimer = nil;
 static NSUInteger gRemaining = 0;
@@ -461,7 +462,7 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
 }
 
 static void CHWriteDiagnostics(void) {
-    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@;exec=%@;link=%@;taps=%lu",
+    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@;exec=%@;alertWin=%@;link=%@;taps=%lu",
                          CHVersion, gShows, gLastSeconds,
                          gLabelText.length ? gLabelText : @"-",
                          gFontSize,
@@ -471,6 +472,7 @@ static void CHWriteDiagnostics(void) {
                          gSelfWindowDetail, gIslandWindowDetail,
                          (unsigned long)gHaptics,
                          (unsigned long)gAlerts, gAnswerDetail, gExecDetail,
+                         (gAlertWindow.windowScene ? CHClassNameOf(gAlertWindow.windowScene) : @"-"),
                          gLinkSession.length ? gLinkSession : @"none",
                          (unsigned long)gTaps];
     CFPreferencesSetAppValue(CFSTR("CountdownHUDDiagnostics"),
@@ -738,7 +740,6 @@ static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain, NS
 //
 // 用户点完把结果写进 CHAnswerPath：`<epoch>|confirm|cancel|timeout`，
 // 脚本读这一行才决定要不要真的往下走。**超时绝不自动注销** —— 这是「让我决定」的底线。
-static CHAlertWindow *gAlertWindow = nil;
 static UIAlertController *gAlert = nil;
 static NSTimer *gAlertTimeout = nil;
 

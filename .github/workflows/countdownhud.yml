@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.2)
+    name: Release (countdownhud-v1.6.3)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,10 +133,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.2
-          name: CountdownHUD v1.6.2
+          tag_name: countdownhud-v1.6.3
+          name: CountdownHUD v1.6.3
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            v1.6.3：**诊断串加 `alertWin=…`**。现在「? 注销弹窗」挂在哪个 windowScene 之前
+            没有任何记录（诊断里的 `win=…scene=…` 只记胶囊窗口），弹窗能不能显示全靠胶囊窗口
+            的场景间接推断。这版把 `gAlertWindow.windowScene` 的类名写进诊断串（`alertWin=`），
+            装完发一条 `?` 请求就能直接看到弹窗窗口是不是也挂错了场景。行为其它一律不变。
 
             v1.6.2：**修「通知只有声音、胶囊看不到」**。旧 CHPickScene 优先取 ForegroundActive 的
             window scene，而 DynamicX 造的假岛（SBSystemApertureWindowScene）一直处于前台，
@@ -236,4 +241,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.2/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.3/$(basename "$DEB")"
