@@ -108,12 +108,26 @@ lay{rst=N,sav=N,tick=N,force=N,site=<挂上的保存方法|none>,model=<none|hoo
   ③ 把 `IconState.plist` 挪走再注销 → `rst=1,last=restored`；④ `apelin_crash_list` 无新报告。
 - 已实测（2026-10-31）：0.9.17 装机后 `tick=0`（两分钟两次读数都不动）＝上表那条 ARC 根因；
   系统那份与备份内容只差一个 UUID 字符串（说明系统确实在写盘，摆位没丢）。
-- **状态（2026-10-31 10:2x）：0.9.21 已装机（磁盘 dylib 就是 0.9.21，含 `model=`/`probe=`），
-  但 SpringBoard 仍在跑 0.9.19** —— 注入型插件只在进程启动时加载，**还差一次注销**。
-  注销后诊断应变成 `v0.9.21` 且 `lay{...}` 里出现 `model=`/`probe=`、`last=` 不再是 `nomodel`；
-  注销后必查 `apelin_crash_list process=SpringBoard` 无新报告。
+- **状态（2026-10-31 12:50，注销后实测）：0.9.23 已在磁盘 + 内存里一致在跑**（dpkg 0.9.23，
+  磁盘 dylib 与内存版本一致，`v0.9.23`，`tick` 在涨、`safeskip=0`，SpringBoard 崩溃列表无新报告，
+  最新仍是 10:44 那批 0.9.21 旧档）。
+  但**布局保存仍然一个站都没挂上**，0.9.23 的诊断给出决定性读法：
+  `lay{rst=0,sav=1,tick=1,force=0,site=none,model=-,last=noinstance,probe=-,safeskip=0,hooked=0}`
+  - **`probe=-`（不是 `base=nil`、也不是 `classlist=0`、也不是 `scanned=N,hit=0`）＝ 早退发生在写 probe 之前**。
+    0.9.23 的三种 probe 字面量一个都没被写出来，说明 `TCPLayoutHookSave` 在写 probe 的分支之前就 return 了
+    —— 即 `classes.count==0` 那句 return 比「写 probe」更靠前。定位时**先核 `TCPLayoutCandidateClasses()`
+    的早退路径与 probe 的写入位置的先后**，不要以为 probe=- 代表「类没找到」。
+  - `hooked=0` = 本进程挂站数 0（不受 prefs 跨进程残留干扰，可信）。
+  - `sav=1` = **备份写盘次数**，不是挂站次数 —— 拿它判断「挂上过站」是错的（历史上误判过）。
+  - `site=-SBIconModel:_saveIconState` 之类的旧值是 **prefs 跨进程残留**，不能当「曾挂上站」的证据。
+  - `last=noinstance` 是挂站失败后每拍早退的**后果**，不是原因。
+- **0.9.24（角标双层修复）已发布但用户明确「先不装」**：Release `themecoreplus-v0.9.24`，
+  deb 142844 B，sha256 `da13ecbc…`，CI run 41168497476（提交 `cb3a307b`，success）。
+  它的 `ThemeCorePlusLayout.m` 与 0.9.23 **逐字节相同**（compare `5811a2b6...cb3a307b` 的 files[] 里没有该文件），
+  所以装它不会让布局诊断失真；但**没装就是没装**，锁里 version=0.9.24 只是席位声明。
 - 查 CI：`icli probe scripts/ci-status.js`（匿名 GitHub API，列出最近 3 次 run 的 status/conclusion/sha）；
   下载：`icli probe scripts/download-tcp-09xx.js` → 写到 `/var/mobile/Documents/`。
+  **报 CI 状态前必须重查一次**（见技能 `verify-cloud-release`：早先读到 `in_progress` 可能几分钟后就完成了）。
 
 ## 装到本机（本机只能这么验）
 
@@ -692,6 +706,42 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
     「协调 → 通知 → 5 秒 → 用户点头」）、**不替代回执**（别人的消息第一时间回）。消息一句话就够，省 context。
 
 ## 当前状态
+
+### 🔴 统一调度台与三线任务分工（2026-10-31 12:45，用户排定优先级）
+
+**用户原话**：「第一个重要的任务就是修复图标布局不能保存的问题第二个是修复图标不能正确加载的问题第三个修复角标不能正确教的问题」。
+
+**统一调度台 = 本对话 `f8fbdbd5-7f8c-402e-820f-73b6872c394b`（标题「继续操作」）**：
+注销回来后由它合并全员信息、整合、统一排程；各线只执行并向它汇报，不互相协调、不重复协调
+（硬规矩 + 技能 `respring-hub-merge-dispatch`）。
+
+| 优先级 | 任务 | 对话 | 改码范围 | 版本号 |
+| --- | --- | --- | --- | --- |
+| ① | 图标布局不能保存 | `18b20213` | `ThemeCorePlusLayout.m` + 版本锁 | 0.9.25 |
+| ② | 图标不能正确加载 | `157b2985` | `ThemeCorePlusIcons.m` + `Store.m` | 0.9.27 |
+| ③ | 角标不能正确显示 | `6c78afa4` | `ThemeCorePlusBadges.m` | 0.9.26 |
+| — | HUD 1.6.1（点确认自己注销） | `3e983c10` | `CountdownHUD.m` + `scripts/respring-guard.sh` 的 `--ask` 段 | 1.6.1（已发布未装） |
+
+**一文件一写者**：`Layout.m` / `Icons.m` / `Badges.m` / `CountdownHUD.m` / `version-lock.txt` 各归一线上表那条，
+越界前先在群里问。
+
+**注销窗口统一由调度台排**：出包的线只报「run 号 + deb 文件名 + deb sha256 + dylib sha256」，
+**不自己装、不自己注销**；调度台收齐后把 **0.9.24（角标）+ 0.9.25（布局）+ 0.9.27（图标）+ HUD 1.6.1**
+合并成**一次**装机 + **一次**注销（走 `respring-cross-team-notify` 四步：全员通知 → 正文知情 →
+弹窗让用户决定 → 用户当轮明确点头才 `--confirm`），别让用户被黑屏好几次。
+
+**三条任务的现有证据（0.9.23 实测，`v0.9.23` 在跑、tick 在涨、无新崩溃）**：
+- 布局：`lay{…site=none,model=-,last=noinstance,probe=-,hooked=0}` —— 一个站都没挂上；
+  **`probe=-` ≠「类没找到」**：0.9.23 的三种 probe 字面量一个都没写出 → 早退发生在**写 probe 之前**
+  （`classes.count==0` 的 return 更靠前）。`hooked=0` 可信；`sav=` 是备份写盘次数、`site=` 旧值是
+  prefs 跨进程残留，两者都不能当「曾挂上站」的证据。
+- 图标：`file{look=58,hit=0}`（58 个素材全 miss）、`icon{look=4,miss=4,hit=0}`、
+  `census{layer{ours=0},disp{ours=6}}`（`Icons.m` 纯指针比对必然不等）、
+  `pix{screen{ours=0,stock=0}}`（主题图一张没上屏）、`dyn{seen=0}` + `clockv{last=noface}`（时钟日历没认出来）。
+- 角标：`badge{look=0,hit=0}`（主题角标素材一次都没用上）、`sys{…tree=SBDarkeningImageView}` 无 `*`、
+  `asset=25x25;canvas=25x19;fit=0.78`。
+
+### 其它历史状态
 
 - **CountdownHUD 1.1.0 已装机（2026-10-30 12:2x）**：CI run 41002300177（提交 `27363e43`）编译，
   `com.yangzhou.countdownhud_1.1.0_iphoneos-arm64e.deb` 14032 B，装机副本
