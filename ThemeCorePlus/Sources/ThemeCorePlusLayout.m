@@ -387,7 +387,7 @@ static BOOL TCPLayoutHasSaveStationFor(id model) {
     for (int i = 0; i < sLayoutSlotCount; i++) {
         if (sLayoutSlots[i].kind != TCPLayoutKindSave) continue;
         if (![model isKindOfClass:sLayoutSlots[i].cls]) continue;
-        if (!sel_isEqual(sLayoutSlots[i].sel, NSSelectorFromString("saveIconState")) &&
+        if (!sel_isEqual(sLayoutSlots[i].sel, NSSelectorFromString(@"saveIconState")) &&
             sLayoutSlots[i].orig == NULL) continue;
         return YES;
     }

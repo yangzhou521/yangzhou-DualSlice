@@ -21,6 +21,10 @@
 // （构建脚本的 -I$THEOS/vendor/include）。
 #import <substrate.h>
 #import <os/log.h>
+// TCPThemeStore（主题素材索引）的声明：ThemeCorePlusHooks.m 里的角标缓存键要用
+// store.generation / store.active，而 Hooks.m 在禁改名单里（不能在那里加 import），
+// 所以在这里统一引进来。
+#import "ThemeCorePlusStore.h"
 
 // 日志：subsystem 必须是包 id（apelin-tweak-runtime 的要求），apelin_log_read 才收得到。
 static inline os_log_t TCPLogHandle(void) {
