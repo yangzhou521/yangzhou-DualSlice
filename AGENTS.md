@@ -743,11 +743,10 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 | 优先级 | 任务 | 对话 | 改码范围 | 版本号 | 出包状态 |
 | --- | --- | --- | --- | --- | --- |
-| ① | 图标布局不能保存 | `18b20213` | `ThemeCorePlusLayout.m` + 版本锁 | 0.9.25 | ✅ sha `108b7a92…` run 41170666488 |
-| ② | 图标不能正确加载 | `157b2985` | `ThemeCorePlusIcons.m` + `Store.m` | 0.9.27 | 🔄 改码中（根因已定位） |
-| ③ | 角标不能正确显示 | `6c78afa4` | `ThemeCorePlusBadges.m` | 0.9.26 | ✅ sha `03e0dfd6…` run 41171106635 |
-| 复核 | 图标线复核与验收 | `5781b4c7` | 只读，不改码 | — | 🔄 读 157b2985 的 diff |
-| — | HUD 1.6.1（点确认自己注销） | `3e983c10` | `CountdownHUD.m` + `scripts/respring-guard.sh` 的 `--ask` 段 | 1.6.1 | ✅ sha `a65102d9…` run 41168223032 |
+| ① | 图标布局不能保存 | `37cad7f0` | `ThemeCorePlusLayout.m` + Main.m + build.sh | **1.0.5** | 🔄 push e3a9f635，CI 编译中 |
+| ② | 文件夹图标显示 | `1f464fa1` | `ThemeCorePlusFolders.m` + `Hooks.m` | 1.0.4 | ✅ 已装机 |
+| ③ | 时钟日历修复 | `be994374` | `ThemeCorePlusIcons.m` | 1.0.6 | 🔄 改码中 |
+| — | HUD 1.6.1（点确认自己注销） | `3e983c10` | `CountdownHUD.m` + `scripts/respring-guard.sh` | 1.6.1 | ✅ 已装机 |
 
 **一文件一写者**：`Layout.m` / `Icons.m` / `Badges.m` / `CountdownHUD.m` / `version-lock.txt` 各归一线上表那条，
 越界前先在群里问。
