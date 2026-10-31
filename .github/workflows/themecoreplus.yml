@@ -168,7 +168,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (themecoreplus-v1.0.5)
+    name: Release (themecoreplus-v1.0.6)
     needs: build
     runs-on: ubuntu-latest
     steps:
