@@ -2,6 +2,7 @@
 //  ThemeCorePlusHooks.m —— 「一站一槽」站点框架（见头文件里的 R1/R2）。
 //
 #import "ThemeCorePlusHooks.h"
+#import "ThemeCorePlusVersion.h"   // 1.0.33：TCP_VERSION（iconservicesagent 探针要写进 dump 抬头）
 #import <substrate.h>
 #import <dlfcn.h>   // dladdr：反查某个 IMP 属于哪个镜像（见文末「谁 hook 了它」）
 #import <mach-o/dyld.h>   // 1.0.31：dyld_register_func_for_add_image（框架加载回调，替代定时全表扫描）
