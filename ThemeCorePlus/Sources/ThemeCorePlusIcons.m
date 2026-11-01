@@ -684,15 +684,12 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
         }
         how = [NSString stringWithFormat:@"face+h%.0fx%.0f+m%.0fx%.0f", hw, hh, mw, mh];
     } else {
-        // 1.0.7：日历 —— 主题底图 + 系统日期数字（当墨层画，混合模式已弃用）。
-        // 旧的 multiply/screen：白底黑字的系统图压在深色主题底上 → 黑字看不见（用户「显示了底图没有显示文字」）。
+        // 1.0.33：日历 —— 只画主题底图（空白无文字素材）。
+        // 用户明示：日历文字（星期、日期、字体、颜色、大小、上下位置）一概不该插件管，
+        // 是系统/素材自己接管显示的。插件只负责让「空白无文字底图」正常加载。
+        // 旧实现加了墨层提取/保留文字层 —— 那都是插件碰文字，画蛇添足、把文字搞乱。
         [themed drawInRect:rect];
-        if (systemImage) {
-            TCPPixelStats base = TCPPixelStatsForImage(themed);
-            BOOL darkBase = base.valid ? (base.luminance <= 0.5) : NO;
-            TCPCompositeCalendarInk(ctx, rect, systemImage, darkBase);
-            how = [NSString stringWithFormat:@"ink:%@,lum=%.2f,inkdrop=%.2f", darkBase ? @"w" : @"b", (double)base.luminance, sCalendarInkDrop];
-        }
+        how = @"base";
     }
 
     UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
@@ -761,13 +758,10 @@ static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *syst
         if (a < 16) continue;                       // ① 透明 → 背景
         unsigned char r = p[0], g = p[1], b = p[2];
         unsigned char mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
-        // 1.0.33：规则② 阈值从 140 提到 200 —— 系统日历的星期文字（红）与日期数字
-        // 都带浅色抗锯齿边/柔边，mx≥140 会把文字边缘剔掉，看起来「数字只显示一半」。
-        // 只剔纯白底板与浅灰阴影（mx≥200），把星期红字 + 黑日期数字都当文字保留。
-        if (mx >= 200) continue;                    // ② 纯白底/亮灰阴影 → 不是文字
-        // 规则③ 已删（1.0.33）：不再剔红色星期文字 —— 用户要「底图 + 系统文字动态显示」，
-        // 星期（顶部红字）必须保留。红色像素 r 高、g/b 低，mx=r，低于 200 就会落到这里当文字。
-        // 越深越实：mx 越小越实，映射到 120~255 的幅度
+        if (mx >= 140) continue;                    // ② 亮色（白底/灰阴影）→ 不是墨
+        unsigned char gb = g > b ? g : b;
+        if ((int)r - (int)gb > 30) continue;        // ③ 偏红（星期文字）→ 不是墨
+        // 越黑越实：mx 越小越实，映射到 120~255 的幅度
         rawAlpha[i] = (unsigned char)(mx < 100 ? 255 : 255 - (mx - 100) * 2);
     }
     free(buffer);
