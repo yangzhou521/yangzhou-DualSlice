@@ -43,6 +43,11 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
      省一次 runner 启动与一次上传传输，发布失败仍有匿名托管兜底步骤。
   合并后工作流只有 `jobs.build`（runs-on: macos-15），发布步骤用 `softprops/action-gh-release`
   + `token: ${{ github.token }}`，`files: packages/*.deb`；顶层 `permissions: contents: write` 继承即可。
+- **云编译过程「静默折叠」，出问题才汇报**（用户 2026-11-01 11:28 明确要求，所有工程、所有对话永久适用）：
+  触发 CI / 等编译 / 查 run 状态 / 下载 / 装包 / 读诊断这类**过程性动作，只做不说**，不要在对话里
+  一条条播报「push 了」「CI in_progress」「sleep 等结果」「下载成功」。
+  只有**结果或真出问题**（编译失败、Release 没发布、装机报错、诊断异常）才开口，一次说清：什么挂了 + 证据 + 下一步。
+  配合省额度原则：过程性工具输出也不往上下文里贴，自己消化后只留结论。
 ## 3. 双切片是这台设备的硬要求
 
 | 事实 | 数值 |
