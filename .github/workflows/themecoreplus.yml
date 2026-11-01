@@ -12,6 +12,15 @@ name: Build ThemeCorePlus
 
 on:
   workflow_dispatch:
+    inputs:
+      kind:
+        description: '编译哪种包（默认 roothide 隐根；rootless 无根版未在设备验证）'
+        required: false
+        default: 'roothide'
+        type: choice
+        options:
+          - roothide
+          - rootless
   push:
     branches:
       - main
@@ -99,9 +108,9 @@ jobs:
             fi
           done
           WORKFLOW=.github/workflows/themecoreplus.yml
-          TAGS=$(grep -c "themecoreplus-v$VERSION" "$WORKFLOW" || true)
+          TAGS=$(grep -cF 'themecoreplus-v${{ env.VERSION }}' "$WORKFLOW" || true)
           if [ "${TAGS:-0}" -lt 2 ]; then
-            echo "::error title=version-mismatch::工作流里只出现 $TAGS 次 themecoreplus-v$VERSION"
+            echo "::error title=version-mismatch::工作流里只出现 $TAGS 次 themecoreplus-v\${{ env.VERSION }}"
             exit 1
           fi
           OTHER=$(grep -nE "themecoreplus-v[0-9]+\.[0-9]+\.[0-9]+" "$WORKFLOW" | grep -v "themecoreplus-v$VERSION" || true)
@@ -118,7 +127,7 @@ jobs:
           echo "build-themecoreplus.sh sha256: $(shasum -a 256 scripts/build-themecoreplus.sh)"
           echo "sources sha256:"
           shasum -a 256 ThemeCorePlus/Sources/*.m ThemeCorePlus/Sources/*.h Prefs/ThemeCorePlusPrefs/* | sed 's/^/  /'
-          if sh scripts/build-themecoreplus.sh roothide 2>&1 | tee /tmp/tcp-build.log; then
+          if sh scripts/build-themecoreplus.sh "${{ inputs.kind || 'roothide' }}" 2>&1 | tee /tmp/tcp-build.log; then
             echo "=== .deb files ==="
             find ./packages -name "*.deb" -type f
           else
@@ -172,8 +181,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: themecoreplus-v1.0.16
-          name: ThemeCorePlus v1.0.16
+          tag_name: themecoreplus-v${{ env.VERSION }}${{ inputs.kind == 'rootless' && '-rootless' || '' }}
+          name: ThemeCorePlus v${{ env.VERSION }}${{ inputs.kind == 'rootless' && ' (rootless)' || '' }}
           body: |
             主题美化 +（ThemeCorePlus）v1.0.16 —— MarkTheme 式主题引擎，作者 yangzhou。
 
@@ -551,7 +560,7 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls packages/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v1.0.16/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v${{ env.VERSION }}${{ inputs.kind == 'rootless' && '-rootless' || '' }}/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'
