@@ -599,51 +599,78 @@ static void TCPDrawBadgePill(UIImage *asset, CGRect rect) {
         [asset drawInRect:CGRectMake(rect.origin.x + (rect.size.width - w) / 2.0, rect.origin.y, w, side)];
         return;
     }
-    // 放不下（多位数字）：两端各一个完整圆头，中间填本色。
+    // 放不下（多位数字）：两端各一个完整圆头，中间填。
     // 1.0.11 修微信等两位以上角标变形：
     //   一个圆头的宽度是半径（side * 0.5），不是整圆直径！
     //   旧代码 cap = MIN(side, asset.size.width) 把整圆当成半圆，导致两端裁出的不是半圆而是
     //   两个完整的整圆，盖上去之后严重重叠，把角标挤成哑铃/畸形异形。
     CGFloat r = side * 0.5;   // 圆头半宽 = 半径
-    UIColor *fill = TCPBadgeAssetFillColor(asset);
-    if (fill == nil) {
-        // 1.0.8：取不到素材本色（素材几乎全透明、或画布异常）时，**不能**只画两端 ——
-        // 那样中间是空的，多位数字角标会「断成两半」（复核发现，本机 25×25 素材没暴露）。
-        // 这时退回「素材按比例铺满」，宁可形状被拉长一点，也不留空洞。
-        TCPDrawAssetAspectFitted(asset, rect);
-        return;
-    }
-    // 先填中间（用素材本色），两端圆头再盖上去。
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
-    if (ctx != NULL && rect.size.width > r * 2.0) {
-        CGContextSaveGState(ctx);
-        CGContextSetFillColorWithColor(ctx, fill.CGColor);
-        CGContextFillRect(ctx, CGRectMake(rect.origin.x + r, rect.origin.y,
-                                          rect.size.width - r * 2.0, side));
-        CGContextRestoreGState(ctx);
-    }
-    // 左圆头：原素材的左半边（0 ~ pw/2），等比画进 [0, 0, r, side]；
-    // 右圆头：原素材的右半边（pw/2 ~ pw），等比画进 [width - r, 0, r, side]。
     CGImageRef cg = asset.CGImage;
-    if (cg != NULL) {
-        size_t pw = CGImageGetWidth(cg), ph = CGImageGetHeight(cg);
-        if (pw > 0 && ph > 0) {
-            size_t halfW = pw / 2;
-            if (halfW < 1) halfW = 1;
-            CGRect pxLeft = CGRectMake(0, 0, (CGFloat)halfW, (CGFloat)ph);
-            CGRect pxRight = CGRectMake((CGFloat)(pw - halfW), 0, (CGFloat)halfW, (CGFloat)ph);
-            CGImageRef leftCG = CGImageCreateWithImageInRect(cg, pxLeft);
-            CGImageRef rightCG = CGImageCreateWithImageInRect(cg, pxRight);
-            if (leftCG != NULL) {
-                UIImage *leftImg = [UIImage imageWithCGImage:leftCG scale:asset.scale orientation:UIImageOrientationUp];
-                [leftImg drawInRect:CGRectMake(rect.origin.x, rect.origin.y, r, side)];
-                CGImageRelease(leftCG);
+    size_t pw = (cg != NULL) ? CGImageGetWidth(cg) : 0;
+    size_t ph = (cg != NULL) ? CGImageGetHeight(cg) : 0;
+
+    // ── 1.0.15：中间优先用「素材中列竖条」横向拉伸 ──
+    // 旧做法（1.0.7~1.0.14）中间填素材本色纯色：纯色素材没问题，但渐变/玻璃类素材
+    // （如「透明玻璃 + 液态玻璃」）中间是一条纯色带、两端是带渐变高光的玻璃圆头，
+    // 观感断裂 → 屏幕上「条状图案」（微信两位数 25 暴露，三位数更长更明显）。
+    // 新做法：素材正中裁一条窄竖条（含素材竖向渐变），横向拉伸铺中间。竖条在圆的
+    // 竖直直径处，与两端圆头的内侧边（同直径处）像素列相同 → 无缝衔接；拉伸后中间
+    // 上下边缘是直线，整体成 iOS 标准跑道/胶囊形（正是系统多位数角标的形状）。
+    BOOL stripeDrawn = NO;
+    if (cg != NULL && pw >= 4 && ph > 0 && rect.size.width > r * 2.0) {
+        size_t stripeW = pw >= 12 ? 2 : 1;   // 素材太小就取 1px
+        CGFloat midX = (CGFloat)(pw - stripeW) / 2.0;
+        CGImageRef stripeCG = CGImageCreateWithImageInRect(cg, CGRectMake(midX, 0, (CGFloat)stripeW, (CGFloat)ph));
+        if (stripeCG != NULL) {
+            UIImage *stripeImg = [UIImage imageWithCGImage:stripeCG scale:asset.scale orientation:UIImageOrientationUp];
+            if (stripeImg != nil) {
+                [stripeImg drawInRect:CGRectMake(rect.origin.x + r, rect.origin.y,
+                                                 rect.size.width - r * 2.0, side)];
+                stripeDrawn = YES;
             }
-            if (rightCG != NULL) {
-                UIImage *rightImg = [UIImage imageWithCGImage:rightCG scale:asset.scale orientation:UIImageOrientationUp];
-                [rightImg drawInRect:CGRectMake(rect.origin.x + rect.size.width - r, rect.origin.y, r, side)];
-                CGImageRelease(rightCG);
-            }
+            CGImageRelease(stripeCG);
+        }
+    }
+
+    // ── 兜底 1（竖条裁不出）：中间填素材本色（1.0.7 做法）──
+    if (!stripeDrawn) {
+        UIColor *fill = TCPBadgeAssetFillColor(asset);
+        if (fill == nil) {
+            // 1.0.8：取不到素材本色（素材几乎全透明、或画布异常）时，**不能**只画两端 ——
+            // 那样中间是空的，多位数字角标会「断成两半」（复核发现，本机 25×25 素材没暴露）。
+            // 这时退回「素材按比例铺满」，宁可形状被拉长一点，也不留空洞。
+            TCPDrawAssetAspectFitted(asset, rect);
+            return;
+        }
+        // 先填中间（用素材本色），两端圆头再盖上去。
+        CGContextRef ctx = UIGraphicsGetCurrentContext();
+        if (ctx != NULL && rect.size.width > r * 2.0) {
+            CGContextSaveGState(ctx);
+            CGContextSetFillColorWithColor(ctx, fill.CGColor);
+            CGContextFillRect(ctx, CGRectMake(rect.origin.x + r, rect.origin.y,
+                                              rect.size.width - r * 2.0, side));
+            CGContextRestoreGState(ctx);
+        }
+    }
+
+    // ── 两端圆头：原素材的左半边（0 ~ pw/2）等比画进 [0, 0, r, side]；
+    //    右半边（pw/2 ~ pw）等比画进 [width - r, 0, r, side] ──
+    if (cg != NULL && pw > 0 && ph > 0) {
+        size_t halfW = pw / 2;
+        if (halfW < 1) halfW = 1;
+        CGRect pxLeft = CGRectMake(0, 0, (CGFloat)halfW, (CGFloat)ph);
+        CGRect pxRight = CGRectMake((CGFloat)(pw - halfW), 0, (CGFloat)halfW, (CGFloat)ph);
+        CGImageRef leftCG = CGImageCreateWithImageInRect(cg, pxLeft);
+        CGImageRef rightCG = CGImageCreateWithImageInRect(cg, pxRight);
+        if (leftCG != NULL) {
+            UIImage *leftImg = [UIImage imageWithCGImage:leftCG scale:asset.scale orientation:UIImageOrientationUp];
+            [leftImg drawInRect:CGRectMake(rect.origin.x, rect.origin.y, r, side)];
+            CGImageRelease(leftCG);
+        }
+        if (rightCG != NULL) {
+            UIImage *rightImg = [UIImage imageWithCGImage:rightCG scale:asset.scale orientation:UIImageOrientationUp];
+            [rightImg drawInRect:CGRectMake(rect.origin.x + rect.size.width - r, rect.origin.y, r, side)];
+            CGImageRelease(rightCG);
         }
     }
 }
