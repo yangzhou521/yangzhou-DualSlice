@@ -1,6 +1,6 @@
 ---
 name: icli-status-self-check
-description: 设备/插件/云端此刻的状态一律自己用命令查完再汇报，不把查询推回用户；查状态优先走不弹批准卡的 scripts/device.sh（读诊断 defaults / launchctl / uiopen / sbreload），装包·注销·杀进程仍要通知＋5 秒倒计时。任何工程、任何对话适用。
+description: 凡是「要设备/插件/云端此刻状态才能决定下一步」的事，一律自己查完再汇报，不把查询推回用户；含 Apelin 版本自动比对（每次进 GitHub 必查更新）、不弹批准卡的命令路线、装包/注销/截图仍要仪式
 ---
 
 # 设备状态自己查，不问用户（全权限）
@@ -12,6 +12,23 @@ description: 设备/插件/云端此刻的状态一律自己用命令查完再�
 凡是「要设备/插件/云端此刻的状态才能决定下一步」的事，一律**自己动手查完再汇报**：
 不把查询推回用户、不问「你能看一下吗」、不让他替我截图或读屏、不来回确认同一件事。
 一次查不到就换一条路（换命令、换域、换探针），不是回头问。
+
+## 零·进 GitHub 必查 Apelin 更新（2026-11-02 加，触发器已挂上）
+
+用户 2026-11-02 00:02 原话：「apelin更新情况我不问都不知道」。
+
+**机制（不依赖我记得）**：`icli probe scripts/ci-status.js` 的**输出末尾自动带 Apelin 版本比对**
+（云端 `owngoal-dev/Apelin` 最新 release vs 本机 `Apelin.app/Info.plist` 的 `CFBundleShortVersionString`），
+状态 `up-to-date` / `update-available`。另可单独跑 `icli probe scripts/apelin-release-check.js`。
+
+**为什么这么设计**：以前「Apelin 更新监视」只写在记忆里一句话，**没有触发器** → 写进文件 ≠ 会执行，
+所以用户不问就没人查。现在「进 GitHub」这个动作必然经过 ci-status.js，比对不可能漏。
+
+**汇报要求**：每次进 GitHub 的回复里都要写一句 `Apelin 本机 X / 最新 Y`；有新版就摘出更新内容，
+优先挑对当前工程有影响的（长对话压缩失败、新模型提供商、每对话独立日志、工具审批变化等）。
+
+⚠️ 匿名 GitHub API 会限流（`API rate limit exceeded`）。报「查不到」前先等 1~2 分钟重试，
+**别把限流当成「没有新版」**。限流时改用 `apelin_web_fetch` 读 release 页面。
 
 ## 一·五、查状态优先走不弹批准卡的那条路（2026-10-31）
 
@@ -25,8 +42,8 @@ description: 设备/插件/云端此刻的状态一律自己用命令查完再�
 
 | 要做的事 | 不弹卡 | 会弹一张卡（只有 icli 能做） |
 | --- | --- | --- |
-| 读偏好 / 读诊断 | `defaults read <域> [键]`；`sh scripts/device.sh read <域> <键>` | `icli prefs read` |
-| 诊断一串 `a=1;b=2;…` 拆行看 | `sh scripts/device.sh diag <域> <键>` | — |
+| 读偏好 / 读诊断 | `defaults read <域> [键]`；`sh scripts/device.sh read <域> [键]` | `icli prefs read` |
+| 诊断一串 `a=1;b=2;…` 拆行看 | `sh scripts/device.sh diag <域> [键]` | — |
 | 写偏好 / 清键回滚 | `defaults write <域> <键> <值>`；清键写空串（本机 `defaults` 是 Cephei 版，无 delete） | `icli prefs write/delete` |
 | 列进程 | `launchctl list`（`UIKitApplication:<bid>[…]` 行首字段即 pid）；`device.sh procs [子串]` | `icli app list` |
 | 杀 App / 起 App | `device.sh kill <bid>`（`kill -9`）/ `device.sh launch <bid>`（`uiopen --bundleid`） | `icli app kill --force` / `app launch` |
@@ -49,7 +66,8 @@ description: 设备/插件/云端此刻的状态一律自己用命令查完再�
 - **界面证据**：`device.sh launch <bid>` / `uiopen --bundleid`（回程）、`apelin_screen_read_tree`、
   `icli ui tree`（受下面的「屏幕开关」约束）。
 - **云端状态**：GitHub API 读 workflow run 状态、check-run annotations、Release 资产清单
-  （本机没有 curl/python3，用 `apelin_web_fetch` 或 `icli probe`+`NSData`）。
+  （本机没有 curl/python3，用 `apelin_web_fetch` 或 `icli probe`+`NSData`）；
+  **每次进 GitHub 顺带查 Apelin 自己有没有新版本**（见本文开头第零节）。
 - **本机环境**：路径、jbroot 哈希、可用工具、磁盘、偏好域内容——先查再说话，不凭记忆断言。
 
 ## 全权限不等于免仪式（不变的三条）

@@ -128,6 +128,15 @@ lay{rst=N,sav=N,tick=N,force=N,site=<挂上的保存方法|none>,model=<none|hoo
 - 查 CI：`icli probe scripts/ci-status.js`（匿名 GitHub API，列出最近 3 次 run 的 status/conclusion/sha）；
   下载：`icli probe scripts/download-tcp-09xx.js` → 写到 `/var/mobile/Documents/`。
   **报 CI 状态前必须重查一次**（见技能 `verify-cloud-release`：早先读到 `in_progress` 可能几分钟后就完成了）。
+- **每次进 GitHub 必须汇报 Apelin 更新情况（用户 2026-11-02 00:02 原话「apelin更新情况我不问都不知道」）**：
+  `icli probe scripts/ci-status.js` 的输出**末尾已经自动带 Apelin 版本比对**（云端最新 release vs 本机
+  `Apelin.app/Info.plist` 的 CFBundleShortVersionString），状态 `up-to-date` / `update-available`。
+  另可单独跑 `icli probe scripts/apelin-release-check.js`。
+  **为什么要绑在这里**：以前「Apelin 更新监视」只写在记忆里一句话，没有触发器 → 写进文件 ≠ 会执行，
+  结果用户不问就没人查。现在「进 GitHub」这个动作必然经过 ci-status.js，比对不可能漏。
+  **汇报要求**：每次进 GitHub 的回复里都要写一句 Apelin 的 `本机 X / 最新 Y`；有新版就摘出更新内容
+  （对当前工程有影响的优先，如「长对话压缩失败」「模型提供商」「每对话独立日志」）。
+  ⚠️ 匿名 API 会限流（`API rate limit exceeded`），报「查不到」前先等 1~2 分钟重试，别当成没有新版。
 
 ## 装到本机（本机只能这么验）
 
