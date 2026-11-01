@@ -28,6 +28,13 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
 - job 日志要登录才能看，所以把要读的验证信息写成 check-run annotation（`::notice title=…::`），公开仓库的 annotations 匿名可读。
 - 构建脚本自己核对：切片是否 arm64 **和** arm64e 都在、substrate 依赖是否为 `.jbroot` 相对形式；缺一片就 exit 非 0，别把坏包发出去。
 
+- **默认只编 roothide，但 rootless 的编译能力必须留着**（用户 2026-11-01 11:14 明确要求）：
+  本机是 roothide 隐根，**默认只编译、只发布 roothide 包**（arm64 + arm64e 双切片，装本机的那一份）。
+  `scripts/build-xxx.sh` 的第二个参数 `rootless` **能力保留、代码不许删** —— 什么时候要编 rootless
+  无根包由用户明说（「要编 rootless deb」），那时才跑那条腿。
+  推论：**不要**为了「省 CI 配额」把 rootless 那条腿从脚本里删掉或注释掉；省配额靠少触发、
+  钉死工具版本、合并 job，不是砍能力。工作流里现在**只有一个 build job（roothide）**，
+  第二个 job 是 release（只发资产、不编译）；rootless 从来没在这个工作流里编过。
 ## 3. 双切片是这台设备的硬要求
 
 | 事实 | 数值 |
