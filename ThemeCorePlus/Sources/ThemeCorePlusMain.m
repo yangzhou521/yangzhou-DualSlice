@@ -71,7 +71,7 @@ static void TCPWriteDiagnostics(void) {
                       TCPFolderGridCellProbeReport(),
                       TCPFolderMiniGridProbeReport(),
                       TCPFolderNotifyReport(),
-                      TCPIconCacheClassReport(),
+                      TCPIconCacheHookReport(), TCPIconCacheClassReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
                       TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText];
     TCPWriteProcessPreference(TCPKeyDiagnostics, text);
@@ -332,5 +332,3 @@ __attribute__((constructor)) static void TCPInitialize(void) {
             }
         }
     }
-}
-// 触发 CI：1.0.24 编译

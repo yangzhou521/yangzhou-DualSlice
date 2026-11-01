@@ -598,11 +598,77 @@ NSUInteger TCPInstallSitesForClassSubstrings(NSArray<NSString *> *substrings,
     return TCPInstallSitesMatching(substrings, NO, excludingSubstrings, selectors, kind, NO);
 }
 
+// 1.0.25 取证：缓存层挂载实况（诊断 cache=）。写清挂到哪个类的哪个方法，没挂上也写原因。
+static NSString *sCacheHookReport = @"-";
+NSString *TCPIconCacheHookReport(void) { return sCacheHookReport; }
+
+// 1.0.25：按「声明者」挂缓存层。
+// 1.0.24 的教训：cachecls= 证明 SBHIconImageCache 存在，但 cache=nocache —— iconImageWithInfo:
+// 不是它自己声明的（R2 列不出），而 forced 版对每个候选类都挂一遍，第一个没声明该方法的类
+// 拿到的是转发 IMP/空，占掉槽位后 MSHookMessageEx 返回空就 return NO，永远挂不上。
+// 改法：对每个类用 class_getInstanceMethod 拿到 Method，再看 method_getName 所属的声明者
+// （method 有 description 里的类名；用 class_copyMethodList 逐级向上找到真正声明的类），
+// 只对「自己声明了该方法」的类挂一次，挂成功立刻记下类名。
+static Class TCPDeclaringClass(Class cls, SEL sel) {
+    for (Class c = cls; c != Nil; c = class_getSuperclass(c)) {
+        unsigned int n = 0;
+        Method *ms = class_copyMethodList(c, &n);
+        BOOL found = NO;
+        if (ms) {
+            for (unsigned int i = 0; i < n; i++) {
+                if (method_getName(ms[i]) == sel) { found = YES; break; }
+            }
+            free(ms);
+        }
+        if (found) return c;
+    }
+    return Nil;
+}
+
+NSUInteger TCPInstallIconCacheLayerSitesV2(void) {
+    unsigned int count = 0;
+    Class *classes = objc_copyClassList(&count);
+    if (classes == NULL) return 0;
+    NSUInteger installed = 0;
+    NSMutableArray<NSString *> *log = [NSMutableArray array];
+    for (unsigned int i = 0; i < count; i++) {
+        Class cls = classes[i];
+        if (cls == Nil) continue;
+        const char *raw = class_getName(cls);
+        if (raw == NULL) continue;
+        NSString *name = @(raw);
+        if (![name containsString:@"IconImageCache"]) continue;
+        for (NSString *selName in @[ @"iconImageWithInfo:",
+                                     @"unmaskedIconImageWithInfo:",
+                                     @"generateIconImageWithInfo:" ]) {
+            SEL sel = NSSelectorFromString(selName);
+            if (class_getInstanceMethod(cls, sel) == NULL) continue;
+            Class owner = TCPDeclaringClass(cls, sel);
+            if (owner == Nil) continue;
+            // 只在「类名含 IconImageCache 的声明者」上挂，避免挂到 SBIcon 等基类上打断主链。
+            NSString *ownerName = NSStringFromClass(owner);
+            if (![ownerName containsString:@"IconImageCache"]) continue;
+            if (TCPInstallOneSiteKindForced(owner, sel, TCPSiteKindIconImageInfo)) {
+                installed++;
+                if (log.count < 6) {
+                    [log addObject:[NSString stringWithFormat:@"-%@:%@", ownerName, selName]];
+                }
+            }
+        }
+    }
+    if (classes) free(classes);
+    if (log.count > 0) sCacheHookReport = [log componentsJoinedByString:@","];
+    else if ([sCacheHookReport isEqualToString:@"-"]) sCacheHookReport = @"nohook";
+    return installed;
+}
+
 // 1.0.23：图标图缓存层强制挂载（绕过 R2，含继承方法）。
 // 遍历类名含 "IconImageCache" 的类（SBHIconImageCache 属于 SpringBoardHome，晚加载才出现），
 // 用 TCPInstallOneSiteKindForced 挂 iconImageWithInfo:/unmaskedIconImageWithInfo:/generateIconImageWithInfo:。
 // 1.0.22 用 R2 挂没挂上（sites 里没有缓存层站），因为缓存类自己不声明这些方法（父类/分类声明）。
 NSUInteger TCPInstallIconCacheLayerSites(void) {
+    // 1.0.25：先走按声明者挂的新路径，成功了就不再走旧的遍历强制挂。
+    if (TCPInstallIconCacheLayerSitesV2() > 0) return 1;
     unsigned int count = 0;
     Class *classes = objc_copyClassList(&count);
     if (classes == NULL) return 0;
