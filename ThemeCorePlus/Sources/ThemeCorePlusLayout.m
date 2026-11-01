@@ -756,6 +756,38 @@ static BOOL TCPLayoutAskSystemToSave(id model) {
 
 // ── 每 5 秒一拍（主线程） ─────────────────────────────────────────────────
 
+// 1.0.28：主动拿活的图标模型实例（不等系统调保存站）。
+// 1.0.27 实测 last=noinstance：SBHIconModel:_saveIconState 挂上了，但系统压根不主动调它，
+// 所以站里的 self 永远拿不到 → 模型实例永远为 nil。这里改成主动去要：
+//   SBIconController 的 sharedInstance（类方法，iOS 16 是 +sharedInstance 或 +sharedController）
+//   → 再问它 -iconModel（或 KVC iconModel）。拿到就当模型用，不再等系统。
+static id TCPLayoutAdoptModel(void) {
+    if (sLayoutModel != nil) return sLayoutModel;
+    Class ctrl = objc_getClass("SBIconController");
+    if (ctrl == Nil) return nil;
+    id controller = nil;
+    for (NSString *selName in @[ @"sharedInstance", @"sharedController", @"sharedIconController" ]) {
+        SEL s = NSSelectorFromString(selName);
+        if (![ctrl respondsToSelector:s]) continue;
+        @try { controller = ((id (*)(id, SEL))objc_msgSend)(ctrl, s); } @catch (NSException *e) { controller = nil; }
+        if (controller != nil) break;
+    }
+    if (controller == nil) return nil;
+    for (NSString *keyName in @[ @"iconModel", @"_iconModel", @"model" ]) {
+        id model = nil;
+        @try { model = ((id (*)(id, SEL))objc_msgSend)(controller, NSSelectorFromString(keyName)); } @catch (NSException *e) { model = nil; }
+        if (model == nil) {
+            @try { model = [controller valueForKey:keyName]; } @catch (NSException *e) { model = nil; }
+        }
+        if (model != nil && TCPLayoutLooksLikeModel(model)) {
+            sLayoutModel = model;
+            sLayoutModelPath = [@"adopt:" stringByAppendingString:keyName];
+            return model;
+        }
+    }
+    return nil;
+}
+
 static void TCPLayoutTickBody(void) {
     TCPLayoutHookSave();                 // 类晚到也能补挂
 
@@ -773,10 +805,10 @@ static void TCPLayoutTickBody(void) {
         }
     }
 
-    id model = sLayoutModel;
+    id model = TCPLayoutAdoptModel();     // 1.0.28：主动拿实例，不等系统调保存站
     if (!TCPLayoutLooksLikeModel(model)) {
         if (objc_getClass("SBIconModel") == Nil) { TCPLayoutNote(@"noclass"); return; }
-        if (sLayoutModel == nil) { TCPLayoutNote(@"noinstance"); return; }
+        TCPLayoutNote(@"noinstance"); return;
     }
 
     id leaves = TCPLayoutCurrentLeaves(model);
