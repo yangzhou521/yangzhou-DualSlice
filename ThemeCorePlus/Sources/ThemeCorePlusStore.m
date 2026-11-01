@@ -404,6 +404,19 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     BOOL enabled = TCPBoolValue(values, TCPKeyEnabled, YES);
     NSArray<NSString *> *paths = enabled ? [self resolveThemePathsWithValues:values] : @[];
 
+    // 1.0.17 修「注销后桌面黑屏重载两三次」：启动补挂 4 轮（0/0.5/2/6 秒）每一轮都调 reload，
+    // 而 reload 会 generation++ + 清空全部渲染缓存 + 主线程重扫主题目录。主题根本没变，
+    // 却反复清缓存、重新读盘合成，主线程被卡 → 桌面图标反复重载、黑屏。现在路径序列与上一轮
+    // 完全相同就直接短路：不重扫、不清缓存、不涨 generation，只让调用方继续补挂站点。
+    // 用户改主题/改设置时 paths 会变，走正常全量重载。
+    BOOL sameThemePaths = NO;
+    @synchronized (self) {
+        sameThemePaths = (self.themePaths != nil && [self.themePaths isEqualToArray:paths]);
+    }
+    if (sameThemePaths) {
+        return;
+    }
+
     // 四类素材一律全换（用户 2026-10-30 16:59 / 17:00：面板上「素材开关」那四行整组删掉，
     // 全部功能默认开启）。IconsEnabled / FoldersEnabled / BadgesEnabled / FilesEnabled 这四个键
     // 不再读也不再写：老的偏好文件里留着什么值都不理会 —— 装了主题，四类素材一起换。
