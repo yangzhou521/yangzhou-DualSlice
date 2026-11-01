@@ -126,6 +126,10 @@ NSUInteger TCPInstallBadgeSubstringSitesOnce(void);
 void TCPInstallDyldImageObserver(void (^handler)(void));
 BOOL TCPDyldPendingReload(void);   // 取走「有新框架来了」的标志（取完自动清零）
 
+// 1.0.32 取证：把 SBHIconImageCache 家族的方法表 dump 到
+// /var/mobile/Library/Preferences/TCPCacheProbe.txt（只读，进程内只跑一次）。
+void TCPRunIconCacheProbe(void);
+
 // 强制只挂「实例方法」，不做通用站那种「类方法优先」判断。
 // 用途：SBFolderIconImageCache 的 -gridCellImageOfSize:forIcon:iconImageInfo: 上，实例/类方法
 // 同名（元类上有个 convenience 类方法），通用站优先类方法会挂到 + 版本，系统真正调的实例方法
@@ -187,6 +191,8 @@ NSString *TCPDynamicProbeReport(void);
 NSString *TCPIconImageEntryCensus(void);
 NSString *TCPIconCacheEntryReport(void);
 // 时钟图标的视图层（0.9.17）：时钟从不走图标取图那几站，只能挂它的 layoutSubviews 换表盘。
+// 1.0.32：类名分两代（iOS 14~16 = SBClock…，iOS 17+ = SBHClock…），用本函数统一取。
+Class TCPClockViewClass(void);
 void TCPInstallClockViewSite(void);
 NSString *TCPClockViewProbeReport(void);
 void TCPClockTick(void);   // 1.0.7：主动找时钟视图重画（挂的 layoutSubviews 从不触发）
@@ -203,6 +209,10 @@ NSString *TCPFolderNotifyReport(void);
 // 文件夹 mini 站点：SBFolderIconImageCache 的 -gridCellImageOfSize:forIcon:iconImageInfo:。
 // 由 ThemeCorePlusFolders.m 实现（0.9.x 那份一直没接进来，这里重新声明好让站表能引用）。
 void TCPInstallFolderGridCellSites(void);
+// 1.0.32：文件夹收起状态 mini 拼图真正的入口 —— -[SBFolderIcon miniGridCellImageForIcon:]。
+// 原来挂的 SBFolderIconImageCache 两个方法系统不调（grid{look=0}），这才是出图的地方。
+void TCPInstallFolderMiniCellSite(void);
+NSString *TCPFolderMiniCellReport(void);
 NSString *TCPFolderGridCellProbeReport(void);
 // 文件夹 mini 整图探针：SBFolderIconImageCache 的 -genericMiniGridImage（1.0.20 取证）。
 NSString *TCPFolderMiniGridProbeReport(void);

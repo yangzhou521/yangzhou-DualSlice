@@ -738,37 +738,34 @@ static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *syst
     CGContextDrawImage(tmp, CGRectMake(0, 0, (CGFloat)dw, (CGFloat)dh), cg);
     CGContextRelease(tmp);
 
-    // 背景色：四角像素的平均（系统日历图四边是白色底板）。
-    double br = 0, bg = 0, bb = 0;
-    size_t corners[4][2] = { {0, 0}, {dw - 1, 0}, {0, dh - 1}, {dw - 1, dh - 1} };
-    for (int i = 0; i < 4; i++) {
-        unsigned char *p = buffer + (corners[i][1] * dw + corners[i][0]) * 4;
-        br += p[0]; bg += p[1]; bb += p[2];
-    }
-    br /= 4.0; bg /= 4.0; bb /= 4.0;
-
-    // 墨 = 与背景色差异大的像素。把「差异强度」写进一张灰度图当 mask，
-    // 再用 ClipToMask 裁剪后填一个纯色（亮底填黑、深底填白）——
-    // 这样文字一定可见，主题底图也保持原样。
+    // 1.0.32：**改成「近黑选数字」，不再用四角均值当背景。**
     //
-    // 1.0.30 修「日历图标里出现时钟指针」（用户 2026-11-01 18:31）：墨层原来**把整张系统图上
-    // 所有与背景不同的像素**都当墨，于是不只日期数字，任何图形（某些主题/系统版本的日历图里
-    // 带表框线条、时/分针形状的装饰）也会被原样搬到主题底上 → 看着就像日历里插了两根指针。
-    // 现在按「形状是不是字」筛一遍：真日历的数字是**粗笔画**，一条笔画几像素宽、连通区域也大；
-    // 指针是一条细长线段，主干常常只有 1~3 像素宽（96 的采样里），连通面积也小。
-    // 判据：像素到背景的平均距离（腐蚀半径 1）→ 细线一腐蚀就没了；再按连通面积兜一层。
-    // 只在「拿到原始 mask」时筛，任何一步分配失败都退回旧行为（宁可多墨，不要日历变空白）。
+    // 为什么换（AI 逆向 + 本机诊断对得上）：
+    // 原来用「四角像素平均」当背景色，但图标图带圆角遮罩 —— **四角是透明的（alpha≈0，RGB=0）**，
+    // 均值被拖成近黑。于是白底(255,255,255) 与"背景"差异拉满，**整张系统图（含白色底板）都被
+    // 判成墨**，盖住主题底图。诊断上表现为 inkdrop=0.00、cov=0.96（整图一个大连通块）。
+    //
+    // 新判据不依赖背景估计，直接按颜色选：
+    //   ① alpha < 16        → 不是墨（圆角透明区）
+    //   ② max(R,G,B) >= 140 → 不是墨（白底、灰阴影、浅色装饰）
+    //   ③ R - max(G,B) > 30 → 不是墨（红色星期文字，如 "MON"/"TUE"）
+    // 剩下三通道都低的，就是黑色的日期数字（含抗锯齿边）。
+    // 系统日历图结构（iOS 16.7）= 白底 + 红色星期文字 + 黑色日期数字；红条 iOS 7 起已去掉。
     unsigned char *maskBuffer = calloc(dw * dh, 4);
     if (maskBuffer == NULL) { free(buffer); return; }
     unsigned char *rawAlpha = calloc(dw * dh, 1);      // 0~255 的原始墨强度
     if (rawAlpha == NULL) { free(maskBuffer); free(buffer); return; }
     for (size_t i = 0; i < dw * dh; i++) {
         unsigned char *p = buffer + i * 4;
-        if (p[3] < 8) continue;
-        double dr = (double)p[0] - br, dg = (double)p[1] - bg, db = (double)p[2] - bb;
-        double dist = (dr * dr + dg * dg + db * db) / (255.0 * 255.0 * 3.0);
-        double a = dist > 0.02 ? MIN(1.0, dist * 3.0) : 0.0;
-        rawAlpha[i] = (unsigned char)(a * 255.0);
+        unsigned char a = p[3];
+        if (a < 16) continue;                       // ① 透明 → 背景
+        unsigned char r = p[0], g = p[1], b = p[2];
+        unsigned char mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+        if (mx >= 140) continue;                    // ② 亮色（白底/灰阴影）→ 不是墨
+        unsigned char gb = g > b ? g : b;
+        if ((int)r - (int)gb > 30) continue;        // ③ 偏红（星期文字）→ 不是墨
+        // 越黑越实：mx 越小越实，映射到 120~255 的幅度
+        rawAlpha[i] = (unsigned char)(mx < 100 ? 255 : 255 - (mx - 100) * 2);
     }
     free(buffer);
 
@@ -1086,10 +1083,19 @@ static void TCPClockLayoutHook(id self, SEL _cmd) {
     }
 }
 
+// 1.0.32：时钟视图类名 —— iOS 14~16 是 SBClockApplicationIconImageView（**无 H**），
+// SBHClockApplicationIconImageView 是 iOS 17+ 才有的名字。我们原来只用后者 → found=0，
+// 这台 16.7.16 上从头到尾没碰到过时钟。两个都试，谁在就用谁。
+Class TCPClockViewClass(void) {
+    Class cls = NSClassFromString(@"SBClockApplicationIconImageView");
+    if (cls == Nil) cls = NSClassFromString(@"SBHClockApplicationIconImageView");
+    return cls;
+}
+
 void TCPInstallClockViewSite(void) {
     static BOOL installed = NO;
     if (installed) return;
-    Class cls = NSClassFromString(@"SBHClockApplicationIconImageView");
+    Class cls = TCPClockViewClass();
     if (cls == Nil) return;   // 类还没加载，下一轮 TCPReload 再试
     MSHookMessageEx(cls, @selector(layoutSubviews), (IMP)TCPClockLayoutHook, (IMP *)&sClockLayoutOrig);
     installed = YES;
@@ -1167,7 +1173,7 @@ void TCPClockTick(void) {
     }
     TCPThemeStore *store = [TCPThemeStore shared];
     if (!store.active || !store.iconsEnabled) return;
-    Class cls = NSClassFromString(@"SBHClockApplicationIconImageView");
+    Class cls = TCPClockViewClass();
     if (cls == Nil) return;
 
     NSMutableArray *stack = [NSMutableArray array];

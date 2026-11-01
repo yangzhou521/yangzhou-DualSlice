@@ -162,6 +162,7 @@ static void TCPReload(BOOL refreshImages) {
     // 类还没加载时它自己会返回，下一轮再挂。
     TCPInstallClockViewSite();
     TCPInstallFolderGridCellSites();   // 1.0.12：文件夹收起 mini 拼图的格子图站
+    TCPInstallFolderMiniCellSite();    // 1.0.32：mini 拼图真正的入口（SBFolderIcon 自己）
 
     // 1.0.15：注销后「桌面反复加载」的根因就在这里 —— 启动那 4 轮补挂（0 / 0.5 / 2 / 6 秒）
     // 每一轮都无条件 relayoutIcons + 清文件夹拼图缓存，屏幕上就是桌面图标被反复重排、重画。
@@ -289,6 +290,11 @@ __attribute__((constructor)) static void TCPInitialize(void) {
         TCPInstallDyldImageObserver(^{
             TCPReload(NO);
         });
+
+        // 1.0.32 取证：只在 SpringBoard 里 dump 一次缓存层方法表（定位秒加载真入口用）。
+        if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"]) {
+            TCPRunIconCacheProbe();
+        }
 
         // 「注销后自动生效」（精简版 2026-10-31）：图标视图一建好就刷，尽量接近「注销即加载」。
         // 1.0.22 按用户要求第一拍 0 秒（视图还没建好时刷了白刷，但成本极低——遍历窗口树

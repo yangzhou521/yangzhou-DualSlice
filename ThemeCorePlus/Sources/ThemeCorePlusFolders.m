@@ -127,3 +127,56 @@ void TCPFolderNotifyRecalc(void) {
     sFolderNotifyCount += notified;
     sFolderNotifyLast = [NSString stringWithFormat:@"ok:%ld", (long)notified];
 }
+
+#pragma mark - 1.0.32：文件夹收起状态 mini 拼图（真正的入口）
+
+// 为什么改挂这里（AI 逆向结论 + 本机实测）：
+// 我们原来挂 SBFolderIconImageCache 的 gridCellImageOfSize:forIcon:iconImageInfo: 与
+// genericMiniGridImage —— 两个方法真实存在、也挂上了，但诊断 grid{look=0}/minigrid{look=0}，
+// 系统一次都不调。iOS 16 出 mini 图真正的入口是 **SBFolderIcon 自己**的
+// -miniGridCellImageForIcon:，每个小格单独问一次；缓存类只管存。
+//
+// 做法：先调原实现拿到系统 mini 图（借它的尺寸/scale），再用这个图标渲染主题图。
+// 不用圆角（cornerRadius=0）：mini 格是方角小图标，套圆角会糊。
+
+static IMP sFolderMiniCellOrig = NULL;
+static NSInteger sFolderMiniCellHits = 0;
+
+static id TCPFolderMiniCellHook(id self, SEL _cmd, id icon) {
+    if (icon == nil || sFolderMiniCellOrig == NULL) return nil;
+    id stock = ((id (*)(id, SEL, id))sFolderMiniCellOrig)(self, _cmd, icon);
+    if (![stock isKindOfClass:[UIImage class]]) return stock;
+
+    TCPThemeStore *store = [TCPThemeStore shared];
+    if (!store.active || !store.iconsEnabled) return stock;
+
+    UIImage *base = (UIImage *)stock;
+    TCPIconImageInfo info;
+    info.size = base.size;
+    info.scale = base.scale > 0 ? base.scale : 2.0;
+    info.cornerRadius = 0.0;   // mini 格不圆角
+
+    UIImage *themed = TCPThemedIconImage(icon, info);
+    if (themed == nil) return stock;
+    __sync_fetch_and_add(&sFolderMiniCellHits, 1);
+    return themed;
+}
+
+// 挂 SBFolderIcon 的 -miniGridCellImageForIcon:（实例方法）。
+void TCPInstallFolderMiniCellSite(void) {
+    static BOOL installed = NO;
+    if (installed) return;
+    Class cls = NSClassFromString(@"SBFolderIcon");
+    if (cls == Nil) return;   // 类还没到，下一轮再试
+    Method m = class_getInstanceMethod(cls, @selector(miniGridCellImageForIcon:));
+    if (m == NULL) { installed = YES; return; }   // 这版系统没这个方法，别每轮重试
+    MSHookMessageEx(cls, @selector(miniGridCellImageForIcon:),
+                    (IMP)TCPFolderMiniCellHook, (IMP *)&sFolderMiniCellOrig);
+    installed = YES;
+    os_log(TCPLogHandle(), "TCPS_FOLDER_MINI_CELL hooked");
+}
+
+NSString *TCPFolderMiniCellReport(void) {
+    return [NSString stringWithFormat:@"minicell{n=%ld,on=%d}",
+            (long)sFolderMiniCellHits, sFolderMiniCellOrig ? 1 : 0];
+}

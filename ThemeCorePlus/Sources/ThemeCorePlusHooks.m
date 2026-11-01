@@ -1079,7 +1079,7 @@ void TCPInstallDyldImageObserver(void (^handler)(void)) {
     static dispatch_once_t once;
     sDyldHandler = [handler copy];
     dispatch_once(&once, ^{
-        dyld_register_func_for_add_image(TCPDyldImageAdded);
+        _dyld_register_func_for_add_image(TCPDyldImageAdded);
         os_log(TCPLogHandle(), "TCPS_DYLD observer registered");
     });
 }
@@ -1088,4 +1088,83 @@ BOOL TCPDyldPendingReload(void) {
     BOOL p = sDyldPending;
     sDyldPending = NO;
     return p;
+}
+
+#pragma mark - 1.0.32：缓存层取证（一次性 dump，定位秒加载的真方法名）
+
+// 为什么需要（AI 逆向给的方向 + 我们实测）：
+// SBHIconImageCache 的取图是「请求→结果」式 API，方法名在公开资料里读不到（limneos 反爬、
+// Mikkyy 混淆）。猜名字的代价是安全模式（0.9.21 真崩过），所以只能 dump。
+// 这里把相关类的全方法表写到 /var/mobile/Library/Preferences/TCPCacheProbe.txt，
+// 用 `grep Image\|Request\|perform\|fetch\|purge\|clear` 找真入口。
+// **只读不挂**，dump 完就不再跑（静态标志）。定位到方法名后再写真正的 hook，删掉本段。
+static BOOL sCacheProbeDone = NO;
+
+static void TCPDumpClassMethods(const char *name, NSMutableString *out) {
+    Class cls = objc_getClass(name);
+    if (cls == Nil) {
+        [out appendFormat:@"\n===== %s: NOT FOUND =====\n", name];
+        return;
+    }
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(cls, &count);
+    [out appendFormat:@"\n===== %s (%u methods) =====\n", name, count];
+    for (unsigned int i = 0; i < count; i++) {
+        [out appendFormat:@"  %@\n", NSStringFromSelector(method_getName(methods[i]))];
+    }
+    if (methods) free(methods);
+}
+
+void TCPRunIconCacheProbe(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(6.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            if (sCacheProbeDone) return;
+            sCacheProbeDone = YES;
+            NSMutableString *out = [NSMutableString string];
+            const char *names[] = {
+                "SBHIconImageCache", "SBHIconImageCacheRequest", "SBHIconImageCacheRequestBuilder",
+                "SBHIconImageCacheResult", "SBHIconImageCacheObserver",
+                "SBIconImageCache", "SBIconImageStore", "SBIconImage",
+                "SBIconController", "SBIconModel",
+                "SBHFileStackIcon", "SBHFileStackIconImageProvider",
+                "SBFluidSwitcherIconImageContainerView",
+                NULL
+            };
+            for (int i = 0; names[i]; i++) TCPDumpClassMethods(names[i], out);
+
+            // UIImage 的私有取图方法（AI 说 +[UIImage _applicationIconImageForBundleIdentifier:format:scale:]
+            // 存在但签名未证实，一并 dump 出来核）
+            Class ui = objc_getClass("UIImage");
+            if (ui != Nil) {
+                [out appendString:@"\n===== UIImage (applicationIcon*) class methods =====\n"];
+                Class meta = object_getClass(ui);
+                unsigned int mc = 0;
+                Method *ms = class_copyMethodList(meta, &mc);
+                for (unsigned int i = 0; i < mc; i++) {
+                    NSString *sel = NSStringFromSelector(method_getName(ms[i]));
+                    if ([sel containsString:@"applicationIcon"] || [sel containsString:@"IconImage"]) {
+                        [out appendFormat:@"  + %@\n", sel];
+                    }
+                }
+                if (ms) free(ms);
+                [out appendString:@"\n===== UIImage (applicationIcon*) instance methods =====\n"];
+                unsigned int ic = 0;
+                Method *ims = class_copyMethodList(ui, &ic);
+                for (unsigned int i = 0; i < ic; i++) {
+                    NSString *sel = NSStringFromSelector(method_getName(ims[i]));
+                    if ([sel containsString:@"applicationIcon"] || [sel containsString:@"IconImage"]) {
+                        [out appendFormat:@"  - %@\n", sel];
+                    }
+                }
+                if (ims) free(ims);
+            }
+
+            NSString *path = @"/var/mobile/Library/Preferences/TCPCacheProbe.txt";
+            [out writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            os_log(TCPLogHandle(), "TCPS_CACHE_PROBE written %{public}@ len=%lu",
+                   path, (unsigned long)out.length);
+        });
+    });
 }
