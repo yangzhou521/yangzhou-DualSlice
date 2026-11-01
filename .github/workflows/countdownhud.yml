@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.4)
+    name: Release (countdownhud-v1.6.5)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,10 +133,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.4
-          name: CountdownHUD v1.6.4
+          tag_name: countdownhud-v1.6.5
+          name: CountdownHUD v1.6.5
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            v1.6.5：**短岛 / 长岛按内容切换**。之前 HUD 固定按理想岛 126×37 计罚，
+            长岛态（音乐等 145×47）会被短岛刷掉、跟错尺寸。现在按实测文字宽决定：
+            短内容（倒计时/短文案，文字宽≤短岛内宽 101pt）用短岛 125×37；长文字用长岛 145×47。
 
             v1.6.4：**「请开 VPN」弹窗**。之前 `vpn-guard.sh` 复用 `?` 注销弹窗，标题是
             「⚠️ 即将注销」、确认键是「立即注销」而且点了真的会 spawn sbreload —— 请用户
@@ -248,4 +252,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.4/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.5/$(basename "$DEB")"

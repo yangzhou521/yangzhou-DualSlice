@@ -383,7 +383,10 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   `sh scripts/respring-guard.sh --confirm 5 <标签>` 真倒计时 5 秒 + `sbreload`；装包这类要接着做动作的用
   `RESPRING_GUARD_NO_RESPRING=1 sh scripts/respring-guard.sh --confirm 5 装包`；重启目标进程用
   `sh scripts/device.sh kill <bid>` + `sh scripts/device.sh launch <bid>`；离开 Apelin 取证仍受 60 秒硬上限
-  与「必须自己回来」约束；截图每次仍需用户当次明确同意。
+  与「必须自己回来」约束；**截图/截屏每次仍需用户当次明确同意，且要弹窗确认**（用户 2026-11-02 03:27：
+  「请求截图看桌面实际样子」这类要截屏的要求，以后给我弹窗，不只靠正文文字问）——凡要截屏取证，
+  先 `sh scripts/respring-guard.sh --ask <秒> 截图看桌面` 弹窗等用户点「立即注销」（实为确认截图），
+  用户点头才截；弹窗不可用时（安全模式）退回「正文 + apelin_notification_send」两通道问。
 - **Ask Before Using the Screen** 开着时，Apelin 自己的卡片仍会为读屏 / 交互 / 每条 icli 命令询问：
   那是用户的开关，只能他自己在设置里关，**我不代关**；但日常操作尽量走下一节的替代命令，别让用户反复点。
 - 仍然不碰：系统关键设置、别的包的删除 / 降级、Apelin / Irisin / 引导自身的包。

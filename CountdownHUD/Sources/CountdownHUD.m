@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.4";
+static NSString *const CHVersion = @"1.6.5";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -87,7 +87,7 @@ static const CGFloat CHFallbackPillHeight = 44.0;
 // 岛胶囊的「理想」尺寸（真机灵动岛紧凑态），只用于在多个候选里排序。
 static const CGFloat CHIdealIslandWidth = 126.0;
 static const CGFloat CHIdealIslandHeight = 37.0;
-static const CGFloat CHShortIslandInnerWidth = 101.0; // v1.4.3：短岛内宽，放得下=短岛，放不下=长岛
+static const CGFloat CHShortIslandInnerWidth = 101.0; // v1.6.5：短岛内宽，放得下=短岛，放不下=长岛
 
 static os_log_t CHLog(void) {
     static os_log_t log = NULL;
@@ -152,7 +152,7 @@ static UILabel *gLabel = nil;
 static NSTimer *gTimer = nil;
 static NSUInteger gRemaining = 0;
 static NSString *gLabelText = @"";
-static BOOL gWantLongIsland = NO; // v1.4.3：这次内容需要长岛（长文字）还是短岛（倒计时/短文案）
+static BOOL gWantLongIsland = NO; // v1.6.5：这次内容需要长岛（长文字）还是短岛（倒计时/短文案）
 static unsigned long gShows = 0;
 static unsigned long gLastSeconds = 0;
 static BOOL gPlainNotice = NO;   // v1.2.0：「!」开头的标签＝纯文案，不显示「N 秒后」，不跳数字
@@ -304,7 +304,7 @@ static void CHCollectPills(UIView *view, NSMutableArray *out, int depth) {
 }
 
 // 候选打分：SystemAperture 窗口里的、名字像岛本体的赢。
-// 尺寸规则（v1.4.3 起）：不再按固定 126x37 计罚。按当前内容决定目标岛 ——
+// 尺寸规则（v1.6.5 起）：不再按固定 126x37 计罚。按当前内容决定目标岛 ——
 //   gWantLongIsland==YES（长文字）：偏好长岛（145x47），宽高和越大分越高；
 //   gWantLongIsland==NO（倒计时/短文案）：偏好短岛（125x37），离短岛越近分越高。
 // 这样倒计时/短文字用短岛，长文字才用长岛。
@@ -702,7 +702,7 @@ static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain, NS
     gLastSeconds = (unsigned long)seconds;
     gLabelText = [label copy];
     gPlainNotice = plain;
-    // v1.4.3：决定这次要短岛还是长岛 —— 短内容（倒计时/短文案）用短岛，
+    // v1.6.5：决定这次要短岛还是长岛 —— 短内容（倒计时/短文案）用短岛，
     // 文字宽放不下短岛内宽（101pt）才用长岛。用系统当前字号量文字宽度。
     gWantLongIsland = NO;
     UIFont *mfont = [UIFont systemFontOfSize:12.0];
