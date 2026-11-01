@@ -498,6 +498,11 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   ㉔ **云编译开始后每 3 分钟查一次**（用户 2026-11-01 12:56，所有工程、所有对话永久适用）：push 触发云编译后
   每隔约 3 分钟 `icli probe scripts/ci-status.js` 查一次 run 状态；success 就下载/装/验，failure 就停下定位报错
   并等用户。中间过程静默不播报，只报结果/出问题。
+  ㉕ **安全模式下绕过弹窗直接装 + 注销（救急）**（用户 2026-11-01 13:09 认可）：安全模式（MobileSafety）里
+  **所有 tweak 都不注入、CountdownHUD 也死了** → `respring-guard.sh --ask` / `vpn-guard.sh` 的 `?` 弹窗
+  **根本不会显示**，走弹窗流程会卡死（超时/没反应）。此时直接用 `irisin-cli install --yes --json <deb>`
+  （root）装，再 `sbreload` 注销，绕过弹窗。前提：用户已在安全模式、什么都跑不起来、无「打断别人工作」顾虑。
+  判断安全模式：弹窗全无反应 + tweak 全不生效 + 桌面出现「安全模式」横幅。
     更正（2026-11-01 13:05）：查询频率**从每 3 分钟改为每 1 分钟**（`icli probe scripts/ci-status.js`）。
     补充（2026-11-01 12:57）：查编译**自主自动做，不等用户催**；查 GitHub API 失败（网络不通/访问不了 github）
     立即弹窗（`sh scripts/vpn-guard.sh`，标签写「查编译失败，访问不了 GitHub」），等用户处理后重查。
