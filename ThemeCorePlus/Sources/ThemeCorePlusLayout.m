@@ -553,6 +553,53 @@ static void TCPLayoutHookSave(void) {
         }
     }
 
+    // 1.0.25 借鉴 IconOrder（com.ichitaso.iconorder 1.0.5）：真正把 IconState.plist 写盘的是
+    // SBDefaultIconModelStore 这个「持久化层」，不是 SBIconModel 家族——我们枚举模型/控制器
+    // 一直 site=none 就是因为挂错了层。点名 hook 它的零参数 saveCurrentIconState 作为兜底备份站，
+    // 系统每次写盘我们都能跟存一份，崩溃/重启后可回填。self 是 store 实例，LooksLikeModel 为 NO，
+    // tcpLayoutSaveHook 里会照常调原方法 + 备份，不参与模型签名/主动保存（那些仍只认模型站）。
+    {
+        Class storeCls = objc_getClass("SBDefaultIconModelStore");
+        if (storeCls != Nil) {
+            for (NSString *selName in @[ @"saveCurrentIconState" ]) {
+                SEL sel = NSSelectorFromString(selName);
+                Method m = class_getInstanceMethod(storeCls, sel);
+                if (m == NULL) continue;
+                if (!TCPLayoutSignatureHookable(m)) {
+                    if (skipped.count < 6) {
+                        [skipped addObject:[NSString stringWithFormat:@"%@:%s(%s)",
+                                            NSStringFromClass(storeCls),
+                                            sel_getName(sel),
+                                            method_getTypeEncoding(m) ?: "?"]];
+                    }
+                    continue;
+                }
+                BOOL already = NO;
+                for (int k = 0; k < sLayoutSlotCount; k++) {
+                    if (sLayoutSlots[k].cls == storeCls && sel_isEqual(sLayoutSlots[k].sel, sel)) { already = YES; break; }
+                }
+                if (already) continue;
+                if (sLayoutSlotCount >= TCPLayoutMaxSlots) break;
+                IMP orig = NULL;
+                MSHookMessageEx(storeCls, sel, (IMP)tcpLayoutSaveHook, &orig);
+                if (orig == NULL) continue;
+                sLayoutSlots[sLayoutSlotCount].cls = storeCls;
+                sLayoutSlots[sLayoutSlotCount].sel = sel;
+                sLayoutSlots[sLayoutSlotCount].orig = orig;
+                sLayoutSlots[sLayoutSlotCount].kind = TCPLayoutKindSave;
+                sLayoutSlotCount++;
+                __sync_fetch_and_add(&sLayoutHooked, 1);
+                NSString *entry = [NSString stringWithFormat:@"-%@:%@",
+                                   NSStringFromClass(storeCls), NSStringFromSelector(sel)];
+                [hooked addObject:entry];
+                [probe addObject:[NSString stringWithFormat:@"%@{store:%@}",
+                                  NSStringFromClass(storeCls), NSStringFromSelector(sel)]];
+            }
+        } else {
+            [probe addObject:@"storecls=nil"];
+        }
+    }
+
     if (skipped.count > 0) {
         [probe addObject:[NSString stringWithFormat:@"skip[%@]",
                           [skipped componentsJoinedByString:@","]]];
