@@ -195,3 +195,9 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
 ## Apelin 本体更新监视（用户 2026-11-01 15:42）
 
 这是 agent 本体（wiki.qaq.apelin）的安装包仓库 `owngoal-dev/Apelin`，当前已见 `v0.3.3`。**每次访问 GitHub／每轮开工都顺带查一次**：`icli probe scripts/check-apelin-update.js`。`NO_UPDATE`→静默；`UPDATE`→脚本已自动下载 arm64e deb 到真根 Documents，随即：①灵动岛纯文案胶囊 `sh scripts/hud-notify.sh 8 "!Apelin 新版本 vX 已下载"`；②弹窗装包 `sh scripts/respring-guard.sh --ask 60 --install /rootfs/var/mobile/Documents/apelin-vX.deb "装 Apelin vX"`——弹窗在任何界面都显示，用户不在 Apelin 对话内也能看到并点「立即注销」。限制：agent 一轮一条消息、跑完即停，做不到真每小时定时，只能靠每次醒/每次访 GitHub 都查近似覆盖。
+
+## 装包统一走 install-deb.sh（2026-11-01 16:00）
+
+`sh scripts/install-deb.sh <deb> "<标签>"` 是唯一装包入口：先跑 `safemode-check.sh`，退出码 1（崩溃循环/疑似安全模式）或 3（插件没在跑）→ 打印 `SAFEMODE_DIRECT`，**跳过弹窗直接装 + sbreload**；其它 → 弹窗等用户点「立即注销」。
+
+**为什么**：安全模式下 tweak 全不注入、CountdownHUD 也死，弹窗根本显示不出来；旧做法「发弹窗一直等」会永远等不到（2026-11-01 15:5x 在安全模式空等 4 分钟，用户两次催问）。**永远不要在没有弹窗反馈的情况下干等**。

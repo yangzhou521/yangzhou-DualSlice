@@ -1193,3 +1193,14 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   1. 灵动岛纯文案胶囊 `sh scripts/hud-notify.sh 8 "!Apelin 新版本 vX 已下载"`；
   2. 弹窗装包 `sh scripts/respring-guard.sh --ask 60 --install /rootfs/var/mobile/Documents/apelin-vX.deb "装 Apelin vX"`。
 - 限制：agent 一轮一条消息、跑完即停，做不到真每小时定时；只能靠「每次醒/每次访问 GitHub 都查」近似覆盖。
+
+## 装包统一走 install-deb.sh（2026-11-01 16:00，血的教训）
+
+**`sh scripts/install-deb.sh <deb> "<标签>"` 是唯一装包入口**，它自己判断环境：
+
+- 先跑 `scripts/safemode-check.sh`：退出码 **1（崩溃循环/疑似安全模式）或 3（插件没在跑）→ 打印 `SAFEMODE_DIRECT`，跳过弹窗**，
+  调用方（agent）立刻 `irisin-cli install --yes --json <deb>`（root）+ `sbreload`，**不许再等弹窗**。
+- 其它 → 弹窗 `respring-guard.sh --ask 300 --install`，用户点「立即注销」才继续；`CANCELLED`/`TIMEOUT` 就停下。
+
+**为什么**：安全模式下 tweak 全不注入、CountdownHUD 也死，弹窗**根本显示不出来**；旧做法「发弹窗一直等」
+会永远等不到，包也装不上（2026-11-01 15:5x 在安全模式里空等了 4 分钟，用户两次催问）。
