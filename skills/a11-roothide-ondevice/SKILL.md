@@ -63,6 +63,9 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
   它会把内存里的旧布局写回磁盘，白覆盖。`sbreload` 本身就重启 SpringBoard，别再叠加 `killall SpringBoard`。
   ④ ThemeCorePlus 已内置布局自动备份/恢复（`/rootfs/var/mobile/Library/ThemeCorePlus/IconState.backup.plist`），
   手工 `cp` 那一套插件内部已经做了；要恢复就用这个机制，不自己硬 cp。
+- **云编译开始后每 3 分钟查一次状态**（用户 2026-11-01 12:56 明确要求，所有工程、所有对话永久适用）：
+  push 触发云编译后，**每隔约 3 分钟用 `icli probe scripts/ci-status.js` 查一次 run 状态**（success/failure/in_progress），
+  查到 success 就下载、装、验；查到 failure 就停下定位报错、等用户。中间过程照旧静默不播报，只报「结果/出问题」。
 ## 3. 双切片是这台设备的硬要求
 
 | 事实 | 数值 |
