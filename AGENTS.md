@@ -1184,3 +1184,12 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 前台就是目标 App 时才有意义。`icli screen shot` 可用，要给用户看时 `cp` 进工程再 `file_show`。
 点元素别用坐标（`icli screen tap x y` 在列表里跑偏过），用 `icli ui tap "<文字>"`。
 
+
+## Apelin 本体更新监视（用户 2026-11-01 15:39）
+
+- 仓库 `owngoal-dev/Apelin`，当前已见版本 `v0.3.3`（记录在 `scripts/apelin-version.txt`）。
+- **每次访问 GitHub（或每轮开工）都顺带查一次**：`icli probe scripts/check-apelin-update.js`。
+- 输出 `NO_UPDATE` → 静默，不通知；输出 `UPDATE` → 已自动下载 arm64e deb 到真根 Documents，然后：
+  1. 灵动岛纯文案胶囊 `sh scripts/hud-notify.sh 8 "!Apelin 新版本 vX 已下载"`；
+  2. 弹窗装包 `sh scripts/respring-guard.sh --ask 60 --install /rootfs/var/mobile/Documents/apelin-vX.deb "装 Apelin vX"`。
+- 限制：agent 一轮一条消息、跑完即停，做不到真每小时定时；只能靠「每次醒/每次访问 GitHub 都查」近似覆盖。
