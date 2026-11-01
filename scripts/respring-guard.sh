@@ -51,17 +51,25 @@ ASK=0
 # --install <deb>：用户 2026-10-31 21:28 选「A」—— 装包与注销合并成**一次弹窗**。
 # 点头后先装包、再注销，不再弹第二次。
 INSTALL_DEB=""
+# --install 模式下「用户点头 → 交接装包」之间的倒计时（屏幕上也会显示）。用户 2026-11-01 08:39
+# 原话「把60秒装包倒计时改成10秒」→ 10 秒。
+INSTALL_WAIT=${INSTALL_WAIT:-10}
+POS_WAIT=""
+POS_LABEL=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --confirm) CONFIRM=1; ASK=1; shift ;;
     --ask) ASK=1; shift ;;
     --install) INSTALL_DEB="$2"; shift 2 ;;
-    *) break ;;
+    *)
+      # 位置参数（秒数、标签）——放在选项前或选项后都能认。
+      if [ -z "$POS_WAIT" ]; then POS_WAIT="$1"; else POS_LABEL="$1"; fi
+      shift ;;
   esac
 done
 
-WAIT=${1:-5}
-LABEL=${2:-注销}
+WAIT=${POS_WAIT:-5}
+LABEL=${POS_LABEL:-注销}
 
 case "$WAIT" in
   ''|*[!0-9]*)
@@ -173,9 +181,9 @@ fi
 # 所以这里只做两件事：屏幕上走完倒计时 + 打印 CONFIRMED 标记，
 # 由调用方在同一回合里接着「装包 → sbreload」。用户仍然只点一次。
 if [ -n "$INSTALL_DEB" ]; then
-  echo "respring-guard: 用户已点头（--install 模式），倒计时 5 秒后交接给调用方装包"
-  hud_request 5 "$LABEL" || true
-  i=5
+  echo "respring-guard: 用户已点头（--install 模式），倒计时 ${INSTALL_WAIT} 秒后交接给调用方装包"
+  hud_request "$INSTALL_WAIT" "$LABEL" || true
+  i=$INSTALL_WAIT
   while [ "$i" -gt 0 ]; do
     echo "  $i…"
     sleep 1

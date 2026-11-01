@@ -785,8 +785,11 @@ static void TCPClockViewApply(UIView *view) {
         root.contents = (__bridge id)face.CGImage;
     }
     // 250x250 的方图塞进 60x60 的 layer：按比例铺满，不拉伸、不裁边。
-    if (![root.contentsGravity isEqualToString:kCAGravityResizeAspect]) {
-        root.contentsGravity = kCAGravityResizeAspect;
+    // 用字符串字面量而不是 kCAGravityResizeAspect 常量：后者要链 QuartzCore，
+    // 本次 CI 就是栽在 `undefined symbol _kCAGravityResizeAspect`。值完全相同。
+    static NSString *const kTCPGravityResizeAspect = @"resizeAspect";
+    if (![root.contentsGravity isEqualToString:kTCPGravityResizeAspect]) {
+        root.contentsGravity = kTCPGravityResizeAspect;
     }
     // contentsScale 不设会按 1x 采样，60x60 的图标上会糊。
     if (root.contentsScale != scale) root.contentsScale = scale;
