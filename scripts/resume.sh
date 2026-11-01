@@ -29,6 +29,7 @@ if [ "${1:-}" = "--prompt" ]; then
 
 1. 读本工程（yangzhouDualSlice）的 scripts/WORK-STATE.json 与 AGENTS.md 顶部的「开工第 0 步（交接协议）」；
 2. 跑 \`sh scripts/resume.sh\` 和 \`sh scripts/safemode-check.sh\`，把任务链、当前步、未清 pending **原样报一句给用户**，再动手；
+   —— 交接块里「其他在跑的对话」那段**必须看**：有人在跑就先按 \`skills/cross-chat-coordination\` 同步对齐（发一句回执、别碰别人的文件和工程），别蒙头干、更别撞车；
 3. 清账：pending 里每一项要么做完并验证、要么问用户取消，**不许无声消失**；需要用户点头的事（装包/注销/开 VPN/删东西）当轮就弹窗问。
 
 任务：$TASK
@@ -59,6 +60,20 @@ echo "──── 未清项（pending，逐条要么做完要么问用户取消
 if [ -r "$WS" ]; then
   awk '/^[[:space:]]*"pending"/{p=1;next} p&&/^[[:space:]]*\][[:space:]]*,?[[:space:]]*$/{exit} p{print}' "$WS" |
     sed -e 's/^[[:space:]]*//' -e 's/[{}\"]//g' -e 's/,$//'
+fi
+echo
+echo "──── 其他在跑的对话（只读副产物，不依赖谁配合）────"
+# 为什么要有这一段（用户 2026-11-02 05:20 原话「之前另条线在活跃工作为什么你不知道！」）：
+# 以前交接块只讲「本工程进度」，不讲「别人正在干什么」→ 我改码时根本不知道另条线在同一个
+# 仓库、同一批文件上干活，撞车风险全靠运气。fleet-live.sh 读的是 Apelin 自己写的
+# sessions/*/events.jsonl（谁都不用配合、谁都不用写黑板），把它挂在这里就等于：
+# **「开工第 0 步」必然经过它，所以不可能漏**（写进文件 ≠ 会执行，得有触发器）。
+if [ -r "$HERE/fleet-live.sh" ]; then
+  sh "$HERE/fleet-live.sh" "${FLEET_WIN:-30}" 2>&1 ||
+    echo "（fleet-live.sh 跑失败，手动重跑：sh scripts/fleet-live.sh 30）"
+  echo "   ↳ 有别的线在跑就发一句回执再动手（skills/cross-chat-coordination）；窗口 ${FLEET_WIN:-30} 分钟，改：FLEET_WIN=60 sh scripts/resume.sh"
+else
+  echo "（找不到 fleet-live.sh：自己用 apelin_conversation_list 查谁在跑）"
 fi
 echo
 echo "──── 本机现状（只读）────"
