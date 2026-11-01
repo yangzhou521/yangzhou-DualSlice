@@ -1,0 +1,10 @@
+{
+  "task": "ThemeCorePlus 1.0.24 秒加载（缓存层挂载）",
+  "status": "running",
+  "done": "代码改完并已云编译成功：commit 1427cc1，CI run 41280514589 success",
+  "next": "下载 deb → 弹框装 → 注销 → 体检报三行 → 看 cachecls=",
+  "why": "1.0.23 sites=18 仍无缓存层站；怀疑 SBHIconImageCache 在 0/0.3/1/2 秒还没 dlopen，故三处重挂 + 加 cachecls 诊断取证",
+  "evidence": "sha=1427cc1 run=41280514589 concl=success",
+  "guard": "角标/图标冻结勿动；装包注销必须弹框；包版本 1.0.24 不得与已发布版本冲突",
+  "updated": "2026-11-01T14:28+08:00"
+}
