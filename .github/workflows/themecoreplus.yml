@@ -48,7 +48,9 @@ jobs:
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: 'latest-stable'
+          # 2026-11-01 钉死版本：'latest-stable' 每次可能切换 Xcode 大版本并重建索引，
+          # 是 macOS runner 上最慢的一步（2–5 分钟）。macos-15 镜像自带 16.2，够编 iOS 16.5 SDK。
+          xcode-version: '16.2'
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -160,23 +162,8 @@ jobs:
           echo "=== deb contents ==="
           dpkg-deb -c "$DEB"
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: themecoreplus-roothide
-          path: packages/*.deb
-          if-no-files-found: error
-
-  release:
-    name: Release (themecoreplus-v1.0.16)
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download package
-        uses: actions/download-artifact@v4
-        with:
-          path: release
-          merge-multiple: true
+      # 2026-11-01：发布合并进本 job 后，artifact 上传/下载这两步没必要了
+      # （产物就在同一个 runner 的 packages/ 里）。留着只多一次上传传输。
 
       - name: Publish release
         id: publish
@@ -557,20 +544,20 @@ jobs:
             - 回滚只清配置，不动主题目录里的任何文件。
             - arm64 + arm64e 双切片（A11 用户态是 arm64，只出 arm64e 的 dylib 不会被加载）。
             - roothide 包；rootless 需自己改脚本的第二个参数重编，未经设备验证。
-          files: release/*.deb
+          files: packages/*.deb
 
       - name: Report release URL
         if: steps.publish.outcome == 'success'
         run: |
           set -euo pipefail
-          DEB=$(ls release/*.deb | head -n 1)
+          DEB=$(ls packages/*.deb | head -n 1)
           echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/themecoreplus-v1.0.16/$(basename "$DEB")"
 
       - name: Fallback anonymous upload
         if: steps.publish.outcome != 'success'
         run: |
           set -uo pipefail
-          for f in release/*.deb; do
+          for f in packages/*.deb; do
             echo "release step did not succeed; uploading $f anonymously"
             url=$(curl -sS --max-time 120 -A "ThemeCorePlus-CI" -F "file=@$f" https://0x0.st || true)
             if [ -z "$url" ] || ! printf '%s' "$url" | grep -q '^https'; then

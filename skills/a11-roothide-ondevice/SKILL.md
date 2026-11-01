@@ -35,6 +35,14 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
   推论：**不要**为了「省 CI 配额」把 rootless 那条腿从脚本里删掉或注释掉；省配额靠少触发、
   钉死工具版本、合并 job，不是砍能力。工作流里现在**只有一个 build job（roothide）**，
   第二个 job 是 release（只发资产、不编译）；rootless 从来没在这个工作流里编过。
+- **CI 省配额的常规做法（用户 2026-11-01 11:16 认可，之后都这么写）**：
+  ① **钉死 Xcode 版本**——`setup-xcode` 用具体版本（如 macos-15 镜像的 `16.2`），不要 `latest-stable`：
+     后者每次可能切换大版本并重建索引，是 macOS runner 上最慢的一步（2–5 分钟）。
+  ② **发布合并进 build job**——原来 build(macos-15) + release(ubuntu-latest) 两个 job，
+     产物要 artifact 上传/下载再发布；合并成一个 job 后产物直接在 `packages/`，
+     省一次 runner 启动与一次上传传输，发布失败仍有匿名托管兜底步骤。
+  合并后工作流只有 `jobs.build`（runs-on: macos-15），发布步骤用 `softprops/action-gh-release`
+  + `token: ${{ github.token }}`，`files: packages/*.deb`；顶层 `permissions: contents: write` 继承即可。
 ## 3. 双切片是这台设备的硬要求
 
 | 事实 | 数值 |
