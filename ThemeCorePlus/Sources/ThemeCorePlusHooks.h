@@ -103,6 +103,15 @@ NSUInteger TCPInstallSitesForClassSubstrings(NSArray<NSString *> *substrings,
                                              NSArray<NSString *> *selectors,
                                              TCPSiteKind kind);
 
+// 强制只挂「实例方法」，不做通用站那种「类方法优先」判断。
+// 用途：SBFolderIconImageCache 的 -gridCellImageOfSize:forIcon:iconImageInfo: 上，实例/类方法
+// 同名（元类上有个 convenience 类方法），通用站优先类方法会挂到 + 版本，系统真正调的实例方法
+// 就拦不到（诊断 grid{look=0}）。这一族一律用本函数挂实例方法。
+NSUInteger TCPInstallInstanceSitesForClassPrefixes(NSArray<NSString *> *prefixes,
+                                                   NSArray<NSString *> *excludingSubstrings,
+                                                   NSArray<NSString *> *selectors,
+                                                   TCPSiteKind kind);
+
 // 普查：类名含 substrings 之一、且自己声明了 selectors 之一的类，写成
 // "类名=方法名 方法名" 的行；用它在设备上坐实「锁屏通知的角标到底是哪个类」。
 NSString *TCPClassCensusForSubstrings(NSArray<NSString *> *substrings,

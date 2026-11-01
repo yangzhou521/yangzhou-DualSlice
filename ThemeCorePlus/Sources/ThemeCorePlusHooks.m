@@ -434,12 +434,16 @@ static const TCPSlotGroup kSlotGroups[TCPSiteKindCount] = {
 
 #pragma mark - 挂站
 
-static BOOL TCPInstallOneSite(Class cls, SEL sel, TCPSiteKind kind) {
+static BOOL TCPInstallOneSiteKind(Class cls, SEL sel, TCPSiteKind kind, BOOL instanceOnly) {
     if (cls == Nil || sel == NULL || kind >= TCPSiteKindCount) return NO;
 
-    // R2：类自己声明了才挂（类方法与实例方法分别判断；两者都声明时优先类方法）。
-    BOOL asClassMethod = TCPClassDeclaresMethod(object_getClass(cls), sel);
-    BOOL asInstanceMethod = !asClassMethod && TCPClassDeclaresMethod(cls, sel);
+    // R2：类自己声明了才挂。默认类方法优先；instanceOnly=YES 时只认实例方法
+    // （SBFolderIconImageCache 这类类/实例同名选择器，系统走实例方法，挂到类方法上等于白挂）。
+    BOOL asClassMethod = !instanceOnly && TCPClassDeclaresMethod(object_getClass(cls), sel);
+    BOOL asInstanceMethod = TCPClassDeclaresMethod(cls, sel);
+    if (instanceOnly) {
+        asClassMethod = NO;
+    }
     if (!asClassMethod && !asInstanceMethod) return NO;
     Class target = asClassMethod ? object_getClass(cls) : cls;
     NSString *key = [NSString stringWithFormat:@"%@%@:%@",
@@ -469,11 +473,13 @@ static BOOL TCPInstallOneSite(Class cls, SEL sel, TCPSiteKind kind) {
 }
 
 // 类名匹配：byPrefix = YES 按前缀，NO 按「包含」。
+// instanceOnly = YES 时只挂实例方法（见 TCPInstallOneSiteKind 的注释）。
 static NSUInteger TCPInstallSitesMatching(NSArray<NSString *> *patterns,
                                           BOOL byPrefix,
                                           NSArray<NSString *> *excludingSubstrings,
                                           NSArray<NSString *> *selectors,
-                                          TCPSiteKind kind) {
+                                          TCPSiteKind kind,
+                                          BOOL instanceOnly) {
     if (patterns.count == 0 || selectors.count == 0) return 0;
     // 不缓存类表：类是按需加载的，晚一轮再扫才能把 SpringBoardHome 的类带进来。
     unsigned int count = 0;
@@ -499,7 +505,7 @@ static NSUInteger TCPInstallSitesMatching(NSArray<NSString *> *patterns,
         }
         if (skipped) continue;
         for (NSString *selectorName in selectors) {
-            if (TCPInstallOneSite(cls, NSSelectorFromString(selectorName), kind)) installed++;
+            if (TCPInstallOneSiteKind(cls, NSSelectorFromString(selectorName), kind, instanceOnly)) installed++;
         }
     }
     if (classes) free(classes);
@@ -510,14 +516,21 @@ NSUInteger TCPInstallSitesForClassPrefixes(NSArray<NSString *> *prefixes,
                                            NSArray<NSString *> *excludingSubstrings,
                                            NSArray<NSString *> *selectors,
                                            TCPSiteKind kind) {
-    return TCPInstallSitesMatching(prefixes, YES, excludingSubstrings, selectors, kind);
+    return TCPInstallSitesMatching(prefixes, YES, excludingSubstrings, selectors, kind, NO);
+}
+
+NSUInteger TCPInstallInstanceSitesForClassPrefixes(NSArray<NSString *> *prefixes,
+                                                   NSArray<NSString *> *excludingSubstrings,
+                                                   NSArray<NSString *> *selectors,
+                                                   TCPSiteKind kind) {
+    return TCPInstallSitesMatching(prefixes, YES, excludingSubstrings, selectors, kind, YES);
 }
 
 NSUInteger TCPInstallSitesForClassSubstrings(NSArray<NSString *> *substrings,
                                              NSArray<NSString *> *excludingSubstrings,
                                              NSArray<NSString *> *selectors,
                                              TCPSiteKind kind) {
-    return TCPInstallSitesMatching(substrings, NO, excludingSubstrings, selectors, kind);
+    return TCPInstallSitesMatching(substrings, NO, excludingSubstrings, selectors, kind, NO);
 }
 
 #pragma mark - 运行期普查

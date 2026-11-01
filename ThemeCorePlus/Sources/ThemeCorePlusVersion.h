@@ -13,12 +13,12 @@
 //  系统那 5 个 sublayer 的 contents，转动交还系统；同时修掉多位数字角标的胶囊几何。
 //  1.0.12（2026-11-01）：针帽太大 —— 中轴层(l2)与秒针帽层(l4)不再写 redDot 素材，
 //  交还系统自画（时针/分针/秒针继续用主题素材）。
-//  1.0.13（2026-11-01）：文件夹收起 mini 图标主题化 —— 挂 SBFolderIconImageCache 的
+//  1.0.14（2026-11-01）：文件夹收起 mini 图标主题化 —— 挂 SBFolderIconImageCache 的
 //  gridCellImageOfSize:forIcon:iconImageInfo: 逐格出主题图（与 1.0.12 针帽修复一并发布）。
 //
 #pragma once
 
-#define TCP_VERSION @"1.0.13"
+#define TCP_VERSION @"1.0.14"
 
 // 面板最下方那个「运行日志」入口的开关（用户 2026-10-30 15:27）：
 //   1 = 显示（开发/调试期，日志页要能随时翻、能分享）；

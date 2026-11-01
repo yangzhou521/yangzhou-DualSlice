@@ -41,8 +41,11 @@ void TCPInstallFolderSites(void) {
 void TCPInstallFolderGridCellSites(void) {
     NSArray<NSString *> *prefixes = @[ @"SBFolderIconImageCache" ];
     NSArray<NSString *> *selectors = @[ @"gridCellImageOfSize:forIcon:iconImageInfo:" ];
-    NSUInteger installed = TCPInstallSitesForClassPrefixes(prefixes, @[], selectors,
-                                                           TCPSiteKindFolderGridCell);
+    // 必须用「只挂实例方法」的入口：SBFolderIconImageCache 的元类上有个同名的 convenience
+    // 类方法，通用站「类方法优先」会挂到 + 版本（诊断 sites= 里是 +SBFolderIconImageCache:…
+    // 且 grid{look=0}），系统真正调的 - 版本就拦不到。挂实例方法后 grid{look} 才会涨。
+    NSUInteger installed = TCPInstallInstanceSitesForClassPrefixes(prefixes, @[], selectors,
+                                                                   TCPSiteKindFolderGridCell);
     if (installed > 0) {
         os_log(TCPLogHandle(), "TCPS_FOLDER_GRID_SITES +%lu", (unsigned long)installed);
     }
