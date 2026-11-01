@@ -684,12 +684,16 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
         }
         how = [NSString stringWithFormat:@"face+h%.0fx%.0f+m%.0fx%.0f", hw, hh, mw, mh];
     } else {
-        // 1.0.33：日历 —— 只画主题底图（空白无文字素材）。
-        // 用户明示：日历文字（星期、日期、字体、颜色、大小、上下位置）一概不该插件管，
-        // 是系统/素材自己接管显示的。插件只负责让「空白无文字底图」正常加载。
-        // 旧实现加了墨层提取/保留文字层 —— 那都是插件碰文字，画蛇添足、把文字搞乱。
+        // 日历 —— 画主题底图，再把系统日期的黑色数字墨层叠上去。
+        // 1.0.33 曾只画底图（以为系统会自己叠日期），实测系统不往合成图上叠 → 日历没文字 = bug（用户报）。
+        // 这里补回 TCPCompositeCalendarInk：把系统日历图里的日期数字（墨）提取出来，按底图明暗选黑/白画上。
+        // 画的是日历图标固有的日期数字，不是桌面图标下方那一排文字（那仍归系统/字体）。
         [themed drawInRect:rect];
-        how = @"base";
+        if (systemImage != nil) {
+            TCPPixelStats s = TCPPixelStatsForImage(themed);
+            TCPCompositeCalendarInk(ctx, rect, systemImage, s.luminance < 0.5);
+        }
+        how = @"base+ink";
     }
 
     UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
