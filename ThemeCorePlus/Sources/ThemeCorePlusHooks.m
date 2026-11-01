@@ -505,6 +505,38 @@ static BOOL TCPInstallOneSiteKind(Class cls, SEL sel, TCPSiteKind kind, BOOL ins
     return YES;
 }
 
+// 1.0.23：绕过 R2（「类自己声明才挂」）的强制实例方法挂载。
+// 用途：SBHIconImageCache 这类缓存类，iconImageWithInfo: 可能是父类/分类声明的，
+// class_copyMethodList（R2 用的）列不出它 → 挂不上（1.0.22 实测 sites 里没有缓存层站）。
+// 这里改用 class_getInstanceMethod（含继承），只要实例能响应该方法就挂，签名仍走槽位表。
+static BOOL TCPInstallOneSiteKindForced(Class cls, SEL sel, TCPSiteKind kind) {
+    if (cls == Nil || sel == NULL || kind >= TCPSiteKindCount) return NO;
+    if (class_getInstanceMethod(cls, sel) == NULL) return NO;   // 含继承
+
+    NSString *key = [NSString stringWithFormat:@"-%@:%@", NSStringFromClass(cls), NSStringFromSelector(sel)];
+    TCPSiteBook();
+    [sSiteLock lock];
+    BOOL already = [sInstalledKeys containsObject:key];
+    NSUInteger index = sSlotsUsed[kind];
+    BOOL exhausted = (index >= TCP_SLOT_COUNT);
+    [sSiteLock unlock];
+    if (already || exhausted) return NO;
+
+    IMP *slot = kSlotGroups[kind].storage[index];
+    IMP hook = kSlotGroups[kind].hooks[index];
+    IMP original = NULL;
+    MSHookMessageEx(cls, sel, hook, &original);
+    if (original == NULL) return NO;
+    *slot = original;
+
+    [sSiteLock lock];
+    sSlotsUsed[kind] = index + 1;
+    [sInstalledKeys addObject:key];
+    [sSiteDescriptions addObject:key];
+    [sSiteLock unlock];
+    return YES;
+}
+
 // 类名匹配：byPrefix = YES 按前缀，NO 按「包含」。
 // instanceOnly = YES 时只挂实例方法（见 TCPInstallOneSiteKind 的注释）。
 static NSUInteger TCPInstallSitesMatching(NSArray<NSString *> *patterns,
@@ -564,6 +596,34 @@ NSUInteger TCPInstallSitesForClassSubstrings(NSArray<NSString *> *substrings,
                                              NSArray<NSString *> *selectors,
                                              TCPSiteKind kind) {
     return TCPInstallSitesMatching(substrings, NO, excludingSubstrings, selectors, kind, NO);
+}
+
+// 1.0.23：图标图缓存层强制挂载（绕过 R2，含继承方法）。
+// 遍历类名含 "IconImageCache" 的类（SBHIconImageCache 属于 SpringBoardHome，晚加载才出现），
+// 用 TCPInstallOneSiteKindForced 挂 iconImageWithInfo:/unmaskedIconImageWithInfo:/generateIconImageWithInfo:。
+// 1.0.22 用 R2 挂没挂上（sites 里没有缓存层站），因为缓存类自己不声明这些方法（父类/分类声明）。
+NSUInteger TCPInstallIconCacheLayerSites(void) {
+    unsigned int count = 0;
+    Class *classes = objc_copyClassList(&count);
+    if (classes == NULL) return 0;
+    NSUInteger installed = 0;
+    for (unsigned int i = 0; i < count; i++) {
+        Class cls = classes[i];
+        if (cls == Nil) continue;
+        const char *raw = class_getName(cls);
+        if (raw == NULL) continue;
+        NSString *name = @(raw);
+        if (![name containsString:@"IconImageCache"]) continue;
+        for (NSString *selName in @[ @"iconImageWithInfo:",
+                                     @"unmaskedIconImageWithInfo:",
+                                     @"generateIconImageWithInfo:" ]) {
+            if (TCPInstallOneSiteKindForced(cls, NSSelectorFromString(selName), TCPSiteKindIconImageInfo)) {
+                installed++;
+            }
+        }
+    }
+    if (classes) free(classes);
+    return installed;
 }
 
 #pragma mark - 运行期普查
