@@ -66,6 +66,9 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
 - **云编译开始后每 3 分钟查一次状态**（用户 2026-11-01 12:56 明确要求，所有工程、所有对话永久适用）：
   push 触发云编译后，**每隔约 3 分钟用 `icli probe scripts/ci-status.js` 查一次 run 状态**（success/failure/in_progress），
   查到 success 就下载、装、验；查到 failure 就停下定位报错、等用户。中间过程照旧静默不播报，只报「结果/出问题」。
+- **补充（用户 2026-11-01 12:57）**：云编译每 3 分钟查状态**自主自动做，不用等用户催**；
+  查 GitHub API 失败（网络不通、访问不了 github）时，**立即弹窗告诉用户**（`sh scripts/vpn-guard.sh`，
+  标签写「查编译失败，访问不了 GitHub」），等用户开 VPN/处理后重查。
 ## 3. 双切片是这台设备的硬要求
 
 | 事实 | 数值 |
