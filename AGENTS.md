@@ -22,9 +22,13 @@ sh scripts/safemode-check.sh  # 约 80 秒，只读：判安全模式 / 版本�
 - **安全模式例外（用户 2026-11-02 00:58 指出）**：进安全模式后 tweak 全不注入，
   `hud-notify.sh` 的灵动岛胶囊与 `respring-guard.sh --ask` 的弹窗**都不会显示**
   （实测：写了 `.countdownhud-request`，`CountdownHUDDiagnostics` 的 `shows` 不涨）。
-  此时让用户知情只走两条：**对话正文** + `apelin_notification_send`；
+  此时让用户知情只走两条：**对话正文** + `apelin_notification_send`（**真 iOS 系统通知，
+  2026-11-02 02:14 安全模式下实测可用** —— Apelin 不在前台时会弹真系统横幅，不依赖 tweak 注入，
+  与灵动岛胶囊、CountdownHUD 弹窗是三条互相独立的通道，安全模式下只有这条 + 正文能到）；
   要装包就 `sh scripts/install-deb.sh <deb>`（它自己识别安全模式 → `SAFEMODE_DIRECT` → 直装 + `sbreload`）；
   **注销本身就是退出安全模式、把胶囊与弹窗救回来的唯一办法**，所以安全模式下的第一优先动作是「装对版本 + 注销」。
+  安全模式下装包通知：① 先下载完 deb；② `apelin_notification_send`（标题「装包待确认」，正文写清包名/版本/路径/字节）；
+  ③ 正文也写一句；④ 等用户回复点头再 `install-deb.sh`。**不能弹窗就一直追问，也别干等胶囊**——用户只在系统横幅或对话里能看到。
 
 工作区工程 `yangzhouDualSlice`（Apelin 的 workspace，`buildSystem: external`，仓库
 `https://github.com/yangzhou521/yangzhou-DualSlice`，分支 `main`）。
