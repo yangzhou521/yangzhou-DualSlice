@@ -219,6 +219,8 @@ NSString *TCPBadgeProbeReport(void);
 void TCPBadgeResetStations(void);
 void TCPBadgeNoteStation(TCPSiteKind kind, BOOL replaced);
 BOOL TCPBadgeBackgroundServed(void);
+// 1.0.18：热刷新时让可见角标视图重新 checkout（补「刷新图标」漏掉角标视图的洞）。
+void TCPBadgeRefreshVisible(void);
 // 0.9.11：成图站交出去的是「主题底板 + 数字」整图时叫一声 —— 角标视图侧据此把系统那层底板藏掉，
 // 屏幕上只留一层（用户 2026-10-31 04:07 反馈的「原系统角标没隐藏、又叠了第三方角标」）。
 void TCPBadgeNoteComposedServed(void);

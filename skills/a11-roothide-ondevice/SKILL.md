@@ -53,6 +53,16 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
 - **修完问题不要直接云编译，等用户确认后才编译**（用户 2026-11-01 12:10 明确要求，所有工程、所有对话永久适用）：
   改完源码/工作流后，**先停下来把「改了什么、怎么改的」告诉用户，等用户点头（确认/编译/继续）才 commit+push 触发云编译**；
   绝不改完就顺手 push 触发 CI。commit/push 是「等确认后才做」的动作，不是改完自动做的动作。
+- **刷新兜底与布局覆盖（用户 2026-11-01 12:20 认可沉淀）**：
+  ① 进程内热刷新（面板「刷新图标」、`device.sh kill`+`launch`）**优先**，不注销、不黑屏；热刷新做不到 100%
+  （比如某类视图没被热刷新覆盖到）时，**重启式刷新（`sbreload`）是最终兜底**——它重启整个 SpringBoard，
+  所有注入重载、视图重建、缓存清空，图标/角标/主题/桌面布局保证全部生效；但必须走注销弹窗确认，不是自动动作。
+  ② roothide 下 `cp`/`chown` 系统路径（如 `/var/mobile/Library/SpringBoard/IconState.plist`）**必须加真根
+  前缀 `/rootfs`**，否则写进隐根容器里的假路径、系统读不到。shell 里判断：`ls /rootfs/var/mobile/...`。
+  ③ 覆盖布局文件**先停 SpringBoard（或先注销）→ 再覆盖 → 再起**；SpringBoard 还活着时直接 `cp` 覆盖，
+  它会把内存里的旧布局写回磁盘，白覆盖。`sbreload` 本身就重启 SpringBoard，别再叠加 `killall SpringBoard`。
+  ④ ThemeCorePlus 已内置布局自动备份/恢复（`/rootfs/var/mobile/Library/ThemeCorePlus/IconState.backup.plist`），
+  手工 `cp` 那一套插件内部已经做了；要恢复就用这个机制，不自己硬 cp。
 ## 3. 双切片是这台设备的硬要求
 
 | 事实 | 数值 |

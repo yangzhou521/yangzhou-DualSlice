@@ -1690,6 +1690,8 @@ void TCPRefreshIconImages(void) {
     os_log(TCPLogHandle(), "TCPS_REFRESH views=%lu pushed=%lu model=%ld cache=%ld purge=%{public}@",
            (unsigned long)views.count, (unsigned long)pushed, (long)sRefreshModel, (long)sRefreshCache,
            sRefreshPurgeName ?: @"-");
+    // 1.0.18：热刷新也收拾角标视图 —— 原来只刷 SBIconImageView，角标还攥着旧图。
+    TCPBadgeRefreshVisible();
     sRefreshing = NO;
 }
 

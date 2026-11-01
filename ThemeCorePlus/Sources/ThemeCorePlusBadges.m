@@ -156,6 +156,7 @@ static const void *TCPBadgeRetryKey = &TCPBadgeRetryKey;       // 复检重做�
 static const void *TCPBadgeBgKey = &TCPBadgeBgKey;             // 底板视图缓存（省掉每帧 KVC）
 #define TCP_BADGE_RETRY_MAX 4
 static NSInteger sBadgeLiftCount = 0;    // 搬图次数（诊断 lift=）
+static NSInteger sBadgeRefreshTouched = 0;   // 1.0.18：热刷新碰过的角标视图数
 static NSString *sBadgeSysBg = nil;      // 底板取证：类名、显隐、它自己画的是什么
 static NSString *sBadgeSysHost = nil;    // 我们的图挂在哪只视图上（诊断 our=）
 
@@ -507,6 +508,43 @@ void TCPBadgeResetStations(void) {
     sBadgeSysBg = nil;
     sBadgeSysHost = nil;
     sBadgeComposedServed = NO;
+}
+
+// 1.0.18：热刷新（面板「刷新图标」）时，角标视图也得跟着重新取图。
+// 原来的 TCPRefreshIconImages 只遍历 SBIconImageView（图标），角标视图 SBIconBadgeView
+// 被漏掉 → 图标换了、角标还攥着旧图（用户：取消「角标透明玻璃」选项刷新后角标仍生效）。
+// 这里遍历所有窗口里的 SBIconBadgeView，撤掉它们的 cleaned 标记并触发布局；下一轮
+// layoutSubviews 会重新走「收拾」路径，成图站重新 checkout（generation 已变 → 合成新主题图）。
+// 只动「触发重画」，不碰角标的变形/双层/条状等显示逻辑（那些已冻结）。
+void TCPBadgeRefreshVisible(void) {
+    if (![NSThread isMainThread]) return;
+    Class cls = objc_getClass("SBIconBadgeView");
+    if (cls == Nil) return;
+    NSMutableArray *stack = [NSMutableArray array];
+    for (UIWindow *window in [UIApplication sharedApplication].windows) {
+        [stack addObject:window];
+    }
+    NSUInteger guard = 0;
+    NSUInteger touched = 0;
+    while (stack.count > 0 && guard++ < 6000) {
+        UIView *view = [stack lastObject];
+        [stack removeLastObject];
+        if ([view isKindOfClass:cls]) {
+            // 摘-放：触发 didMoveToWindow（TCPBadgeMoveHook 会撤 cleaned + 重新收拾），
+            // 且视图重新挂载会让系统重新 checkout 角标图。只动「触发重画」。
+            UIView *superview = view.superview;
+            if (superview != nil) {
+                [view removeFromSuperview];
+                [superview addSubview:view];
+            } else {
+                TCPBadgeSetCleaned(view, NO);
+                [view setNeedsLayout];
+            }
+            touched++;
+        }
+        [stack addObjectsFromArray:view.subviews];
+    }
+    sBadgeRefreshTouched += touched;
 }
 
 // 成图站（Hooks.m）在「交出去的是底板 + 数字整图」时叫一声，视图侧才知道该收掉系统底板。
