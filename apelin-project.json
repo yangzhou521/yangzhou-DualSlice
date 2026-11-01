@@ -1,1 +1,8 @@
-{"autoName":false,"buildSystem":"external","displayName":"yangzhouDualSlice","kind":"workspace","projectID":"1f721a85-3350-4ab8-b07a-639e8febba51","schemaVersion":1}
+{
+  "autoName": false,
+  "buildSystem": "external",
+  "displayName": "我是大统领",
+  "kind": "workspace",
+  "projectID": "1f721a85-3350-4ab8-b07a-639e8febba51",
+  "schemaVersion": 1
+}
