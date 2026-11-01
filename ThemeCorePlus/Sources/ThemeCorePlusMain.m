@@ -158,11 +158,22 @@ static void TCPReload(BOOL refreshImages) {
     // 类还没加载时它自己会返回，下一轮再挂。
     TCPInstallClockViewSite();
     TCPInstallFolderGridCellSites();   // 1.0.12：文件夹收起 mini 拼图的格子图站
-    TCPRelayoutIcons();
 
-    // 文件夹预览那张拼图（收起状态的 mini 图标）由 SBFolderIconImageCache 缓存：
-    // 主题换上来之后它不会自己重算，于是「打开是主题图标、收起还是原图标」。这里叫它重算一次。
-    TCPFolderCacheRefresh();
+    // 1.0.15：注销后「桌面反复加载」的根因就在这里 —— 启动那 4 轮补挂（0 / 0.5 / 2 / 6 秒）
+    // 每一轮都无条件 relayoutIcons + 清文件夹拼图缓存，屏幕上就是桌面图标被反复重排、重画。
+    // 现在只在「站点数变了」（晚到的类在这一轮挂上了）或「用户改了设置」时才重排一次。
+    // 日志留痕：gen 会照旧涨，但桌面只被重排真正需要的那几次。
+    NSUInteger sitesNow = TCPTotalSiteCount();
+    static NSUInteger sLastReloadSites = 0;
+    BOOL sitesChanged = (sitesNow != sLastReloadSites);
+    sLastReloadSites = sitesNow;
+    if (refreshImages || sitesChanged) {
+        TCPRelayoutIcons();
+
+        // 文件夹预览那张拼图（收起状态的 mini 图标）由 SBFolderIconImageCache 缓存：
+        // 主题换上来之后它不会自己重算，于是「打开是主题图标、收起还是原图标」。这里叫它重算一次。
+        TCPFolderCacheRefresh();
+    }
 
     // 每次重载记一行「这一轮解析成什么样」，另起一行贴素材快照：面板「运行日志」里看到的就是
     // 这些。出问题时不用看屏幕也能知道插件在干什么、素材认出了几个。
