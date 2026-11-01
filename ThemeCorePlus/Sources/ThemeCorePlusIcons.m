@@ -755,17 +755,13 @@ static void TCPClockViewApply(UIView *view) {
 
     CGFloat scale = view.window.screen.scale > 0 ? view.window.screen.scale : 2.0;
 
-    // 1.0.11 修法（依据 1.0.10 取证）：
-    //   系统 SBHClockApplicationIconImageView 的结构是
+    // 1.0.11 逐片换素材（用户已验收）：表盘写视图自己的 layer，指针写系统那 5 个子 layer。
+    // 1.0.12 只修针帽：系统结构是
     //     视图自己的 layer.contents = 表盘
     //     + 5 个子 CALayer（10x22 时针 / 10x32 分针 / 10x10 中轴 / 2x28 秒针 / 2x2 秒针帽）
-    //   指针是系统在这 5 层上自己画、自己转的活物。
-    //
-    //   所以：只把「表盘」那一层换成主题表盘，那 5 个子 layer 一个字节都不碰。
-    //   系统继续画它的指针 —— 指针是活的，也不会和我们叠成两层。
-    //
-    //   绝不写子 layer 的 contents：那是系统每秒自己重设的，我们写进去只会被覆盖回去，
-    //   表现是闪烁或错乱（1.0.11 草稿曾这么做，已废弃）。
+    //   中轴层(l2)与秒针帽层(l4)本来就是系统自画的针帽，把 redDot 素材（4x4 点）整图塞进
+    //   10x10 / 2x2 且默认 resize 拉伸 → 中轴被放大成「太大的针帽」。这两层一个字节都不碰，
+    //   交还系统，针帽恢复系统原大小。时针 / 分针 / 秒针继续用主题素材。
     UIImage *face = TCPClockAssetImageNamed(store, @"ClockIconBackgroundSquare", scale);
     if (face == nil) {
         face = [store iconImageForBundleID:@"com.apple.mobiletimer"
@@ -773,32 +769,47 @@ static void TCPClockViewApply(UIView *view) {
                                      scale:scale
                               cornerRadius:0];
     }
-    if (face && face.CGImage == NULL) face = nil;
-    if (face == nil) {
+    if (face && face.CGImage) {
+        if (view.layer.contents != (__bridge id)face.CGImage) {
+            view.layer.contents = (__bridge id)face.CGImage;
+        }
+    }
+
+    NSArray<CALayer *> *sublayers = view.layer.sublayers;
+    NSUInteger layerCount = sublayers.count;
+    if (layerCount >= 3) {
+        UIImage *hourHand = TCPClockAssetImageNamed(store, @"ClockIconHourHand", scale);
+        UIImage *minHand = TCPClockAssetImageNamed(store, @"ClockIconMinuteHand", scale);
+        UIImage *secHand = TCPClockAssetImageNamed(store, @"ClockIconSecondHand", scale);
+
+        // l0: 时针
+        if (hourHand && hourHand.CGImage && sublayers[0].contents != (__bridge id)hourHand.CGImage) {
+            sublayers[0].contents = (__bridge id)hourHand.CGImage;
+        }
+        // l1: 分针
+        if (minHand && minHand.CGImage && sublayers[1].contents != (__bridge id)minHand.CGImage) {
+            sublayers[1].contents = (__bridge id)minHand.CGImage;
+        }
+        // l2: 中轴 —— 系统自画，不碰（1.0.12：写 redDot 会把针帽放大）
+        // l3: 秒针（若存在）
+        if (layerCount >= 4 && secHand && secHand.CGImage && sublayers[3].contents != (__bridge id)secHand.CGImage) {
+            sublayers[3].contents = (__bridge id)secHand.CGImage;
+        }
+        // l4: 秒针帽 —— 系统自画，不碰（1.0.12）
+        __sync_fetch_and_add(&sClockVHit, 1);
+        sClockVLast = [NSString stringWithFormat:@"layers:subs=%lu|face=%@|h=%@|m=%@|s=%@|dot=sys",
+                       (unsigned long)layerCount,
+                       face ? @"y" : @"n",
+                       hourHand ? @"y" : @"n",
+                       minHand ? @"y" : @"n",
+                       secHand ? @"y" : @"n"];
+    } else if (face) {
+        __sync_fetch_and_add(&sClockVHit, 1);
+        sClockVLast = [NSString stringWithFormat:@"face_only|subs=%lu", (unsigned long)layerCount];
+    } else {
         __sync_fetch_and_add(&sClockVMiss, 1);
         sClockVLast = @"noasset";
-        return;
     }
-
-    CALayer *root = view.layer;
-    if (root.contents != (__bridge id)face.CGImage) {
-        root.contents = (__bridge id)face.CGImage;
-    }
-    // 250x250 的方图塞进 60x60 的 layer：按比例铺满，不拉伸、不裁边。
-    // 用字符串字面量而不是 kCAGravityResizeAspect 常量：后者要链 QuartzCore，
-    // 本次 CI 就是栽在 `undefined symbol _kCAGravityResizeAspect`。值完全相同。
-    static NSString *const kTCPGravityResizeAspect = @"resizeAspect";
-    if (![root.contentsGravity isEqualToString:kTCPGravityResizeAspect]) {
-        root.contentsGravity = kTCPGravityResizeAspect;
-    }
-    // contentsScale 不设会按 1x 采样，60x60 的图标上会糊。
-    if (root.contentsScale != scale) root.contentsScale = scale;
-
-    __sync_fetch_and_add(&sClockVHit, 1);
-    sClockVLast = [NSString stringWithFormat:@"face|layers=%lu|contents=%@|%.0fx%.0f@%.0f",
-                   (unsigned long)root.sublayers.count,
-                   root.contents ? @"y" : @"n",
-                   size.width, size.height, scale];
 }
 
 static void TCPClockLayoutHook(id self, SEL _cmd) {
