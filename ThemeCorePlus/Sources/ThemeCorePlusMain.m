@@ -168,6 +168,7 @@ static void TCPReload(BOOL refreshImages) {
     // 它自己画表盘和指针，只能挂 SBHClockApplicationIconImageView 的 layoutSubviews。
     // 类还没加载时它自己会返回，下一轮再挂。
     TCPInstallClockViewSite();
+    TCPInstallFolderSites();           // 1.0.33：文件夹底板站（ANEMFolderIconBG）—— 之前写好了从没调，外壳透明无背景的根因
     TCPInstallFolderGridCellSites();   // 1.0.12：文件夹收起 mini 拼图的格子图站
     TCPInstallFolderMiniCellSite();    // 1.0.32：mini 拼图真正的入口（SBFolderIcon 自己）
 

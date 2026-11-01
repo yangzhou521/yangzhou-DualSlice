@@ -210,6 +210,7 @@ void TCPFolderCacheRefresh(void);
 // 1.0.22：找到屏幕上的 SBFolderIcon 并调 informObserversOfUpdateForFolderIcon:，
 // 通知系统重算文件夹收起的 mini 拼图（leaf 站已挂，重算时出主题图）。
 void TCPFolderNotifyRecalc(void);
+void TCPInstallFolderSites(void);   // 1.0.33：文件夹底板站（ANEMFolderIconBG）—— Main 现才调用
 NSString *TCPFolderNotifyReport(void);
 // 文件夹 mini 站点：SBFolderIconImageCache 的 -gridCellImageOfSize:forIcon:iconImageInfo:。
 // 由 ThemeCorePlusFolders.m 实现（0.9.x 那份一直没接进来，这里重新声明好让站表能引用）。

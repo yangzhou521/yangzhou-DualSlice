@@ -761,10 +761,13 @@ static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *syst
         if (a < 16) continue;                       // ① 透明 → 背景
         unsigned char r = p[0], g = p[1], b = p[2];
         unsigned char mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
-        if (mx >= 140) continue;                    // ② 亮色（白底/灰阴影）→ 不是墨
-        unsigned char gb = g > b ? g : b;
-        if ((int)r - (int)gb > 30) continue;        // ③ 偏红（星期文字）→ 不是墨
-        // 越黑越实：mx 越小越实，映射到 120~255 的幅度
+        // 1.0.33：规则② 阈值从 140 提到 200 —— 系统日历的星期文字（红）与日期数字
+        // 都带浅色抗锯齿边/柔边，mx≥140 会把文字边缘剔掉，看起来「数字只显示一半」。
+        // 只剔纯白底板与浅灰阴影（mx≥200），把星期红字 + 黑日期数字都当文字保留。
+        if (mx >= 200) continue;                    // ② 纯白底/亮灰阴影 → 不是文字
+        // 规则③ 已删（1.0.33）：不再剔红色星期文字 —— 用户要「底图 + 系统文字动态显示」，
+        // 星期（顶部红字）必须保留。红色像素 r 高、g/b 低，mx=r，低于 200 就会落到这里当文字。
+        // 越深越实：mx 越小越实，映射到 120~255 的幅度
         rawAlpha[i] = (unsigned char)(mx < 100 ? 255 : 255 - (mx - 100) * 2);
     }
     free(buffer);
