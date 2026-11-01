@@ -750,14 +750,22 @@ static void TCPClockViewApply(UIView *view) {
     CGSize size = view.bounds.size;
     if (size.width < 8 || size.height < 8) return;
 
-    // 清理旧版本的整图覆盖层
+    // 清理旧版本的整图覆盖层（1.0.8 及以前那种盖一张含指针的整图 = 双层来源，永久废除）
     TCPClockEnsureOverlay(view, nil);
 
     CGFloat scale = view.window.screen.scale > 0 ? view.window.screen.scale : 2.0;
 
-    // 1.0.11：借鉴 SnowBoard / MarkTheme —— 绝不自己合成整张静态图！
-    // 方案：逐层设置 contents，转动和动画完全交给系统：
-    // ① 表盘素材（ClockIconBackgroundSquare）：写进 view.layer.contents
+    // 1.0.11 修法（依据 1.0.10 取证）：
+    //   系统 SBHClockApplicationIconImageView 的结构是
+    //     视图自己的 layer.contents = 表盘
+    //     + 5 个子 CALayer（10x22 时针 / 10x32 分针 / 10x10 中轴 / 2x28 秒针 / 2x2 秒针帽）
+    //   指针是系统在这 5 层上自己画、自己转的活物。
+    //
+    //   所以：只把「表盘」那一层换成主题表盘，那 5 个子 layer 一个字节都不碰。
+    //   系统继续画它的指针 —— 指针是活的，也不会和我们叠成两层。
+    //
+    //   绝不写子 layer 的 contents：那是系统每秒自己重设的，我们写进去只会被覆盖回去，
+    //   表现是闪烁或错乱（1.0.11 草稿曾这么做，已废弃）。
     UIImage *face = TCPClockAssetImageNamed(store, @"ClockIconBackgroundSquare", scale);
     if (face == nil) {
         face = [store iconImageForBundleID:@"com.apple.mobiletimer"
@@ -765,62 +773,29 @@ static void TCPClockViewApply(UIView *view) {
                                      scale:scale
                               cornerRadius:0];
     }
-    if (face && face.CGImage) {
-        if (view.layer.contents != (__bridge id)face.CGImage) {
-            view.layer.contents = (__bridge id)face.CGImage;
-        }
-    }
-
-    // ② 指针素材（时针、分针、红点/秒针中轴）：写入系统那 5 个 sublayer 的 contents
-    // 诊断证实结构：
-    //   l0: 10x22 (时针)   -> ClockIconHourHand
-    //   l1: 10x32 (分针)   -> ClockIconMinuteHand
-    //   l2: 10x10 (中轴)   -> ClockIconRedDot / ClockIconBlackDot
-    //   l3: 2x28  (秒针)   -> ClockIconSecondHand
-    //   l4: 2x2   (秒针帽) -> ClockIconRedDot
-    NSArray<CALayer *> *sublayers = view.layer.sublayers;
-    NSUInteger layerCount = sublayers.count;
-    if (layerCount >= 3) {
-        UIImage *hourHand = TCPClockAssetImageNamed(store, @"ClockIconHourHand", scale);
-        UIImage *minHand = TCPClockAssetImageNamed(store, @"ClockIconMinuteHand", scale);
-        UIImage *redDot = TCPClockAssetImageNamed(store, @"ClockIconRedDot", scale);
-        if (redDot == nil) redDot = TCPClockAssetImageNamed(store, @"ClockIconBlackDot", scale);
-        UIImage *secHand = TCPClockAssetImageNamed(store, @"ClockIconSecondHand", scale);
-
-        // l0: 时针
-        if (hourHand && hourHand.CGImage && sublayers[0].contents != (__bridge id)hourHand.CGImage) {
-            sublayers[0].contents = (__bridge id)hourHand.CGImage;
-        }
-        // l1: 分针
-        if (minHand && minHand.CGImage && sublayers[1].contents != (__bridge id)minHand.CGImage) {
-            sublayers[1].contents = (__bridge id)minHand.CGImage;
-        }
-        // l2: 中轴
-        if (redDot && redDot.CGImage && sublayers[2].contents != (__bridge id)redDot.CGImage) {
-            sublayers[2].contents = (__bridge id)redDot.CGImage;
-        }
-        // l3: 秒针（若存在）
-        if (layerCount >= 4 && secHand && secHand.CGImage && sublayers[3].contents != (__bridge id)secHand.CGImage) {
-            sublayers[3].contents = (__bridge id)secHand.CGImage;
-        }
-        // l4: 秒针帽
-        if (layerCount >= 5 && redDot && redDot.CGImage && sublayers[4].contents != (__bridge id)redDot.CGImage) {
-            sublayers[4].contents = (__bridge id)redDot.CGImage;
-        }
-        __sync_fetch_and_add(&sClockVHit, 1);
-        sClockVLast = [NSString stringWithFormat:@"layers:subs=%lu|face=%@|h=%@|m=%@|dot=%@",
-                       (unsigned long)layerCount,
-                       face ? @"y" : @"n",
-                       hourHand ? @"y" : @"n",
-                       minHand ? @"y" : @"n",
-                       redDot ? @"y" : @"n"];
-    } else if (face) {
-        __sync_fetch_and_add(&sClockVHit, 1);
-        sClockVLast = [NSString stringWithFormat:@"face_only|subs=%lu", (unsigned long)layerCount];
-    } else {
+    if (face && face.CGImage == NULL) face = nil;
+    if (face == nil) {
         __sync_fetch_and_add(&sClockVMiss, 1);
         sClockVLast = @"noasset";
+        return;
     }
+
+    CALayer *root = view.layer;
+    if (root.contents != (__bridge id)face.CGImage) {
+        root.contents = (__bridge id)face.CGImage;
+    }
+    // 250x250 的方图塞进 60x60 的 layer：按比例铺满，不拉伸、不裁边。
+    if (![root.contentsGravity isEqualToString:kCAGravityResizeAspect]) {
+        root.contentsGravity = kCAGravityResizeAspect;
+    }
+    // contentsScale 不设会按 1x 采样，60x60 的图标上会糊。
+    if (root.contentsScale != scale) root.contentsScale = scale;
+
+    __sync_fetch_and_add(&sClockVHit, 1);
+    sClockVLast = [NSString stringWithFormat:@"face|layers=%lu|contents=%@|%.0fx%.0f@%.0f",
+                   (unsigned long)root.sublayers.count,
+                   root.contents ? @"y" : @"n",
+                   size.width, size.height, scale];
 }
 
 static void TCPClockLayoutHook(id self, SEL _cmd) {

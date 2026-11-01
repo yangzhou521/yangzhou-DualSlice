@@ -173,8 +173,9 @@ fi
 # 所以这里只做两件事：屏幕上走完倒计时 + 打印 CONFIRMED 标记，
 # 由调用方在同一回合里接着「装包 → sbreload」。用户仍然只点一次。
 if [ -n "$INSTALL_DEB" ]; then
-  echo "respring-guard: 用户已点头（--install 模式），倒计时 ${WAIT} 秒后交接给调用方装包"
-  i=$WAIT
+  echo "respring-guard: 用户已点头（--install 模式），倒计时 5 秒后交接给调用方装包"
+  hud_request 5 "$LABEL" || true
+  i=5
   while [ "$i" -gt 0 ]; do
     echo "  $i…"
     sleep 1
