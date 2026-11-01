@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.5";
+static NSString *const CHVersion = @"1.6.6";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -304,7 +304,7 @@ static void CHCollectPills(UIView *view, NSMutableArray *out, int depth) {
 }
 
 // 候选打分：SystemAperture 窗口里的、名字像岛本体的赢。
-// 尺寸规则（v1.6.5 起）：不再按固定 126x37 计罚。按当前内容决定目标岛 ——
+// 尺寸规则（v1.6.6 起）：不再按固定 126x37 计罚。按当前内容决定目标岛 ——
 //   gWantLongIsland==YES（长文字）：偏好长岛（145x47），宽高和越大分越高；
 //   gWantLongIsland==NO（倒计时/短文案）：偏好短岛（125x37），离短岛越近分越高。
 // 这样倒计时/短文字用短岛，长文字才用长岛。
@@ -326,12 +326,12 @@ static double CHPillScore(NSString *cls, CGRect r, BOOL inApertureWindow) {
         score -= 0.8;
     }
     if (gWantLongIsland) {
-        // 长文字：偏好长岛 —— 宽+高越大分越高（长岛态 > 短岛态 > 无岛）。
-        score += (r.size.width + r.size.height) / CHIdealIslandWidth;
+        // 长文字：偏好长岛 —— 宽+高越大越好。系数 0.2 让尺寸差（长岛比短岛宽 20pt
+        // 高 10pt → 30×0.2=6 分）压过短岛靠类名多拿的 ~1.6 分（Aperture+Container）。
+        score += (r.size.width + r.size.height) * 0.2;
     } else {
-        // 短文字：偏好短岛 —— 离 125x37 越近分越高。
-        score -= fabs(r.size.width - CHIdealIslandWidth) / CHIdealIslandWidth;
-        score -= fabs(r.size.height - CHIdealIslandHeight) / CHIdealIslandHeight;
+        // 短文字：偏好短岛 —— 离 125x37 越近越好。
+        score -= (fabs(r.size.width - CHIdealIslandWidth) + fabs(r.size.height - CHIdealIslandHeight)) * 0.2;
     }
     return score;
 }
@@ -475,10 +475,11 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
 }
 
 static void CHWriteDiagnostics(void) {
-    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@;exec=%@;alertWin=%@;link=%@;taps=%lu",
+    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;want=%d;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@;exec=%@;alertWin=%@;link=%@;taps=%lu",
                          CHVersion, gShows, gLastSeconds,
                          gLabelText.length ? gLabelText : @"-",
                          gFontSize,
+                         gWantLongIsland ? 1 : 0,
                          gIslandDetail, gIslandSource,
                          (unsigned long)gIslandCandidates,
                          gAskMode ? (gAskIsVPN ? @"alertvpn" : @"alert") : (gPlainNotice ? @"plain" : @"count"),

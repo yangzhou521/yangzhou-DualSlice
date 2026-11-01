@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.5)
+    name: Release (countdownhud-v1.6.6)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,10 +133,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.5
-          name: CountdownHUD v1.6.5
+          tag_name: countdownhud-v1.6.6
+          name: CountdownHUD v1.6.6
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            v1.6.6：**修「长文字没跟长岛」**。v1.6.5 的逻辑（按文字宽选长短岛）方向对，但
+            评分里短岛靠类名多拿 ~1.6 分（Aperture + Container），把长岛那点尺寸优势
+            （宽高和差 30 ÷ 126 ≈ 0.23 分）盖过了 —— 于是系统明明有长岛态 145×47，
+            长文字仍跟了短岛 125×37（真机实测：`A|UIView|115,17,145,47` 在候选里却没被选中）。
+            现在尺寸分改为**主导**（乘系数 0.2，长岛 43.4 > 短岛 39.0），长文字正确跟长岛。
+            诊断串加 `want=0|1`，直接看出这轮判定的是短岛还是长岛。
 
             v1.6.5：**短岛 / 长岛按内容切换**。之前 HUD 固定按理想岛 126×37 计罚，
             长岛态（音乐等 145×47）会被短岛刷掉、跟错尺寸。现在按实测文字宽决定：
@@ -252,4 +259,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.5/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.6/$(basename "$DEB")"
