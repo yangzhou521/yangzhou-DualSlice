@@ -16,6 +16,32 @@
 
 #import <math.h>
 
+#pragma mark - 图片工作量闸门（1.0.35）
+
+// 1.0.35（修 2026-11-02 00:24 SpringBoard 连崩两次进安全模式）：**dyld 构造函数阶段一律不读图**。
+//
+// 崩溃栈（SpringBoard-2026-11-02-002406.ips）：
+//   TCPInitialize（构造函数）→ TCPReload(NO) → +[TCPThemeStore shared] → -reload
+//   → 遮罩体检 [self cachedImageAtPath:…] → +[UIImage imageWithContentsOfFile:]
+//   → 内部 _UIImageCollectImagePathsForPath → **+[UIScreen mainScreen]**
+//   → NSAssertionHandler → SIGABRT。
+// 构造函数跑在任何 main() 之前，那时 UIApplication / UIScreen 都还不存在，UIKit 的读取
+// 一律可能命中这条断言 —— 所以问题不是「哪一行」，而是「构造函数里根本不能碰图」。
+//
+// 做法：本文件所有读图都过这道闸门。闸门由 Main.m 在进程起来之后（构造函数 +2 秒，
+// 那时 main() 早已开跑、UIApplication 已建起来）打开，打开时补做被推迟的两件事：
+// 遮罩体检、图标预热。构造函数阶段照旧建索引（只读目录与 plist，不碰 UIKit），
+// 只是不读任何图片 —— 首次渲染晚两三秒带素材，但进程不会再崩。
+static BOOL sTCPImageWorkReady = NO;
+
+BOOL TCPStoreImageWorkReady(void) { return sTCPImageWorkReady; }
+
+void TCPStoreEnableImageWork(void) {
+    if (sTCPImageWorkReady) return;
+    sTCPImageWorkReady = YES;
+    [[TCPThemeStore shared] performDeferredImageWork];
+}
+
 #pragma mark - 文件名解析
 
 // 只认图片扩展名：别的文件进索引只会白占内存。
@@ -256,6 +282,8 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 @interface TCPThemeStore ()
 // 1.0.24：异步预热常用尺寸图标合成图（ImageSet 预生成思路，后台队列）。
 - (void)prewarmRenderedIcons;
+// 1.0.35：遮罩体检（从 reload 里挪出来，会读图，只能在闸门打开后调）。
+- (void)refreshMaskCoverage;
 // 对外只读，内部要写。
 @property (atomic) NSUInteger generation;
 @property (atomic) BOOL active;
@@ -473,19 +501,12 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         [self.renderedFingerprints removeAllObjects];
         // 遮罩体检（0.9.4，修「图标空白」）：把遮罩的 alpha 覆盖量一遍 —— 玻璃 / 细环那类遮罩
         // 几乎全透明，拿去裁图标只会把主体裁没。低于门槛的**不使用**，让图标保持素材原样。
-        CGFloat coverage = 1.0;
-        BOOL skipped = NO;
-        if (self.maskPath.length > 0) {
-            UIImage *maskImage = [self cachedImageAtPath:self.maskPath size:CGSizeZero];
-            if (maskImage != nil) {
-                coverage = TCPAlphaCoverage(maskImage);
-                skipped = (coverage < TCPMaskCoverageFloor);
-            }
-        }
-        self.maskCoverage = coverage;
-        self.maskSkipped = skipped;
+        // 1.0.35：**量测本身要读图，构造函数阶段做不得**（见文件头闸门说明），这里只落状态；
+        // 真正的量测由 performDeferredImageWork 在进程起来之后补做一次。
         self.ibMaskIcons = ibMask;
-        // 0.9.30：主题声明 IB-MaskIcons=true → 素材已自带圆角，遮罩整体作废。
+        self.maskCoverage = 1.0;
+        self.maskSkipped = NO;
+        // 0.9.30：主题声明 IB-MaskIcons=true → 素材已自带圆角，遮罩整体作废（连图都不用读）。
         // 本机「液态玻璃」就是这种：AppIconMask 覆盖率 0.14，套上去只剩一圈边（主屏图标看着就是空的）。
         if (ibMask) {
             self.maskPath = nil;
@@ -500,11 +521,20 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     // 的另一半根源（缓存层只能省重复合成，省不了首次合成）。这里在后台线程先把 60pt@2x/@3x
     // 两份全部合成进 renderedCache，主线程第一次取图直接命中。
     // 只预热「有主题素材的 App 图标」，不碰动态图标（时钟/日历走自己的合成站）、不碰角标。
-    [self prewarmRenderedIcons];
+    //
+    // 1.0.35：「体检 + 预热」两件都要读图，闸门没开（构造函数那次 reload）就都不做 ——
+    // 闸门打开时由 performDeferredImageWork 补做，所以这里不是漏掉，是挪到进程起来之后。
+    if (sTCPImageWorkReady) {
+        [self refreshMaskCoverage];
+        [self prewarmRenderedIcons];
+    }
 }
 
 // 1.0.24：异步预热 renderedCache（后台队列，绝不在主线程做；失败静默）。
 - (void)prewarmRenderedIcons {
+    // 1.0.35：闸门没开不预热（构造函数阶段连后台读图都可能崩）；闸门打开时
+    // performDeferredImageWork 会再调一次，所以这里 return 不会漏掉预热。
+    if (!sTCPImageWorkReady) return;
     NSArray<NSString *> *bundleIDs = nil;
     NSUInteger generation = 0;
     @synchronized (self) {
@@ -532,6 +562,46 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
             }
         }
     });
+}
+
+// 1.0.35：闸门打开时补做构造函数里被推迟的图片工作（遮罩体检 + 图标预热）。
+// 由 TCPStoreEnableImageWork 在主队列调一次。
+- (void)performDeferredImageWork {
+    [self refreshMaskCoverage];
+    [self prewarmRenderedIcons];
+}
+
+// 遮罩体检（0.9.4 引入，1.0.35 从 reload 里挪出来）：量遮罩的 alpha 覆盖率，太薄的记成「不使用」。
+// **会读图**，只能在 sTCPImageWorkReady 之后调用（构造函数阶段调用会 SIGABRT，见文件头）。
+- (void)refreshMaskCoverage {
+    NSString *maskPath = nil;
+    BOOL ibMask = NO;
+    @synchronized (self) {
+        maskPath = self.maskPath;
+        ibMask = self.ibMaskIcons;
+    }
+    if (ibMask) {
+        // 素材自带圆角 → 遮罩整体作废（0.9.30），连图都不用读。
+        @synchronized (self) {
+            self.maskPath = nil;
+            self.maskCoverage = 1.0;
+            self.maskSkipped = YES;
+        }
+        return;
+    }
+    CGFloat coverage = 1.0;
+    BOOL skipped = NO;
+    if (maskPath.length > 0) {
+        UIImage *maskImage = [self cachedImageAtPath:maskPath size:CGSizeZero];
+        if (maskImage != nil) {
+            coverage = TCPAlphaCoverage(maskImage);
+            skipped = (coverage < TCPMaskCoverageFloor);
+        }
+    }
+    @synchronized (self) {
+        self.maskCoverage = coverage;
+        self.maskSkipped = skipped;
+    }
 }
 
 - (BOOL)cornerMaskEnabled {
@@ -1177,6 +1247,10 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
 // size 给 CGSizeZero 表示原图；否则按 size×scale 重画。素材本来就小，缓存按路径即可。
 - (UIImage *)cachedImageAtPath:(NSString *)path size:(CGSize)size {
     if (path.length == 0) return nil;
+    // 1.0.35 闸门：进程起来之前读任何一张图都可能命中 +[UIScreen mainScreen] 断言 → SIGABRT
+    // （见文件头说明）。这里是本文件读图的**唯一入口**，所以闸门放在这一行就够了：
+    // 构造函数阶段所有合成路径都会拿到 nil，调用方一律退回系统原图。
+    if (!sTCPImageWorkReady) return nil;
     NSString *key = CGSizeEqualToSize(size, CGSizeZero)
         ? path
         : [NSString stringWithFormat:@"%@|%.0fx%.0f", path, size.width, size.height];

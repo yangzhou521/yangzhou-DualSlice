@@ -1,12 +1,12 @@
 {
   "task": "ThemeCorePlus 图标主题化全面覆盖 + 秒加载",
   "status": "running",
-  "step": "1.0.34 已推送待编译（探针加了 SBHIconManager / SBFolderIconImageView / SBLiveIconImageView）",
+  "step": "1.0.35 修复版已改完，准备推送编译（修构造函数读图 → +[UIScreen mainScreen] 断言 → SpringBoard 连崩）",
   "chain": ["改码", "编译", "下载", "装机", "注销", "验证"],
-  "done": "1.0.33 云编译成功（run 41321754292），deb 已下载到 /rootfs/var/mobile/Documents/tcp-1.0.33.deb，但装包弹窗被取消（cancel 不算拒绝）；1.0.34 加了三个 misaki 发现的类名进探针清单",
-  "next": "1.0.34 云编译 → 下载 → 弹窗装机 → 注销 → 读 TCPCacheProbe.txt（含 SBHIconManager 等三个新类）与 TCPIconServiceProbe.txt → 按结果定路线 A（缓存层）或 B'（视图层）",
+  "done": "1.0.34 装机后 SpringBoard 连崩进安全模式（SpringBoard-2026-11-02-002406.ips，consecutiveCrashCount=2）；根因已定位：构造函数 TCPInitialize → TCPReload → 读遮罩素材 → imageWithContentsOfFile → UIKit 内部 _UIImageCollectImagePathsForPath → +[UIScreen mainScreen]（main() 之前不存在）→ SIGABRT。1.0.35 已加进程内读图闸门：构造函数只建索引，读图一律 nil；+2 秒主队列开闸并补做遮罩体检/图标预热",
+  "next": "commit + push → 等 CI → 下载 tcp-1.0.35.deb → 弹窗（respring-guard --ask --install）→ irisin-cli install → sbreload → 读两份 probe（TCPCacheProbe.txt / TCPIconServiceProbe.txt，含 1.0.34 新增的 SBHIconManager / SBFolderIconImageView / SBLiveIconImageView）+ 确认无新崩溃",
   "pending": [
-    "装 1.0.34 并注销，读两份 probe",
+    "1.0.35 云编译 → 下载 → 弹窗装机 → 注销 → 读 TCPCacheProbe.txt 与 TCPIconServiceProbe.txt",
     "根据 probe 结果选路线：A 缓存层（SBHIconManager/SBHIconImageCache 取图+purge）或 B' 视图层（SBIconView/SBLiveIconImageView/SBFolderIconImageView）",
     "读 probe 修时钟 found=0（1.0.32 已改类名，待复验）",
     "读 probe 修日历视觉异常（透明角点污染背景均值）",
@@ -14,8 +14,8 @@
     "与 Mikkyy 并存冲突处理 —— 等 AI 给判据",
     "Spotlight / ShareSheet / QuickLook 进程覆盖（工作量项）"
   ],
-  "why": "用户 2026-11-01 要求今天彻底解决；AI 逆向给了 4 个根因，已移植",
-  "evidence": "1.0.33 云编译 success（run 41321754292，sha 0df1e13d）；1.0.34 待编译。misaki 2.2 逆向：SBHIconManager/SBFolderIconImageView/SBLiveIconImageView 在其 dylib 中各 2 hits，SBHIconImageCache 0 hits；misaki 用 NSClassFromString 4 处、零全表扫描、只改属性不换图",
-  "guard": "角标/图标主题化用户点名冻结（只做未覆盖的新路径，不回退）；Prefs/ 冻结；装包注销必须弹窗",
-  "updated": "2026-11-01T23:55+08:00"
+  "why": "用户 2026-11-01 要求今天彻底解决；1.0.34 崩溃必须先修掉才能继续取证",
+  "evidence": "崩溃报告 SpringBoard-2026-11-02-002406.ips 的调用栈已逐帧对齐源码行号；1.0.34 磁盘 dylib 697920 字节、dpkg 版本 1.0.34（grep -abo '1.0.3' 偏移 190648/521976）",
+  "guard": "角标/图标主题化用户点名冻结（只做未覆盖的新路径，不回退）；Prefs/ 冻结；装包注销必须弹窗；注入 SpringBoard 的插件构造函数阶段禁碰任何 UIKit API",
+  "updated": "2026-11-02T00:50+08:00"
 }

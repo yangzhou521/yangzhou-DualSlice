@@ -17,6 +17,17 @@
 // 重新扫盘（读偏好、解析主题链、建索引）。任何线程可用；挂在通知回调与首次使用时。
 - (void)reload;
 
+// —— 图片工作量闸门（1.0.35）——
+// dyld 构造函数阶段（任何 main() 之前）读图会命中 +[UIScreen mainScreen] 的断言 → SIGABRT
+// （2026-11-02 00:24 SpringBoard 连崩两次进安全模式就是这条）。所以：
+//   · TCPStoreImageWorkReady()      是否已经可以读图（构造函数阶段返回 NO）
+//   · TCPStoreEnableImageWork()     构造函数里先排好、进程起来之后（+2 秒，主队列）调它开闸，
+//                                   顺带补做被推迟的遮罩体检与图标预热。幂等。
+BOOL TCPStoreImageWorkReady(void);
+void TCPStoreEnableImageWork(void);
+// 闸门打开时补做推迟工作的内部方法（实现细节，外部不用调）。
+- (void)performDeferredImageWork;
+
 // —— 生效状态（诊断用）——
 @property (atomic, readonly) BOOL active;             // 是否挂上了主题（没挂 = 系统原生外观）
 // themeName 是**所有生效主题**的名字用 " + " 连起来（按叠加顺序），单个主题时就是它自己。

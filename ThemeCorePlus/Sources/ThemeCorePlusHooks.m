@@ -65,6 +65,10 @@ NSArray<NSString *> *TCPSiteDescriptions(void) {
 static CGFloat TCPUIScale(void) {
     static CGFloat scale = 0;
     static dispatch_once_t once;
+    // 1.0.35：进程起来之前（dyld 构造函数阶段）**绝不能碰 +[UIScreen mainScreen]** ——
+    // 那时 UIApplication 还没建起来，取值会命中 UIKit 的断言直接 SIGABRT。此时返回 3.0 兜底，
+    // 不进 dispatch_once（否则一个临时值会被永久缓存住）；等闸门开了再真正取一次屏倍率。
+    if (!TCPStoreImageWorkReady()) return 3.0;
     dispatch_once(&once, ^{
         CGFloat s = [UIScreen mainScreen].scale;
         scale = (s >= 1.0) ? s : 3.0;

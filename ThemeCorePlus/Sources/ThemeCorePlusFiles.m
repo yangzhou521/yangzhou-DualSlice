@@ -28,6 +28,9 @@ static NSString *TCPCurrentBundleIdentifier(void) {
 // 路径版：问 store 有没有这个文件名的替换源。
 static NSString *TCPReplacementPathForFile(NSString *path) {
     if (path.length == 0) return nil;
+    // 1.0.35：闸门没开（dyld 构造函数阶段）不做任何覆盖查询 —— 进程起来之前不掺和图片事务
+    // （那时读图会命中 +[UIScreen mainScreen] 断言 → SIGABRT，见 ThemeCorePlusStore.m 顶部说明）。
+    if (!TCPStoreImageWorkReady()) return nil;
     TCPThemeStore *store = [TCPThemeStore shared];
     if (!store.active) return nil;
     if (TCPPathIsInsideThemeRoots(path)) return nil;   // 自己人读自己素材
@@ -39,6 +42,8 @@ static NSString *TCPReplacementPathForFile(NSString *path) {
 // 名字版（+imageNamed:）：名字不是路径，只有「目录名之外」的部分参与匹配。
 static NSString *TCPReplacementPathForName(NSString *name) {
     if (name.length == 0) return nil;
+    // 1.0.35：同 TCPReplacementPathForFile —— 闸门没开就不查。
+    if (!TCPStoreImageWorkReady()) return nil;
     TCPThemeStore *store = [TCPThemeStore shared];
     if (!store.active) return nil;
     NSString *replacement = [store overridePathForBundleID:TCPCurrentBundleIdentifier() fileName:name];

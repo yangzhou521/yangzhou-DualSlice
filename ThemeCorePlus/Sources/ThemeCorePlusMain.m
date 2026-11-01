@@ -296,6 +296,15 @@ __attribute__((constructor)) static void TCPInitialize(void) {
         //   等 SpringBoard 窗口建出来之后补挂两轮（那时 SpringBoardHome 一定已 dlopen）。
         TCPReload(NO);
 
+        // 1.0.35（修「构造函数里读图 → +[UIScreen mainScreen] 断言 → SpringBoard 连崩」）：
+        // 构造函数阶段只建索引、不读任何图片（见 ThemeCorePlusStore.m 顶部闸门说明）。
+        // 2 秒后（main() 早就开跑、UIApplication 已建起来）开闸，顺带补做被推迟的
+        // 遮罩体检与图标预热。SpringBoard 与设置面板两个进程各自开自己那道闸。
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            TCPStoreEnableImageWork();
+        });
+
         // 1.0.31：**补挂改成 dyld 事件，不再定时扫描**（用户 2026-11-01 20:09 确认这条是最优解）。
         // 本机五个主题引擎里 Mikkyy 用的正是 dyld_register_func_for_add_image：框架一加载就通知，
         // 那时类一定已注册，objc_getClass 直取即可。定时拍只能撞运气，且每拍都拷全表。
