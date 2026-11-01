@@ -1,10 +1,20 @@
 {
-  "task": "ThemeCorePlus 秒加载（缓存层）",
-  "status": "blocked",
-  "done": "1.0.30 已装机并加载 v1.0.30，sites=26（1.0.29=18），SpringBoard 无新崩溃",
-  "next": "换方向：找 iOS 16.7.16 上真正生成图标图的那一层（缓存三件套都不声明 iconImageWithInfo:）",
-  "why": "1.0.30 假设「真入口类名不含 IconImageCache」不成立：SBHIconImageCache/SBFolderIconImageCache/PKIconImageCache 的 iconImageWithInfo:/unmasked/generate 全是 nomethod，按选择器名全进程扫描也扫不到（byname 无输出）",
-  "evidence": "v1.0.30;cache=0;last=nocache;cachecls 三件套 nomethod;sites=26",
-  "guard": "角标/图标冻结勿动；装包注销必须弹窗；Prefs/ 面板冻结",
-  "updated": "2026-11-01T19:5x+08:00"
+  "task": "ThemeCorePlus 图标主题化全面覆盖 + 秒加载",
+  "status": "running",
+  "step": "1.0.33 已推送待编译（iconservicesagent 探针）",
+  "chain": ["改码", "编译", "下载", "装机", "注销", "验证"],
+  "done": "1.0.32 已装机验证前置待续；1.0.33 加了 iconservicesagent 只读探针",
+  "next": "等 1.0.33 云编译 → 装机 → 注销 → 读 TCPIconServiceProbe.txt + TCPCacheProbe.txt",
+  "pending": [
+    "装 1.0.33 并验证（日历/时钟/文件夹 mini/角标）",
+    "读 TCPIconServiceProbe.txt 判断要不要走资源层路线",
+    "秒加载：hook SBHIconImageCache 取图方法 + purge 时序",
+    "文件图标（UTI）覆盖 —— 等 AI 给 SpringBoard 内入口",
+    "与 Mikkyy 并存冲突处理 —— 等 AI 给判据",
+    "Spotlight / ShareSheet / QuickLook 进程覆盖（工作量项）"
+  ],
+  "why": "用户 2026-11-01 要求今天彻底解决；AI 逆向给了 4 个根因，已移植",
+  "evidence": "v1.0.32 云编译 success（run 41318900195）；1.0.33 已 push 21f5396d",
+  "guard": "角标/图标主题化用户点名冻结（只做未覆盖的新路径，不回退）；Prefs/ 冻结；装包注销必须弹窗",
+  "updated": "2026-11-01T23:18+08:00"
 }
