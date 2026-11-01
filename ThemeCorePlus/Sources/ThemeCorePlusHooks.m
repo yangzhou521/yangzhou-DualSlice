@@ -366,6 +366,55 @@ TCP_SLOT_INDEX_LIST(TCP_DEFINE_DISPLAY_SLOT)
 static IMP *const kDisplaySlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_DISPLAY) };
 static const IMP kDisplayHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_DISPLAY) };
 
+#pragma mark - 文件夹 mini 格子站：(CGSize, icon, SBIconImageInfo) 进、UIImage 出
+
+// SBFolderIconImageCache 的 -gridCellImageOfSize:forIcon:iconImageInfo:
+// 签名 (id, SEL, CGSize, id, SBIconImageInfo) → UIImage。第三个结构体 SBIconImageInfo 与
+// TCPIconImageInfo 完全同构（4 double HFA，_Static_assert 锁死），所以 C 原型直接写
+// TCPIconImageInfo —— 编译器按正确 ABI 生成调用，绝不手算寄存器（0.6.0 / 1.0.8 都是
+// 手算/抄错结构体崩进安全模式）。
+typedef UIImage *(*TCPFolderGridCellFn)(id, SEL, CGSize, id, TCPIconImageInfo);
+
+static long sFolderGridLook = 0, sFolderGridHit = 0, sFolderGridMiss = 0;
+
+NSString *TCPFolderGridCellProbeReport(void) {
+    return [NSString stringWithFormat:@"grid{look=%ld,hit=%ld,miss=%ld}",
+            sFolderGridLook, sFolderGridHit, sFolderGridMiss];
+}
+
+static UIImage *TCPFolderGridHandle(IMP *slot, id self, SEL _cmd, CGSize size,
+                                    id icon, TCPIconImageInfo info) {
+    IMP original = *slot;
+    if (original == NULL) return nil;
+    __sync_fetch_and_add(&sFolderGridLook, 1);
+    // 先跑原实现拿系统那张格子图：参数可信时用它做尺寸/占位参考，参数不可信则原样退回。
+    UIImage *originalImage = ((TCPFolderGridCellFn)original)(self, _cmd, size, icon, info);
+    if (!TCPIconInfoUsable(info)) {
+        return originalImage;   // 结构体读坏了（size/scale 是垃圾值），绝不在自己这里崩
+    }
+    // 参数里直接带着「这一格是哪个 App」，直接按 bundleID 出主题图。
+    UIImage *themed = TCPThemedIconImage(icon, info);
+    if (themed == nil) {
+        __sync_fetch_and_add(&sFolderGridMiss, 1);
+        return originalImage;
+    }
+    __sync_fetch_and_add(&sFolderGridHit, 1);
+    return themed;
+}
+
+#define TCP_DEFINE_FOLDERGRID_SLOT(n)                                          \
+    static IMP tcpFolderGridOrig##n = NULL;                                    \
+    static UIImage *tcpFolderGridHook##n(id self, SEL _cmd, CGSize size,       \
+                                          id icon, TCPIconImageInfo info) {     \
+        return TCPFolderGridHandle(&tcpFolderGridOrig##n, self, _cmd, size, icon, info); \
+    }
+TCP_SLOT_INDEX_LIST(TCP_DEFINE_FOLDERGRID_SLOT)
+
+#define TCP_SLOT_PTR_FOLDERGRID(n) &tcpFolderGridOrig##n,
+#define TCP_FN_PTR_FOLDERGRID(n) (IMP)tcpFolderGridHook##n,
+static IMP *const kFolderGridSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_FOLDERGRID) };
+static const IMP kFolderGridHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_FOLDERGRID) };
+
 #pragma mark - 槽位表
 
 typedef struct {
@@ -380,6 +429,7 @@ static const TCPSlotGroup kSlotGroups[TCPSiteKindCount] = {
     { kBadgeTextSlotStorage,   kBadgeTextHookFns },   // TCPSiteKindBadgeTextImage
     { kFolderBackSlotStorage,  kFolderBackHookFns },  // TCPSiteKindFolderBackground
     { kDisplaySlotStorage,     kDisplayHookFns },     // TCPSiteKindDisplayImage
+    { kFolderGridSlotStorage,  kFolderGridHookFns },  // TCPSiteKindFolderGridCell
 };
 
 #pragma mark - 挂站

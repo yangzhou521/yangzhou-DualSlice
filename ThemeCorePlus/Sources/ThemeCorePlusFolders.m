@@ -32,3 +32,18 @@ void TCPInstallFolderSites(void) {
         os_log(TCPLogHandle(), "TCPS_FOLDER_SITES +%lu", (unsigned long)installed);
     }
 }
+
+// 1.0.12：文件夹收起状态 mini 拼图「每一格图标图」。
+// 入口是 SBFolderIconImageCache 的 -gridCellImageOfSize:forIcon:iconImageInfo:（诊断 allm= 坐实，
+// /5 = self+SEL+CGSize+icon+info 五个参数）。它参数里直接带那一格的 icon，逐个来问，
+// 所以不用拿文件夹 leaf 列表（lv=SBFolderIcon:noleafsel 那条路已证死，别再试）。
+// 只挂缓存类这一个前缀：别的 SBFolder* 类不声明这个选择器，R2（类自己声明才挂）会自然跳过。
+void TCPInstallFolderGridCellSites(void) {
+    NSArray<NSString *> *prefixes = @[ @"SBFolderIconImageCache" ];
+    NSArray<NSString *> *selectors = @[ @"gridCellImageOfSize:forIcon:iconImageInfo:" ];
+    NSUInteger installed = TCPInstallSitesForClassPrefixes(prefixes, @[], selectors,
+                                                           TCPSiteKindFolderGridCell);
+    if (installed > 0) {
+        os_log(TCPLogHandle(), "TCPS_FOLDER_GRID_SITES +%lu", (unsigned long)installed);
+    }
+}

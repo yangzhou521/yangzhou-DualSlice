@@ -16,4 +16,5 @@ void TCPInstallIconSites(void);     // ThemeCorePlusIcons.m
 void TCPInstallDisplaySites(void);  // ThemeCorePlusIcons.m（SBIconImageView 显示层）
 void TCPInstallBadgeSites(void);    // ThemeCorePlusBadges.m
 void TCPInstallFolderSites(void);   // ThemeCorePlusFolders.m
+void TCPInstallFolderGridCellSites(void);  // ThemeCorePlusFolders.m（文件夹 mini 格子图站）
 void TCPInstallFileSites(void);     // ThemeCorePlusFiles.m

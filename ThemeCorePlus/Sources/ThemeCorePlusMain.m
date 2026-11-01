@@ -62,12 +62,13 @@ static void TCPWriteDiagnostics(void) {
 
     // 像素自检（gen{}/pix{}）原来写好了却没接进来，诊断里一直看不到 —— 2026-10-30 15:4x 接上：
     // 「图标没换」到底是①我们合成把图抹透明了、还是②屏幕上挂的压根不是我们那张图，靠这组数区分。
-    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
                       [store diagnostics], TCPDisplayProbeReport(), TCPRefreshProbeReport(),
                       TCPIconProbeReport(),
                       TCPBadgeProbeReport(), TCPIconPixelProbeReport(),
                       TCPScreenCensusReport(),
                       TCPDynamicProbeReport(), TCPClockViewProbeReport(), TCPFolderProbeReport(),
+                      TCPFolderGridCellProbeReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
                       TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText];
     TCPWriteProcessPreference(TCPKeyDiagnostics, text);
@@ -156,6 +157,7 @@ static void TCPReload(BOOL refreshImages) {
     // 它自己画表盘和指针，只能挂 SBHClockApplicationIconImageView 的 layoutSubviews。
     // 类还没加载时它自己会返回，下一轮再挂。
     TCPInstallClockViewSite();
+    TCPInstallFolderGridCellSites();   // 1.0.12：文件夹收起 mini 拼图的格子图站
     TCPRelayoutIcons();
 
     // 文件夹预览那张拼图（收起状态的 mini 图标）由 SBFolderIconImageCache 缓存：

@@ -76,6 +76,11 @@ typedef NS_ENUM(NSUInteger, TCPSiteKind) {
     // 实证：ThemeCore 0.5.1 注入的类里同样有 SBIconImageView / SBIconView，
     // MarkTheme16 0.2.0 则整套 MTIcon*SnapshotModule 挂在 IconServices 的图集管线上。
     TCPSiteKindDisplayImage,
+    // 文件夹收起状态 mini 拼图里「每一格图标图」：SBFolderIconImageCache 的
+    // -gridCellImageOfSize:forIcon:iconImageInfo:，签名 (CGSize, id, SBIconImageInfo) 进、UIImage 出。
+    // 与 icon 站的差别：icon 站走 SBIcon 家族，这个走 SBFolderIconImageCache（一个缓存类），
+    // 参数里直接带着「那一格是哪个 App 的 icon」，所以不用先拿文件夹的 leaf 列表（lv=noleafsel）。
+    TCPSiteKindFolderGridCell,
     TCPSiteKindCount
 };
 
@@ -147,6 +152,10 @@ void TCPProbeFolderViews(void);
 NSString *TCPFolderProbeReport(void);
 // 让 SBFolderIconImageCache 重算收起状态的拼图（主题生效后调用，否则那张图一直是启动时的旧图）。
 void TCPFolderCacheRefresh(void);
+// 文件夹 mini 站点：SBFolderIconImageCache 的 -gridCellImageOfSize:forIcon:iconImageInfo:。
+// 由 ThemeCorePlusFolders.m 实现（0.9.x 那份一直没接进来，这里重新声明好让站表能引用）。
+void TCPInstallFolderGridCellSites(void);
+NSString *TCPFolderGridCellProbeReport(void);
 // 普查用：屏幕上某张角标图是不是我们合成的（只读）。
 BOOL TCPBadgeIsOurImage(UIImage *image);
 // 桌面图标布局的备份/恢复（用户 2026-10-31 05:30）：注销或 SpringBoard 崩溃后保住之前的图标布局。
