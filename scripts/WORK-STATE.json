@@ -13,7 +13,7 @@
     { "what": "装 1.0.36 并注销（安全模式 → install-deb.sh 走 SAFEMODE_DIRECT 直装）", "next": "先 icli probe scripts/dl-tcp-1036.js 下载完，再 apelin_notification_send 报包名/版本/路径/字节，等用户点头", "blocked": "用户在安全模式，说等他修好再找" },
     { "what": "读 TCPCacheProbe.txt 与 TCPIconServiceProbe.txt（1.0.34 新增 SBHIconManager / SBFolderIconImageView / SBLiveIconImageView）", "next": "cat /rootfs/var/mobile/Library/Preferences/TCP*Probe.txt", "blocked": "依赖上一条" },
     { "what": "按 probe 结果选路线：A 缓存层（SBHIconManager / SBHIconImageCache 取图+purge）或 B' 视图层（SBIconView / SBLiveIconImageView / SBFolderIconImageView）", "next": "改 ThemeCorePlusHooks.m 对应站点", "blocked": "依赖 probe" },
-    { "what": "灵动岛长岛态对齐（v1.6.5）：短内容（文字宽≤短岛内宽101pt）用短岛125x37，长文字用长岛145x47 —— 已装 1.6.5 不注销，磁盘dylib新、内存旧，长岛逻辑待注销才生效", "next": "等用户注销（可顺手）→ 验证短文案跟短岛、长文字跟长岛", "blocked": "未注销，SpringBoard 内存仍旧 1.6.4" },
+    { "what": "灵动岛长岛态对齐（v1.6.6）：短内容（文字宽≤短岛内宽101pt）用短岛125x37，长文字用长岛145x47。1.6.5 评分被短岛类名分盖过（长文字仍跟短岛，实测 A|UIView|145,47 在候选里却没选中），1.6.6 改尺寸分主导（×0.2）+ 诊断加 want=0/1", "next": "等用户「一并注销」→ 发长文案验证 island=145×47 & want=1、发短文案验证 125×37 & want=0", "blocked": "已装 1.6.6 未注销（用户要一并注销），SpringBoard 内存仍旧 1.6.5" },
     { "what": "长岛显示长文字（用户 02:47 提：字数多的那种）—— 当前无此能力，gLabel.adjustsFontSizeToFitWidth 只会缩字号塞进固定宽胶囊", "next": "改 CHApplyPillRect：按文字测量宽度在岛宽基础上外扩（上限约 300），文字长时不缩字号", "blocked": "排在长岛对齐复验之后；且需先确认这条线归谁（用户说过「别的有人管」）" },
     { "what": "读 probe 复验时钟 found=0（1.0.32 已改类名）", "next": "看诊断 dyn 段", "blocked": "依赖 probe" },
     { "what": "读 probe 修日历视觉异常（透明角点污染背景均值）", "next": "改 ThemeCorePlusIcons.m 墨层提取", "blocked": "依赖 probe" },
