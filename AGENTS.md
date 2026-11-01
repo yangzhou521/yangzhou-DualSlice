@@ -711,6 +711,11 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
     `unexpected EOF`）时，**不许重试、不许探测、不许只发胶囊，立即弹 `sh scripts/vpn-guard.sh 20 "push 失败
     （连不上 GitHub），请开 VPN"`**（专门的「请开 VPN」弹窗，不做设备动作）。正文说清原因。
     **未得到「VPN 已开」明确答复前不许自己一轮轮裸重试 push**；用户点了「确认开」后才重试，且只试一次。
+  - **弹窗 10 秒没反应 → 自动拉起代理 App**（用户 2026-11-01 20:4x 定，所有工程、所有对话永久适用）：
+    `vpn-guard.sh` 在弹窗后第 10 秒还没有答复，就自己 `uiopen --bundleid com.nebula.karing`（Karing）
+    把代理 App 拉到前台，让用户一眼就能拨开。只拉 App，**不碰 VPN 开关本身**——iOS 那颗开关和
+    「允许 VPN 配置」授权只有用户自己能点，任何工具（含 root）都代替不了。可用
+    `VPN_GUARD_AUTO_OPEN=<bid>`、`VPN_GUARD_AUTO_AFTER=<秒>` 覆盖。
   - **原因**：GitHub 在国内被 DNS 污染，不能直连。本机实测（2026-10-31 15:4x）：github.com 普通 HTTPS
     （NSData / icli probe / apelin_web_fetch）有时能通，但 Apelin 的 `git_push` 走另一条网络路径，
     不开 VPN 就反复超时，开 VPN 后立刻恢复。

@@ -49,6 +49,11 @@ fi
 echo "vpn-guard: 屏幕上已弹出确认框（${WAIT} 秒）：$LABEL"
 
 # 等用户在屏幕上做决定：只认比本次请求更新的答复。
+# 用户 2026-11-01 20:4x 定：弹窗 10 秒没人理就**自己把代理 App 拉到前台**（默认 Karing），
+# 让用户一眼就能拨开；只拉 App，不碰 VPN 开关本身（iOS 那颗开关只有用户自己能点）。
+AUTO_OPEN=${VPN_GUARD_AUTO_OPEN:-com.nebula.karing}
+AUTO_AFTER=${VPN_GUARD_AUTO_AFTER:-10}
+opened=0
 waited=0
 while [ "$waited" -le $((WAIT + 5)) ]; do
   if [ -f "$ANSWER" ]; then
@@ -70,6 +75,13 @@ while [ "$waited" -le $((WAIT + 5)) ]; do
           ;;
       esac
     fi
+  fi
+  # 10 秒还没动静 → 拉起代理 App（只拉一次）
+  if [ "$opened" = "0" ] && [ "$waited" -ge "$AUTO_AFTER" ] && [ -n "$AUTO_OPEN" ]; then
+    if command -v uiopen >/dev/null 2>&1; then
+      uiopen --bundleid "$AUTO_OPEN" >/dev/null 2>&1 && echo "vpn-guard: ${waited}s 无响应，已拉起 $AUTO_OPEN"
+    fi
+    opened=1
   fi
   sleep 1
   waited=$((waited + 1))

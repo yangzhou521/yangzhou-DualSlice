@@ -24,6 +24,11 @@ description: 访问 GitHub 仓库（push）时：先自己直接试 push，通�
    - 弹窗用 `sh scripts/vpn-guard.sh 20 "push 失败（连不上 GitHub），请开 VPN"`（这是专门的「请开 VPN」弹窗，不做任何设备动作；退出码 0=确认开、4=取消、5=超时）。
    - **绝不用 `?` 注销弹窗来做「请开 VPN」**（`?` = 注销确认弹窗，按钮「立即注销」会真 spawn sbreload，2026-10-31 16:06 血的教训）；
    - 弹窗后等用户处理（开 VPN 或取消）；**未得到「VPN 已开」的明确答复前，不许自己一轮轮裸重试 push**（重试只会再撞墙、白白消耗）。用户点了「确认开」之后才重试 push，且只试一次，通了直接干、不通再弹。
+   - **弹窗 10 秒没反应 → 自动拉起代理 App**（用户 2026-11-01 20:4x 定）：`vpn-guard.sh` 会在第 10 秒
+     自己 `uiopen --bundleid com.nebula.karing`（Karing）把它拉到前台，让用户一眼看到、直接拨开。
+     只拉 App，**不碰 VPN 开关**——iOS 的 VPN 开关与「允许 VPN 配置」授权只有用户能点，
+     任何工具（含 root）都代替不了，`icli url open` 也开不了 App（它要 URL，要用 `uiopen --bundleid`）。
+     覆盖：`VPN_GUARD_AUTO_OPEN=<bid>` / `VPN_GUARD_AUTO_AFTER=<秒>`。
 
 ## 判断 VPN 通没通的唯一可靠办法
 
