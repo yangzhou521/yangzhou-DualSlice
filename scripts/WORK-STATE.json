@@ -1,10 +1,10 @@
 {
-  "task": "ThemeCorePlus 1.0.24 秒加载（缓存层挂载）",
-  "status": "running",
-  "done": "代码改完并已云编译成功：commit 1427cc1，CI run 41280514589 success",
-  "next": "下载 deb → 弹框装 → 注销 → 体检报三行 → 看 cachecls=",
-  "why": "1.0.23 sites=18 仍无缓存层站；怀疑 SBHIconImageCache 在 0/0.3/1/2 秒还没 dlopen，故三处重挂 + 加 cachecls 诊断取证",
-  "evidence": "sha=1427cc1 run=41280514589 concl=success",
-  "guard": "角标/图标冻结勿动；装包注销必须弹框；包版本 1.0.24 不得与已发布版本冲突",
-  "updated": "2026-11-01T14:28+08:00"
+  "task": "ThemeCorePlus 秒加载（缓存层）",
+  "status": "blocked",
+  "done": "1.0.30 已装机并加载 v1.0.30，sites=26（1.0.29=18），SpringBoard 无新崩溃",
+  "next": "换方向：找 iOS 16.7.16 上真正生成图标图的那一层（缓存三件套都不声明 iconImageWithInfo:）",
+  "why": "1.0.30 假设「真入口类名不含 IconImageCache」不成立：SBHIconImageCache/SBFolderIconImageCache/PKIconImageCache 的 iconImageWithInfo:/unmasked/generate 全是 nomethod，按选择器名全进程扫描也扫不到（byname 无输出）",
+  "evidence": "v1.0.30;cache=0;last=nocache;cachecls 三件套 nomethod;sites=26",
+  "guard": "角标/图标冻结勿动；装包注销必须弹窗；Prefs/ 面板冻结",
+  "updated": "2026-11-01T19:5x+08:00"
 }
