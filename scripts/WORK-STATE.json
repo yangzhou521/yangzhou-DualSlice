@@ -1,20 +1,21 @@
 {
   "task": "ThemeCorePlus 图标主题化全面覆盖 + 秒加载",
   "status": "running",
-  "step": "1.0.33 已推送待编译（iconservicesagent 探针）",
+  "step": "1.0.34 已推送待编译（探针加了 SBHIconManager / SBFolderIconImageView / SBLiveIconImageView）",
   "chain": ["改码", "编译", "下载", "装机", "注销", "验证"],
-  "done": "1.0.32 已装机验证前置待续；1.0.33 加了 iconservicesagent 只读探针",
-  "next": "等 1.0.33 云编译 → 装机 → 注销 → 读 TCPIconServiceProbe.txt + TCPCacheProbe.txt",
+  "done": "1.0.33 云编译成功（run 41321754292），deb 已下载到 /rootfs/var/mobile/Documents/tcp-1.0.33.deb，但装包弹窗被取消（cancel 不算拒绝）；1.0.34 加了三个 misaki 发现的类名进探针清单",
+  "next": "1.0.34 云编译 → 下载 → 弹窗装机 → 注销 → 读 TCPCacheProbe.txt（含 SBHIconManager 等三个新类）与 TCPIconServiceProbe.txt → 按结果定路线 A（缓存层）或 B'（视图层）",
   "pending": [
-    "装 1.0.33 并验证（日历/时钟/文件夹 mini/角标）",
-    "读 TCPIconServiceProbe.txt 判断要不要走资源层路线",
-    "秒加载：hook SBHIconImageCache 取图方法 + purge 时序",
+    "装 1.0.34 并注销，读两份 probe",
+    "根据 probe 结果选路线：A 缓存层（SBHIconManager/SBHIconImageCache 取图+purge）或 B' 视图层（SBIconView/SBLiveIconImageView/SBFolderIconImageView）",
+    "读 probe 修时钟 found=0（1.0.32 已改类名，待复验）",
+    "读 probe 修日历视觉异常（透明角点污染背景均值）",
     "文件图标（UTI）覆盖 —— 等 AI 给 SpringBoard 内入口",
     "与 Mikkyy 并存冲突处理 —— 等 AI 给判据",
     "Spotlight / ShareSheet / QuickLook 进程覆盖（工作量项）"
   ],
   "why": "用户 2026-11-01 要求今天彻底解决；AI 逆向给了 4 个根因，已移植",
-  "evidence": "v1.0.32 云编译 success（run 41318900195）；1.0.33 已 push 21f5396d",
+  "evidence": "1.0.33 云编译 success（run 41321754292，sha 0df1e13d）；1.0.34 待编译。misaki 2.2 逆向：SBHIconManager/SBFolderIconImageView/SBLiveIconImageView 在其 dylib 中各 2 hits，SBHIconImageCache 0 hits；misaki 用 NSClassFromString 4 处、零全表扫描、只改属性不换图",
   "guard": "角标/图标主题化用户点名冻结（只做未覆盖的新路径，不回退）；Prefs/ 冻结；装包注销必须弹窗",
-  "updated": "2026-11-01T23:18+08:00"
+  "updated": "2026-11-01T23:55+08:00"
 }

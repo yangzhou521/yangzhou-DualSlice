@@ -1132,6 +1132,13 @@ void TCPRunIconCacheProbe(void) {
                 "SBIconController", "SBIconModel",
                 "SBHFileStackIcon", "SBHFileStackIconImageProvider",
                 "SBFluidSwitcherIconImageContainerView",
+                // 1.0.34：从 Misaki 2.2 的 dylib 里发现的三个类名（它是 UI 美化插件，只改属性不换图，
+                // 所以这些是「该类在本机确实存在」的线索，不是它的实现）。白捡，先探进去。
+                // SBHIconManager：iOS 16 上管图标请求的总管，比 SBHIconImageCache 更靠上游 —— 最关键。
+                "SBHIconManager",
+                // 视图层（B' 路线）：图上屏前一刻换，比模型层快且安全（崩了不至于全系统图标消失）
+                "SBFolderIconImageView",   // 文件夹 mini 的图片视图
+                "SBLiveIconImageView",      // Live 图标（时钟/日历）
                 NULL
             };
             for (int i = 0; names[i]; i++) TCPDumpClassMethods(names[i], out);
