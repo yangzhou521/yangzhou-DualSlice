@@ -248,16 +248,29 @@ static void TCPPreferencesChanged(CFNotificationCenterRef center,
 
 __attribute__((constructor)) static void TCPInitialize(void) {
     @autoreleasepool {
+        // 1.0.33：**先判进程，图标服务进程只取证、什么都不做。**
+        // 这个 dylib 现在也注入 com.apple.iconservices.iconservicesagent（见过滤器 plist 的
+        // Executables）。那是系统级图标生成服务，一旦崩了全系统图标都不显示，所以：
+        // 在这个进程里**连 TCPLogLine（写偏好）都不调**，只 dump 一次方法表就 return —— 
+        // 不挂站、不开计时器、不写任何偏好。
+        // 目的只有一个：找出它里面真正产出图标图的类+方法，判断要不要走 Mikkyy 那条资源层路线。
+        NSString *bundle = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
+        if (![bundle isEqualToString:@"com.apple.springboard"] &&
+            ![bundle isEqualToString:@"com.apple.Preferences"]) {
+            TCPRunIconServiceProbe();
+            return;
+        }
+
         // TCP_VERSION 是 @"0.6.0"（NSString 字面量），所以这里只能用 %@：写成 %s 会把它当
         // C 字符串读，打出来是内存垃圾。ApelinLoaded 这一行是 apelin_package_confirm_loaded
         // 的标记行，格式不能动。
         os_log(TCPLogHandle(), "ApelinLoaded com.yangzhou.themecoreplus-%{public}@", TCP_VERSION);
         os_log(TCPLogHandle(), "TCPS_START v%{public}@ bundle=%{public}@",
-               TCP_VERSION, [[NSBundle mainBundle] bundleIdentifier] ?: @"?");
+               TCP_VERSION, bundle);
         // 日志从这里开始。重启进程后「运行日志」页最上面那行的 pid 一变，就知道后面的事
         // 都发生在这一次重启之后。
         TCPLogLine(@"启动 v%@ bundle=%@ pid=%d",
-                   TCP_VERSION, [[NSBundle mainBundle] bundleIdentifier] ?: @"?",
+                   TCP_VERSION, bundle,
                    (int)[NSProcessInfo processInfo].processIdentifier);
 
         // 桌面图标布局备份/恢复：注销或 SpringBoard 崩溃后保住之前的图标摆位。

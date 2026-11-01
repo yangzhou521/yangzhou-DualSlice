@@ -1173,3 +1173,71 @@ void TCPRunIconCacheProbe(void) {
         });
     });
 }
+
+#pragma mark - 1.0.33：图标服务进程取证（iconservicesagent）
+
+// 为什么需要（用户 2026-11-01 22:58 点名要做）：
+// Mikkyy 的过滤器注入了 com.apple.iconservices.iconservicesagent，AI 逆向说它「在图标服务层换料」
+// 所以才能秒加载；但 AI 自己承认「iconservicesagent 注入点：未证实」——它读不到确切类和方法。
+// 猜名字的代价是那个进程崩掉、全系统图标不显示。所以只能实测：dump 出来看。
+//
+// **铁律：本函数在 iconservicesagent 里跑，只读不写、不挂任何 hook。**
+// 调用方（TCPInitialize）跑完它立刻 return，不做任何别的事。
+void TCPRunIconServiceProbe(void) {
+    // 延迟 8 秒：那个进程起来时它自己的类还没注册完，太早扫会全是空的。
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        @autoreleasepool {
+            NSMutableString *out = [NSMutableString string];
+            [out appendFormat:@"===== iconservicesagent probe v%@ pid=%d =====\n",
+             TCP_VERSION, (int)[NSProcessInfo processInfo].processIdentifier];
+
+            // 全进程类扫描，只留方法名跟「出图」有关的。
+            // 不预设类名（AI 给的 ISIcon/ISIconManager 只是候选，猜错就全是 NOT FOUND）。
+            unsigned int count = 0;
+            Class *classes = objc_copyClassList(&count);
+            [out appendFormat:@"total classes=%u\n", count];
+            NSUInteger hits = 0;
+            if (classes != NULL) {
+                for (unsigned int i = 0; i < count; i++) {
+                    Class cls = classes[i];
+                    if (cls == Nil) continue;
+                    const char *cname = class_getName(cls);
+                    if (cname == NULL) continue;
+
+                    unsigned int mcount = 0;
+                    Method *methods = class_copyMethodList(cls, &mcount);
+                    if (methods == NULL) continue;
+
+                    NSMutableArray<NSString *> *keep = [NSMutableArray array];
+                    for (unsigned int j = 0; j < mcount; j++) {
+                        const char *sel = sel_getName(method_getName(methods[j]));
+                        if (sel == NULL) continue;
+                        if (strstr(sel, "Icon") || strstr(sel, "Image") ||
+                            strstr(sel, "Generate") || strstr(sel, "icon")) {
+                            const char *enc = method_getTypeEncoding(methods[j]);
+                            [keep addObject:[NSString stringWithFormat:@"    - %s [%s]",
+                                              sel, enc ? enc : "?"]];
+                        }
+                    }
+                    free(methods);
+
+                    if (keep.count == 0) continue;
+                    hits++;
+                    [out appendFormat:@"\n%@ (%u methods, %lu matched)\n",
+                     @(cname), mcount, (unsigned long)keep.count];
+                    for (NSString *line in keep) {
+                        [out appendString:line];
+                        [out appendString:@"\n"];
+                    }
+                }
+                free(classes);
+            }
+            [out appendFormat:@"\n===== classes with icon/image methods: %lu =====\n", (unsigned long)hits];
+
+            NSString *path = @"/var/mobile/Library/Preferences/TCPIconServiceProbe.txt";
+            [out writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            os_log(TCPLogHandle(), "TCPS_ICONSVC_PROBE written len=%lu", (unsigned long)out.length);
+        }
+    });
+}

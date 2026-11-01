@@ -130,6 +130,11 @@ BOOL TCPDyldPendingReload(void);   // 取走「有新框架来了」的标志（
 // /var/mobile/Library/Preferences/TCPCacheProbe.txt（只读，进程内只跑一次）。
 void TCPRunIconCacheProbe(void);
 
+// 1.0.33 取证：在 iconservicesagent 进程里 dump「所有类的 Icon/Image 相关方法」到
+// /var/mobile/Library/Preferences/TCPIconServiceProbe.txt。
+// **只读不挂**：那个进程崩了全系统图标不显示，所以调用后必须立刻 return。
+void TCPRunIconServiceProbe(void);
+
 // 强制只挂「实例方法」，不做通用站那种「类方法优先」判断。
 // 用途：SBFolderIconImageCache 的 -gridCellImageOfSize:forIcon:iconImageInfo: 上，实例/类方法
 // 同名（元类上有个 convenience 类方法），通用站优先类方法会挂到 + 版本，系统真正调的实例方法
