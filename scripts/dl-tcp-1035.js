@@ -1,7 +1,7 @@
-// 下载 ThemeCorePlus 1.0.34（Release themecoreplus-v1.0.34）
-// 用法： icli probe scripts/dl-tcp-1034.js
-var urlStr = 'https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v1.0.34/com.yangzhou.themecoreplus_1.0.34_iphoneos-arm64e.deb';
-var destPath = '/var/mobile/Documents/tcp-1.0.34.deb';
+// 下载 ThemeCorePlus 1.0.35（Release themecoreplus-v1.0.35）
+// 用法： icli probe scripts/dl-tcp-1035.js
+var urlStr = 'https://github.com/yangzhou521/yangzhou-DualSlice/releases/download/themecoreplus-v1.0.35/com.yangzhou.themecoreplus_1.0.35_iphoneos-arm64e.deb';
+var destPath = '/var/mobile/Documents/tcp-1.0.35.deb';
 
 var url = ObjC.use('NSURL').URLWithString_(urlStr);
 if (!url) { print('ERROR: bad URL'); throw 'bad URL'; }

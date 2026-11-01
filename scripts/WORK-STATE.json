@@ -1,21 +1,23 @@
 {
   "task": "ThemeCorePlus 图标主题化全面覆盖 + 秒加载",
   "status": "running",
-  "step": "1.0.35 修复版已改完，准备推送编译（修构造函数读图 → +[UIScreen mainScreen] 断言 → SpringBoard 连崩）",
+  "updated": "2026-11-02T01:05+08:00",
+  "step": "1.0.35 云编译成功（run 41328811676）并已下载到 /rootfs/var/mobile/Documents/tcp-1.0.35.deb（171160 字节）；本机在安全模式（实测胶囊不出现），待用户点头装包 + 注销",
   "chain": ["改码", "编译", "下载", "装机", "注销", "验证"],
-  "done": "1.0.34 装机后 SpringBoard 连崩进安全模式（SpringBoard-2026-11-02-002406.ips，consecutiveCrashCount=2）；根因已定位：构造函数 TCPInitialize → TCPReload → 读遮罩素材 → imageWithContentsOfFile → UIKit 内部 _UIImageCollectImagePathsForPath → +[UIScreen mainScreen]（main() 之前不存在）→ SIGABRT。1.0.35 已加进程内读图闸门：构造函数只建索引，读图一律 nil；+2 秒主队列开闸并补做遮罩体检/图标预热",
-  "next": "commit + push → 等 CI → 下载 tcp-1.0.35.deb → 弹窗（respring-guard --ask --install）→ irisin-cli install → sbreload → 读两份 probe（TCPCacheProbe.txt / TCPIconServiceProbe.txt，含 1.0.34 新增的 SBHIconManager / SBFolderIconImageView / SBLiveIconImageView）+ 确认无新崩溃",
+  "next": "让用户点头 → irisin-cli install --yes --json /rootfs/var/mobile/Documents/tcp-1.0.35.deb（root）→ sbreload → 读 TCPCacheProbe.txt / TCPIconServiceProbe.txt + 确认无新崩溃",
+  "why": "用户 2026-11-01 要求彻底解决图标主题化覆盖；1.0.34 崩溃必须先修掉才能继续取证",
+  "done": "1.0.34 装机后 SpringBoard 连崩两次进安全模式（SpringBoard-2026-11-02-002406.ips，consecutiveCrashCount=2）；根因：dyld 构造函数 TCPInitialize → TCPReload → 遮罩体检读素材 → imageWithContentsOfFile → UIKit 内部 _UIImageCollectImagePathsForPath → +[UIScreen mainScreen]（main() 之前不存在）→ SIGABRT。1.0.35 已加进程内读图闸门（构造函数只建索引，读图返回 nil；+2 秒主队列开闸并补做遮罩体检/图标预热），已 push 且 CI success",
+  "evidence": "崩溃报告逐帧对齐源码行号；1.0.35 CI run 41328811676（sha af2c4516）concl=success；deb 171160 字节已落盘；安全模式实测：写 .countdownhud-request 后 CountdownHUDDiagnostics 的 shows 停在 4 不涨",
+  "guard": "角标/图标主题化用户点名冻结（只做未覆盖的新路径，不回退）；Prefs/ 冻结；装包注销必须让用户点头；注入 SpringBoard 的插件构造函数阶段禁碰任何 UIKit API",
   "pending": [
-    "1.0.35 云编译 → 下载 → 弹窗装机 → 注销 → 读 TCPCacheProbe.txt 与 TCPIconServiceProbe.txt",
-    "根据 probe 结果选路线：A 缓存层（SBHIconManager/SBHIconImageCache 取图+purge）或 B' 视图层（SBIconView/SBLiveIconImageView/SBFolderIconImageView）",
-    "读 probe 修时钟 found=0（1.0.32 已改类名，待复验）",
-    "读 probe 修日历视觉异常（透明角点污染背景均值）",
-    "文件图标（UTI）覆盖 —— 等 AI 给 SpringBoard 内入口",
-    "与 Mikkyy 并存冲突处理 —— 等 AI 给判据",
-    "Spotlight / ShareSheet / QuickLook 进程覆盖（工作量项）"
+    { "what": "装 1.0.35 并注销（安全模式下弹窗不可用 → 对话里问 / apelin_notification_send，install-deb.sh 会走 SAFEMODE_DIRECT 直装）", "next": "irisin-cli install --yes --json <deb> 后 sbreload", "blocked": "等用户点头" },
+    { "what": "读 TCPCacheProbe.txt 与 TCPIconServiceProbe.txt（1.0.34 新增 SBHIconManager / SBFolderIconImageView / SBLiveIconImageView）", "next": "cat /rootfs/var/mobile/Library/Preferences/TCP*Probe.txt", "blocked": "依赖上一条" },
+    { "what": "按 probe 结果选路线：A 缓存层（SBHIconManager / SBHIconImageCache 取图+purge）或 B' 视图层（SBIconView / SBLiveIconImageView / SBFolderIconImageView）", "next": "改 ThemeCorePlusHooks.m 对应站点", "blocked": "依赖 probe" },
+    { "what": "读 probe 复验时钟 found=0（1.0.32 已改类名）", "next": "看诊断 dyn 段", "blocked": "依赖 probe" },
+    { "what": "读 probe 修日历视觉异常（透明角点污染背景均值）", "next": "改 ThemeCorePlusIcons.m 墨层提取", "blocked": "依赖 probe" },
+    { "what": "文件图标（UTI）覆盖", "next": "等第三方 AI 给 SpringBoard 内的入口类+方法", "blocked": "等用户转发的 AI 结论" },
+    { "what": "与 Mikkyy 主题引擎并存冲突处理", "next": "等第三方 AI 给并存判据", "blocked": "等用户转发的 AI 结论" },
+    { "what": "Spotlight / ShareSheet / QuickLook 进程覆盖（工作量项）", "next": "扩 Support/ThemeCorePlus.plist 过滤器 + 各进程独立开闸", "blocked": "排在主屏覆盖之后" }
   ],
-  "why": "用户 2026-11-01 要求今天彻底解决；1.0.34 崩溃必须先修掉才能继续取证",
-  "evidence": "崩溃报告 SpringBoard-2026-11-02-002406.ips 的调用栈已逐帧对齐源码行号；1.0.34 磁盘 dylib 697920 字节、dpkg 版本 1.0.34（grep -abo '1.0.3' 偏移 190648/521976）",
-  "guard": "角标/图标主题化用户点名冻结（只做未覆盖的新路径，不回退）；Prefs/ 冻结；装包注销必须弹窗；注入 SpringBoard 的插件构造函数阶段禁碰任何 UIKit API",
-  "updated": "2026-11-02T00:50+08:00"
+  "handoff": "若本对话死掉：任何新对话在本仓库开工先跑 `sh scripts/resume.sh`（打印任务链 + pending + 本机现状 + 可直接粘贴的接手提示词），再跑 `sh scripts/safemode-check.sh` 判安全模式"
 }

@@ -1,5 +1,31 @@
 # 本仓库怎么干活（AGENTS.md）
 
+## 开工第 0 步 · 交接协议（新对话 / 复活 / 换人，都先做这一步）
+
+**在这个仓库里动手之前，第一件事是跑：**
+
+```sh
+sh scripts/resume.sh          # 交接块：任务链 + 未清 pending + 本机装机现状 + 可粘贴的接手提示词
+sh scripts/safemode-check.sh  # 约 80 秒，只读：判安全模式 / 版本漂移 / 插件在不在跑
+```
+
+把输出里「任务链、当前步、未清 pending」**原样报一句给用户**，再按 `next` / `pending` 继续。
+**不要凭对话历史猜进度** —— 历史会死、会被压缩、会换人，而进度只写在历史里就等于没写。
+
+- **状态载体**：`scripts/WORK-STATE.json`（机读，**唯一权威**：task/status/step/chain/next/pending）+
+  `scripts/WORK-STATE.md`（人读）。每推进一个阶段**立刻**更新，不许攒到收尾。
+- **未清项只有两种结局**：做完并验证，或用户明说取消 —— **不许无声消失**（用户 2026-11-01 23:17 点名的病）。
+- **三重冗余**（任一处都能重建上下文）：① 本节的 `resume.sh` 提示词；② 提交信息末尾的 `NEXT:` 行（`git log` 可考古）；
+  ③ 记忆里那条「硬规矩总则」。互相印证，别只信一处。
+- **不许重建**看护 / 心跳 / 黑板 / 唤醒队列（已实测失败并全部删除，反面教材见
+  `docs/cases/fleet-watchdog-false-positive.md`）；交接只靠「文件 + 入口那一条命令」。
+- **安全模式例外（用户 2026-11-02 00:58 指出）**：进安全模式后 tweak 全不注入，
+  `hud-notify.sh` 的灵动岛胶囊与 `respring-guard.sh --ask` 的弹窗**都不会显示**
+  （实测：写了 `.countdownhud-request`，`CountdownHUDDiagnostics` 的 `shows` 不涨）。
+  此时让用户知情只走两条：**对话正文** + `apelin_notification_send`；
+  要装包就 `sh scripts/install-deb.sh <deb>`（它自己识别安全模式 → `SAFEMODE_DIRECT` → 直装 + `sbreload`）；
+  **注销本身就是退出安全模式、把胶囊与弹窗救回来的唯一办法**，所以安全模式下的第一优先动作是「装对版本 + 注销」。
+
 工作区工程 `yangzhouDualSlice`（Apelin 的 workspace，`buildSystem: external`，仓库
 `https://github.com/yangzhou521/yangzhou-DualSlice`，分支 `main`）。
 
