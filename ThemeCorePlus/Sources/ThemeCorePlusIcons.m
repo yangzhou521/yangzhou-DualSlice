@@ -742,6 +742,18 @@ static void TCPClockEnsureOverlay(UIView *view, UIImage *themed) {
     // 1.0.11：如果之前有盖过整图 overlay，把它移除掉，不再覆盖整张图
     UIView *old = [view viewWithTag:kTCPClockOverlayTag];
     if (old) [old removeFromSuperview];
+    // 1.0.16：这里只画**针帽这一张小图**，不是整图覆盖。
+    //   绝不往系统的 10×10 中轴层塞图 —— 1.0.12 的教训：素材（4×4@3x）被 resize
+    //   拉伸成「太大的针帽」；也绝不盖整张图 —— 1.0.8 的教训：那是双层来源。
+    //   画法：按素材**自身尺寸**居中（contentMode = Center 不缩放、不拉伸）。
+    if (themed == nil || view == nil) return;
+    UIImageView *iv = [[UIImageView alloc] initWithImage:themed];
+    iv.tag = kTCPClockOverlayTag;
+    iv.userInteractionEnabled = NO;
+    iv.contentMode = UIViewContentModeCenter;
+    iv.backgroundColor = [UIColor clearColor];
+    iv.frame = view.bounds;
+    [view addSubview:iv];
 }
 
 static void TCPClockViewApply(UIView *view) {
@@ -751,9 +763,15 @@ static void TCPClockViewApply(UIView *view) {
     if (size.width < 8 || size.height < 8) return;
 
     // 清理旧版本的整图覆盖层（1.0.8 及以前那种盖一张含指针的整图 = 双层来源，永久废除）
-    TCPClockEnsureOverlay(view, nil);
+    // 1.0.16：这里先不画 —— 针帽等下面拿到素材后再画（TCPClockEnsureOverlay(view, cap)）。
 
     CGFloat scale = view.window.screen.scale > 0 ? view.window.screen.scale : 2.0;
+
+    // 1.0.16 针帽：用主题素材 ClockIconRedDot（中央帽），按**原尺寸**画在覆盖层正中；
+    //   系统那枚 10×10 中轴帽（系统自画）随后清掉，避免两层叠加。
+    //   拿不到素材就什么都不做（系统帽保持原样，绝不让针帽变空白）。
+    UIImage *cap = TCPClockAssetImageNamed(store, @"ClockIconRedDot", scale);
+    TCPClockEnsureOverlay(view, cap);
 
     // 1.0.11 逐片换素材（用户已验收）：表盘写视图自己的 layer，指针写系统那 5 个子 layer。
     // 1.0.12 只修针帽：系统结构是
@@ -790,19 +808,26 @@ static void TCPClockViewApply(UIView *view) {
         if (minHand && minHand.CGImage && sublayers[1].contents != (__bridge id)minHand.CGImage) {
             sublayers[1].contents = (__bridge id)minHand.CGImage;
         }
-        // l2: 中轴 —— 系统自画，不碰（1.0.12：写 redDot 会把针帽放大）
+        // l2: 中轴 —— 1.0.16：系统那枚 10×10 的中轴帽清掉（contents 置 nil），
+        //     换成我们自己按原尺寸画的 ClockIconRedDot；**只在拿到素材时才清**，
+        //     拿不到就保持系统帽，绝不让针帽变空白。系统可能自己重绘，每拍再清一次。
+        if (cap && cap.CGImage && sublayers[2].contents != NULL) {
+            sublayers[2].contents = nil;
+        }
         // l3: 秒针（若存在）
         if (layerCount >= 4 && secHand && secHand.CGImage && sublayers[3].contents != (__bridge id)secHand.CGImage) {
             sublayers[3].contents = (__bridge id)secHand.CGImage;
         }
-        // l4: 秒针帽 —— 系统自画，不碰（1.0.12）
+        // l4: 秒针帽 —— 系统自画，不碰（1.0.12）：素材里没有对应的秒针端点帽，
+        //     2×2 层塞 4×4 素材同样会被拉伸。
         __sync_fetch_and_add(&sClockVHit, 1);
-        sClockVLast = [NSString stringWithFormat:@"layers:subs=%lu|face=%@|h=%@|m=%@|s=%@|dot=sys",
+        sClockVLast = [NSString stringWithFormat:@"layers:subs=%lu|face=%@|h=%@|m=%@|s=%@|dot=%@",
                        (unsigned long)layerCount,
                        face ? @"y" : @"n",
                        hourHand ? @"y" : @"n",
                        minHand ? @"y" : @"n",
-                       secHand ? @"y" : @"n"];
+                       secHand ? @"y" : @"n",
+                       cap ? @"ours" : @"sys"];
     } else if (face) {
         __sync_fetch_and_add(&sClockVHit, 1);
         sClockVLast = [NSString stringWithFormat:@"face_only|subs=%lu", (unsigned long)layerCount];
