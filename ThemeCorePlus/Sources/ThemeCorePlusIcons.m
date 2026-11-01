@@ -438,6 +438,9 @@ static void TCPDrawClockHand(CGContextRef ctx, UIImage *hand, CGPoint center,
 static NSInteger sDynClock = 0;
 static NSInteger sDynCalendar = 0;
 static NSInteger sDynFail = 0;
+static NSInteger sDynFailNoAsset = 0;   // 1.0.19：细分失败来源（noasset）
+static NSInteger sDynFailNoCtx = 0;     // 1.0.19：细分失败来源（noctx）
+static NSInteger sDynFailNoImage = 0;   // 1.0.19：细分失败来源（noimage）
 static NSInteger sDynSeen = 0;       // 站点摸到动态图标几次（0 = 根本没走到这条路）
 static NSInteger sDynNotImage = 0;   // 系统那张图不是 UIImage（没法叠）
 static NSString *sDynLast = nil;
@@ -497,8 +500,9 @@ static NSString *TCPDynamicClassProbe(void) {
 }
 
 NSString *TCPDynamicProbeReport(void) {
-    return [NSString stringWithFormat:@"dyn{clock=%ld,cal=%ld,fail=%ld,seen=%ld,noimg=%ld,last=%@,cls[%@],c[%@]}",
+    return [NSString stringWithFormat:@"dyn{clock=%ld,cal=%ld,fail=%ld(na=%ld,nc=%ld,ni=%ld),seen=%ld,noimg=%ld,last=%@,cls[%@],c[%@]}",
             (long)sDynClock, (long)sDynCalendar, (long)sDynFail,
+            (long)sDynFailNoAsset, (long)sDynFailNoCtx, (long)sDynFailNoImage,
             (long)sDynSeen, (long)sDynNotImage, sDynLast ?: @"-", TCPSiteClassSummary(),
             TCPDynamicClassProbe()];
 }
@@ -525,7 +529,16 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
                                             scale:info.scale
                                      cornerRadius:radius];
     if (themed == nil) {
+        // 1.0.19：noasset 兜底 —— 遮罩/圆角链路出错时，退回「无圆角」再取一次，
+        // 仍拿不到才记 fail。日历 8/13 失败回退系统图，先排除这条。
+        themed = [store iconImageForBundleID:bundleID
+                                       size:info.size
+                                      scale:info.scale
+                               cornerRadius:0];
+    }
+    if (themed == nil) {
         __sync_fetch_and_add(&sDynFail, 1);
+        __sync_fetch_and_add(&sDynFailNoAsset, 1);
         sDynLast = [NSString stringWithFormat:@"%@:noasset", bundleID];
         return nil;
     }
@@ -539,6 +552,7 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
     if (!ctx) {
         UIGraphicsEndImageContext();
         __sync_fetch_and_add(&sDynFail, 1);
+        __sync_fetch_and_add(&sDynFailNoCtx, 1);
         sDynLast = [NSString stringWithFormat:@"%@:noctx", bundleID];
         return nil;
     }
@@ -581,6 +595,7 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
     UIGraphicsEndImageContext();
     if (result == nil) {
         __sync_fetch_and_add(&sDynFail, 1);
+        __sync_fetch_and_add(&sDynFailNoImage, 1);
         sDynLast = [NSString stringWithFormat:@"%@:noimage", bundleID];
         return nil;
     }
@@ -1692,6 +1707,9 @@ void TCPRefreshIconImages(void) {
            sRefreshPurgeName ?: @"-");
     // 1.0.18：热刷新也收拾角标视图 —— 原来只刷 SBIconImageView，角标还攥着旧图。
     TCPBadgeRefreshVisible();
+    // 1.0.18：热刷新也重画时钟视图 —— 时钟视图从不走 layoutSubviews（只靠 30 秒 tick），
+    // 点「刷新图标」后要立即重画，否则时钟素材要等 30 秒或注销才换。
+    TCPClockTick();
     sRefreshing = NO;
 }
 
