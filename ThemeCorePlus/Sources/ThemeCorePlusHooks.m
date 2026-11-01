@@ -642,17 +642,29 @@ NSUInteger TCPInstallIconCacheLayerSitesV2(void) {
                                      @"unmaskedIconImageWithInfo:",
                                      @"generateIconImageWithInfo:" ]) {
             SEL sel = NSSelectorFromString(selName);
-            if (class_getInstanceMethod(cls, sel) == NULL) continue;
+            Method direct = class_getInstanceMethod(cls, sel);
+            if (direct == NULL) {
+                if (log.count < 8) [log addObject:[NSString stringWithFormat:@"%@:%@=nomethod", name, selName]];
+                continue;
+            }
             Class owner = TCPDeclaringClass(cls, sel);
-            if (owner == Nil) continue;
-            // 只在「类名含 IconImageCache 的声明者」上挂，避免挂到 SBIcon 等基类上打断主链。
+            if (owner == Nil) {
+                if (log.count < 8) [log addObject:[NSString stringWithFormat:@"%@:%@=noowner", name, selName]];
+                continue;
+            }
+            // 1.0.29：不再要求声明者类名含 IconImageCache——真入口可能在 SBIcon 等基类上，
+            // 旧的那条过滤会把唯一能挂的站整条漏掉。改成：先试声明者，失败再试本类。
             NSString *ownerName = NSStringFromClass(owner);
-            if (![ownerName containsString:@"IconImageCache"]) continue;
-            if (TCPInstallOneSiteKindForced(owner, sel, TCPSiteKindIconImageInfo)) {
+            BOOL ok = TCPInstallOneSiteKindForced(owner, sel, TCPSiteKindIconImageInfo);
+            if (!ok && owner != cls) {
+                ok = TCPInstallOneSiteKindForced(cls, sel, TCPSiteKindIconImageInfo);
+                if (ok) ownerName = [ownerName stringByAppendingString:@"->cls"];
+            }
+            if (ok) {
                 installed++;
-                if (log.count < 6) {
-                    [log addObject:[NSString stringWithFormat:@"-%@:%@", ownerName, selName]];
-                }
+                if (log.count < 8) [log addObject:[NSString stringWithFormat:@"-%@:%@", ownerName, selName]];
+            } else if (log.count < 8) {
+                [log addObject:[NSString stringWithFormat:@"%@:%@=hookfail", ownerName, selName]];
             }
         }
     }
