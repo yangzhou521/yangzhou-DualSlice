@@ -1721,6 +1721,10 @@ void TCPRefreshIconImages(void) {
     TCPClockTick();
     // 1.0.22：热刷新也通知文件夹 mini 拼图重算（换主题后收起状态才显示主题格子）。
     TCPFolderNotifyRecalc();
+    // 1.0.24：每次刷新都再试一次挂缓存层站 —— SBHIconImageCache 属于 SpringBoardHome，
+    // 启动早期（0/0.3/1/2 秒补挂轮）可能还没 dlopen，那时候 objc_copyClassList 扫不到它。
+    // 刷新拍（0 秒 / 2.5 秒 / 用户点刷新）时重试；函数幂等，已挂过直接跳过。
+    TCPInstallIconCacheLayerSites();
     sRefreshing = NO;
 }
 

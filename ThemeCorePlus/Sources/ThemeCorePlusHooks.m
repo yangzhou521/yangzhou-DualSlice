@@ -607,12 +607,19 @@ NSUInteger TCPInstallIconCacheLayerSites(void) {
     Class *classes = objc_copyClassList(&count);
     if (classes == NULL) return 0;
     NSUInteger installed = 0;
+    static NSMutableArray<NSString *> *sCacheClassSeen = nil;
+    if (sCacheClassSeen == nil) sCacheClassSeen = [NSMutableArray array];
     for (unsigned int i = 0; i < count; i++) {
         Class cls = classes[i];
         if (cls == Nil) continue;
         const char *raw = class_getName(cls);
         if (raw == NULL) continue;
         NSString *name = @(raw);
+        // 1.0.24 取证：把类名含 IconImageCache 的都记下来（前 8 个），装完读诊断就知道真名。
+        if ([name containsString:@"IconImageCache"] && sCacheClassSeen.count < 8 &&
+            ![sCacheClassSeen containsObject:name]) {
+            [sCacheClassSeen addObject:name];
+        }
         if (![name containsString:@"IconImageCache"]) continue;
         for (NSString *selName in @[ @"iconImageWithInfo:",
                                      @"unmaskedIconImageWithInfo:",
@@ -624,6 +631,28 @@ NSUInteger TCPInstallIconCacheLayerSites(void) {
     }
     if (classes) free(classes);
     return installed;
+}
+
+// 1.0.24 取证：缓存层类名扫描结果（诊断 cachecls=）。
+NSString *TCPIconCacheClassReport(void) {
+    static NSMutableArray<NSString *> *sSeen = nil;
+    if (sSeen == nil) sSeen = [NSMutableArray array];
+    // 重新扫一遍当前进程里含 IconImageCache 的类名（最多 8 个）
+    unsigned int count = 0;
+    Class *classes = objc_copyClassList(&count);
+    if (classes == NULL) return @"cachecls=-";
+    [sSeen removeAllObjects];
+    for (unsigned int i = 0; i < count && sSeen.count < 8; i++) {
+        Class cls = classes[i];
+        if (cls == Nil) continue;
+        const char *raw = class_getName(cls);
+        if (raw == NULL) continue;
+        NSString *name = @(raw);
+        if ([name containsString:@"IconImageCache"]) [sSeen addObject:name];
+    }
+    free(classes);
+    return [NSString stringWithFormat:@"cachecls=%@",
+            sSeen.count > 0 ? [sSeen componentsJoinedByString:@","] : @"none"];
 }
 
 #pragma mark - 运行期普查

@@ -118,6 +118,8 @@ NSUInteger TCPInstallInstanceSitesForClassPrefixes(NSArray<NSString *> *prefixes
 
 // 1.0.23：图标图缓存层强制挂载（绕过 R2，含继承方法），秒加载的关键。
 NSUInteger TCPInstallIconCacheLayerSites(void);
+// 1.0.24 取证：进程里类名含 IconImageCache 的类（诊断 cachecls=）。
+NSString *TCPIconCacheClassReport(void);
 // 普查：类名含 substrings 之一、且自己声明了 selectors 之一的类，写成
 // "类名=方法名 方法名" 的行；用它在设备上坐实「锁屏通知的角标到底是哪个类」。
 NSString *TCPClassCensusForSubstrings(NSArray<NSString *> *substrings,
