@@ -254,6 +254,8 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 #pragma mark - 素材库
 
 @interface TCPThemeStore ()
+// 1.0.24：异步预热常用尺寸图标合成图（ImageSet 预生成思路，后台队列）。
+- (void)prewarmRenderedIcons;
 // 对外只读，内部要写。
 @property (atomic) NSUInteger generation;
 @property (atomic) BOOL active;
@@ -492,6 +494,44 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         self.badgeSettings = [self badgeSettingsFromValues:values];
         self.cornerMaskOn = TCPBoolValue(values, TCPKeyIconCornerMask, NO);
     }
+
+    // 1.0.24（借鉴 MarkTheme16 的 ImageSet 预生成）：主题一换，异步预热常用尺寸的图标合成图。
+    // 为什么：冷启动时桌面几十个图标第一次取图都要主线程现读盘+合成，这就是「进桌面先原生几秒」
+    // 的另一半根源（缓存层只能省重复合成，省不了首次合成）。这里在后台线程先把 60pt@2x/@3x
+    // 两份全部合成进 renderedCache，主线程第一次取图直接命中。
+    // 只预热「有主题素材的 App 图标」，不碰动态图标（时钟/日历走自己的合成站）、不碰角标。
+    [self prewarmRenderedIcons];
+}
+
+// 1.0.24：异步预热 renderedCache（后台队列，绝不在主线程做；失败静默）。
+- (void)prewarmRenderedIcons {
+    NSArray<NSString *> *bundleIDs = nil;
+    NSUInteger generation = 0;
+    @synchronized (self) {
+        if (!self.active || !(self.featureFlags & TCPFeatureIcons)) return;
+        NSMutableArray<NSString *> *ids = [NSMutableArray array];
+        for (NSString *bid in self.iconMap.allKeys) {
+            if ([bid isEqualToString:@"com.apple.mobiletimer"] ||
+                [bid isEqualToString:@"com.apple.mobilecal"]) continue;   // 动态图标自己合成
+            [ids addObject:bid];
+        }
+        bundleIDs = ids;
+        generation = self.generation;
+    }
+    if (bundleIDs.count == 0) return;
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        // 主题又换了就放弃这批（generation 变了）
+        if (self.generation != generation) return;
+        for (NSString *bid in bundleIDs) {
+            if (self.generation != generation) return;
+            @autoreleasepool {
+                // 60pt 是主屏标准尺寸，@2x/@3x 各预热一份（CornerRadius 交给 store 自己算）
+                [self iconImageForBundleID:bid size:CGSizeMake(60, 60) scale:2.0 cornerRadius:0];
+                [self iconImageForBundleID:bid size:CGSizeMake(60, 60) scale:3.0 cornerRadius:0];
+            }
+        }
+    });
 }
 
 - (BOOL)cornerMaskEnabled {

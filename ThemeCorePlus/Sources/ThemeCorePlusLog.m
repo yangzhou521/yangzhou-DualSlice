@@ -19,7 +19,10 @@
 // 与偏好域同一处（作者素材那种引导根路径才要 ApelinBootstrapPath()）。
 // SpringBoard 本身就是 mobile 身份，写这里没有 sandbox 问题；别的进程万一被沙箱挡住，
 // 就退到自己的临时目录 —— 反正主通道（偏好键）不受影响。
-static NSString * const TCPLogDirectory = @"/var/mobile/Library/Preferences/themecoreplus-logs";
+// 1.0.24（借鉴 MarkTheme16）：日志与诊断挪到 Application Support，与 Preferences 分离
+// （Preferences 是偏好域、体积敏感，不该堆日志）。老目录作兜底：写不进去就退回原路径。
+static NSString * const TCPLogDirectory = @"/var/mobile/Library/Application Support/ThemeCorePlus/Logs";
+static NSString * const TCPLogDirectoryLegacy = @"/var/mobile/Library/Preferences/themecoreplus-logs";
 
 static pthread_mutex_t gLock = PTHREAD_MUTEX_INITIALIZER;
 static NSMutableArray<NSString *> *gLines;      // 完整行（含时间戳），最多 TCPLogMaxLines
@@ -126,6 +129,11 @@ static NSString *TCPLogFilePathLocked(void) {
     NSFileManager *manager = [NSFileManager defaultManager];
     NSString *dir = TCPLogDirectory;
     [manager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+    if (![manager isWritableFileAtPath:dir]) {
+        // 1.0.24：新目录写不进去 → 退回老目录 → 再不行才用临时目录
+        dir = TCPLogDirectoryLegacy;
+        [manager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+    }
     if (![manager isWritableFileAtPath:dir]) {
         dir = NSTemporaryDirectory();   // 沙箱挡住时的兜底：至少这个进程自己还能留一份
     }

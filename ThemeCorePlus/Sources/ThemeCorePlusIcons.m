@@ -1631,6 +1631,27 @@ NSString *TCPIconPixelProbeReport(void) {
 //   正常重画入口，它会重新走 -contentsImage → 显示层站 → 我们的主题图。
 //   特意不再用 clearIconImageInfo + setIconImageInfo: 那条路（0.6.0 就是在那条路上崩的）。
 // 时序：必须在主线程（碰视图树 + 重新出图都是 UIKit 的事），非主线程就 hop 过去。
+// 1.0.24：从视图取 iconImageInfo（结构体）。视图不响应或值异常时用 bounds 兜底，
+// 保证换图 API 拿到的尺寸是合理的（结构体 ABI 铁律，绝不手算寄存器）。
+static TCPIconImageInfo TCPViewIconImageInfoValue(id view) {
+    TCPIconImageInfo info = { .size = CGSizeZero, .scale = 2.0, .cornerRadius = 0 };
+    SEL sel = NSSelectorFromString(@"iconImageInfo");
+    if (view != nil && [view respondsToSelector:sel]) {
+        @try {
+            TCPIconImageInfo got = ((TCPIconImageInfo (*)(id, SEL))objc_msgSend)(view, sel);
+            if (got.size.width >= 8 && got.size.height >= 8) return got;
+        } @catch (NSException *e) { (void)e; }
+    }
+    if (view != nil) {
+        CGRect bounds = ((CGRect (*)(id, SEL))objc_msgSend)(view, NSSelectorFromString(@"bounds"));
+        if (bounds.size.width >= 8 && bounds.size.height >= 8) {
+            info.size = bounds.size;
+            info.cornerRadius = bounds.size.width * 0.2237;
+        }
+    }
+    return info;
+}
+
 void TCPRefreshIconImages(void) {
     if (![NSThread isMainThread]) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -1702,7 +1723,23 @@ void TCPRefreshIconImages(void) {
             icon = ((id (*)(id, SEL))objc_msgSend)(view, iconGetter);
         }
         if (icon == nil || ![view respondsToSelector:updateImage]) continue;
-        ((void (*)(id, SEL, BOOL))objc_msgSend)(view, updateImage, NO);
+        // 1.0.24（借鉴 MarkTheme16）：优先用 iOS 16 正式的换图 API
+        // -updateImageContentsWithImage:imageAppearance:isRealContentsImage:animated:
+        // 它带外观参数、无交叉淡化闪烁；拿不到主题图或视图不响应时退回 updateImageAnimated:NO。
+        TCPIconImageInfo viewInfo = TCPViewIconImageInfoValue(view);
+        UIImage *themedImage = TCPThemedIconImage(icon, viewInfo);
+        SEL updateContents = NSSelectorFromString(@"updateImageContentsWithImage:imageAppearance:isRealContentsImage:animated:");
+        BOOL done = NO;
+        if (themedImage != nil && [view respondsToSelector:updateContents]) {
+            @try {
+                ((void (*)(id, SEL, id, id, BOOL, BOOL))objc_msgSend)(
+                    view, updateContents, themedImage, nil, YES, NO);
+                done = YES;
+            } @catch (NSException *e) { (void)e; }
+        }
+        if (!done) {
+            ((void (*)(id, SEL, BOOL))objc_msgSend)(view, updateImage, NO);
+        }
         pushed++;
 
         // 4) 顺手把刚重画完的视图体检一遍：屏幕上那几张 UIImageView 手里到底是我们的图还是原图。
