@@ -87,6 +87,7 @@ static const CGFloat CHFallbackPillHeight = 44.0;
 // 岛胶囊的「理想」尺寸（真机灵动岛紧凑态），只用于在多个候选里排序。
 static const CGFloat CHIdealIslandWidth = 126.0;
 static const CGFloat CHIdealIslandHeight = 37.0;
+static const CGFloat CHShortIslandInnerWidth = 101.0; // v1.4.3：短岛内宽，放得下=短岛，放不下=长岛
 
 static os_log_t CHLog(void) {
     static os_log_t log = NULL;
@@ -151,6 +152,7 @@ static UILabel *gLabel = nil;
 static NSTimer *gTimer = nil;
 static NSUInteger gRemaining = 0;
 static NSString *gLabelText = @"";
+static BOOL gWantLongIsland = NO; // v1.4.3：这次内容需要长岛（长文字）还是短岛（倒计时/短文案）
 static unsigned long gShows = 0;
 static unsigned long gLastSeconds = 0;
 static BOOL gPlainNotice = NO;   // v1.2.0：「!」开头的标签＝纯文案，不显示「N 秒后」，不跳数字
@@ -301,7 +303,11 @@ static void CHCollectPills(UIView *view, NSMutableArray *out, int depth) {
     }
 }
 
-// 候选打分：SystemAperture 窗口里的、名字像岛本体的、尺寸最接近真机岛的赢。
+// 候选打分：SystemAperture 窗口里的、名字像岛本体的赢。
+// 尺寸规则（v1.4.3 起）：不再按固定 126x37 计罚。按当前内容决定目标岛 ——
+//   gWantLongIsland==YES（长文字）：偏好长岛（145x47），宽高和越大分越高；
+//   gWantLongIsland==NO（倒计时/短文案）：偏好短岛（125x37），离短岛越近分越高。
+// 这样倒计时/短文字用短岛，长文字才用长岛。
 static double CHPillScore(NSString *cls, CGRect r, BOOL inApertureWindow) {
     double score = 0.0;
     if (inApertureWindow) {
@@ -319,8 +325,14 @@ static double CHPillScore(NSString *cls, CGRect r, BOOL inApertureWindow) {
     if ([cls rangeOfString:@"Label" options:NSCaseInsensitiveSearch].location != NSNotFound) {
         score -= 0.8;
     }
-    score -= fabs(r.size.width - CHIdealIslandWidth) / CHIdealIslandWidth;
-    score -= fabs(r.size.height - CHIdealIslandHeight) / CHIdealIslandHeight;
+    if (gWantLongIsland) {
+        // 长文字：偏好长岛 —— 宽+高越大分越高（长岛态 > 短岛态 > 无岛）。
+        score += (r.size.width + r.size.height) / CHIdealIslandWidth;
+    } else {
+        // 短文字：偏好短岛 —— 离 125x37 越近分越高。
+        score -= fabs(r.size.width - CHIdealIslandWidth) / CHIdealIslandWidth;
+        score -= fabs(r.size.height - CHIdealIslandHeight) / CHIdealIslandHeight;
+    }
     return score;
 }
 
@@ -690,6 +702,14 @@ static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain, NS
     gLastSeconds = (unsigned long)seconds;
     gLabelText = [label copy];
     gPlainNotice = plain;
+    // v1.4.3：决定这次要短岛还是长岛 —— 短内容（倒计时/短文案）用短岛，
+    // 文字宽放不下短岛内宽（101pt）才用长岛。用系统当前字号量文字宽度。
+    gWantLongIsland = NO;
+    UIFont *mfont = [UIFont systemFontOfSize:12.0];
+    CGFloat mw = [gLabelText sizeWithAttributes:@{NSFontAttributeName: mfont}].width;
+    if (mw > CHShortIslandInnerWidth) {
+        gWantLongIsland = YES;
+    }
     gAskMode = NO;   // v1.5.0：走胶囊就不是弹窗了（诊断串 mode= 要跟着变回来）
     gLinkSession = [link copy]; // v1.6.0：点胶囊跳到这个对话（空 = 不可点）
     gShows += 1;
