@@ -13,8 +13,18 @@
 # 用法：
 #   sh scripts/fleet-live.sh [分钟数]      # 默认 15 分钟内有活动的
 #   sh scripts/fleet-live.sh 60            # 看一小时内的
-#   sh scripts/fleet-live.sh 30 alerts     # 只看「需要我处理的」：失败 / 等你批准 / 长跑可能卡死
+#   sh scripts/fleet-live.sh 30 alerts     # 只看「需要我处理的」：失败 / 卡住
 #   sh scripts/fleet-live.sh 30 ping       # 打印「该催谁」的现成消息文本（不发送，自己复制或照抄）
+#   sh scripts/fleet-live.sh 30 handoff <对方sid>   # 打印「对齐回执」模板（带本线 sid + 本仓库下一步，复制即发）
+#
+# ⚠️ 2026-11-02 05:2x 实测（别误判「它死了」）：表里写「在跑」**不等于**它此刻能收消息 ——
+#   它可能正好停在回合边界，此时 apelin_conversation_send 会回
+#   `no conversation <sid> ... not running any more`。这**不是**对方结束了：
+#   先 apelin_conversation_list 核它的 state —— `open` 就直接重发（实测一分钟后就发出去了）；
+#   只有 `ended` 才要先 `icli url open "apelin://conversation/<sid>"` 重开，再 send。
+#   状态是快照、几秒就变：**核 state + 重发**，别凭一次被拒就放弃对接。
+#
+# list 模式下，属于「跑这条命令的那个对话」的那一行末尾标 `← 本线`（认法见 mine_sid）。
 #
 # 输出一行一个对话：对话 | 最后活动 | 状态 | 最后动作（工具 · 意图） | 最后一句
 #
@@ -36,7 +46,7 @@
 SESS="$HOME/Documents/wiki.qaq.apelin/sessions"
 MODE="list"
 case "${2:-}" in
-    alerts|ping) MODE="$2" ;;
+    alerts|ping|handoff) MODE="$2" ;;
 esac
 WIN=${1:-15}
 STALL_MIN=${FLEET_STALL_MIN:-8}
@@ -62,6 +72,39 @@ touch -d "-${WIN} minutes" "$MARK" 2>/dev/null || touch "$MARK"
 
 # JSON 里 arguments 是转义过的（\"reason\":\"…\"），先反转义再按普通 JSON 抓
 unesc() { sed 's/\\"/"/g'; }
+
+# 认出「正在跑这条命令的对话」（同 hud-notify.sh 的 auto_sid 手法）：本脚本这次调用
+# 正被写进它的 events.jsonl，所以「最后一次提到 fleet-live.sh 的事件」所属的对话就是自己。
+# 可用 FLEET_SELF=<sid> 显式指定（认错时）。
+mine_sid() {
+    [ -n "${FLEET_SELF:-}" ] && { printf '%s' "$FLEET_SELF"; return 0; }
+    [ -d "$SESS" ] || return 0
+    MS=""
+    for d in $(ls -t "$SESS" 2>/dev/null | head -12); do
+        f="$SESS/$d/events.jsonl"
+        [ -f "$f" ] || continue
+        line=$(tail -c 600000 "$f" 2>/dev/null | grep -F 'fleet-live.sh' | grep -F 'toolCall' | tail -1)
+        [ -n "$line" ] || continue
+        dt=$(printf '%s' "$line" | sed 's/.*"date":"\([^"]*\)".*/\1/')
+        [ -n "$dt" ] || continue
+        MS="$MS$dt $d
+"
+    done
+    [ -n "$MS" ] || return 0
+    printf '%s' "$MS" | sort -r | head -1 | awk '{print $2}'
+}
+
+# 从 WORK-STATE.json 抓一个顶层字符串字段（本机没有 python3/jq，这个 plutil 的 -extract 不支持 -o -）
+WS="${APELIN_PROJECT_ROOT:-$PWD}/scripts/WORK-STATE.json"
+ws_field() {
+    [ -f "$WS" ] || return 0
+    grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$WS" 2>/dev/null | head -1 |
+        sed 's/^"[^"]*"[[:space:]]*:[[:space:]]*"//;s/"$//'
+}
+
+MINE=$(mine_sid)
+MYSHORT=$(printf '%s' "$MINE" | cut -c1-8)
+OTHERS=0
 
 if [ "$MODE" = "list" ]; then
     printf '%-9s %-8s %-6s %s\n' "对话" "最后活动" "状态" "最后动作（工具 · 意图） ｜ 最后一句"
@@ -166,10 +209,16 @@ for d in "$SESS"/*/; do
         act="$act ｜ $txt"
     fi
 
-    row=$(printf '%-9s %3d分钟前 %-6s %s' "$(printf '%s' "$sid" | cut -c1-8)" "$mins" "$state" "$act")
+    short=$(printf '%s' "$sid" | cut -c1-8)
+    row=$(printf '%-9s %3d分钟前 %-6s %s' "$short" "$mins" "$state" "$act")
     case "$state" in
         失败|卡住?) printf '%s\n' "$sid|$state|$mins|$act" >> "$ALERTS" ;;
     esac
+    if [ -n "$MYSHORT" ] && [ "$short" = "$MYSHORT" ]; then
+        row="$row  ← 本线"
+    elif [ "$state" = "在跑" ]; then
+        OTHERS=$((OTHERS + 1))
+    fi
     [ "$MODE" = "list" ] && printf '%s\n' "$row"
 done
 
@@ -181,30 +230,37 @@ if [ "$MODE" = "list" ]; then
     else
         echo "✅ 没有失败或卡住的对话"
     fi
+    if [ "$OTHERS" -gt 0 ]; then
+        echo "⚡ 除本线外还有 ${OTHERS} 条线在跑 —— 动码/动设备前先对齐：sh scripts/fleet-live.sh ${WIN} handoff <对方sid>"
+    elif [ -n "$MYSHORT" ]; then
+        echo "（除本线外没有别的线在跑）"
+    fi
     echo "（数据来自 Apelin 的 sessions/*/events.jsonl，无需任何 agent 配合；窗口 ${WIN} 分钟）"
     exit 0
 fi
 
-# ── alerts：只列需要处理的 ────────────────────────────────────────────────
+# ── alerts：只列需要处理的（handoff 模式下整段静默 —— 直接跳到文件末尾）──
 n=$(wc -l < "$ALERTS" | tr -d ' ')
-if [ "${n:-0}" -eq 0 ]; then
+if [ "${n:-0}" -eq 0 ] && [ "$MODE" != "handoff" ]; then
     echo "✅ 没有失败或卡住的对话（窗口 ${WIN} 分钟）"
     exit 0
 fi
-echo "需要处理的对话：$n 个"
-printf '%s\n' "--------------------------------------------------------------------------------"
-while IFS='|' read -r sid state mins act; do
-    case "$state" in
-        失败) why="这一回合失败（多半额度耗尽 / 限流），它自己不会再动，得有人去看或让用户充值" ;;
-        *)    why="判为在跑但 ${mins} 分钟没动新事件；可能是长编译/长下载，也可能真卡住了" ;;
-    esac
-    printf '%s  %s\n   %s\n   最后动作：%s\n' "$sid" "$state" "$why" "$act"
-done < "$ALERTS"
-printf '%s\n' "--------------------------------------------------------------------------------"
-echo "要给它发话：sh scripts/fleet-live.sh ${WIN} ping"
+if [ "${n:-0}" -gt 0 ]; then
+    echo "需要处理的对话：$n 个"
+    printf '%s\n' "--------------------------------------------------------------------------------"
+    while IFS='|' read -r sid state mins act; do
+        case "$state" in
+            失败) why="这一回合失败（多半额度耗尽 / 限流），它自己不会再动，得有人去看或让用户充值" ;;
+            *)    why="判为在跑但 ${mins} 分钟没动新事件；可能是长编译/长下载，也可能真卡住了" ;;
+        esac
+        printf '%s  %s\n   %s\n   最后动作：%s\n' "$sid" "$state" "$why" "$act"
+    done < "$ALERTS"
+    printf '%s\n' "--------------------------------------------------------------------------------"
+    echo "要给它发话：sh scripts/fleet-live.sh ${WIN} ping"
+fi
 
 # ── ping：生成可直接发送的催办文本（只打印，不发送）──────────────────────
-if [ "$MODE" != "ping" ]; then
+if [ "$MODE" = "alerts" ]; then
     exit 0
 fi
 echo
@@ -226,3 +282,22 @@ while IFS='|' read -r sid state mins act; do
 done < "$ALERTS"
 echo
 echo "（本段只是文本，没有发送任何消息）"
+
+# ── handoff：生成「对齐回执」模板（只打印，不发送）──────────────────────
+# 为什么要有：撞车的根因不是「谁在跑」看不见（list 能满足），而是**「谁在改哪些文件」没人声明**。
+# 回执统一带三样：本线 sid + 我刚做完什么 + 本仓库的下一步（从 WORK-STATE.json 读，现成）。
+# 2026-11-02：配合「每回合起手第 0 问」用，看见别的线在跑就照抄这段发过去。
+if [ "$MODE" != "handoff" ]; then
+    exit 0
+fi
+TARGET=${3:-}
+echo "════ 对齐回执模板（复制下面整段 → apelin_conversation_send 的 text）════"
+echo "发给：${TARGET:-<对方 sid，即上面表里那一行的前 8 位要核完整 id>}"
+echo
+echo "对齐回执（${MYSHORT:-<本线 sid>}）："
+echo "进度：<改成你刚做完的那一件事>"
+echo "下一步：$(ws_field step)"
+echo "我改的文件：<列路径，例：scripts/fleet-live.sh；别人的文件我不碰>"
+echo "你手上在做的我不动；要动同一文件先说一声。"
+echo
+echo "（若 send 被拒「not running any more」：先 apelin_conversation_list 核 state，open 就重发，ended 才 icli url open 重开）"

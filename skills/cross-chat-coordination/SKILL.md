@@ -276,6 +276,15 @@ apelin_conversation_list project: <folder|projectID>     # 逐个工程再列一
    **为什么改成每回合（2026-11-02 05:20 用户原话「之前另条线在活跃工作为什么你不知道！」）**：感知只在开工那一次时，别人中途上线/插话我根本不知道（病根：交接块只讲本工程进度、不讲别人在干什么），两条线在同一个仓库同一批文件上干活只能靠运气不撞车。现在 `scripts/resume.sh`（开工那次）与**每回合起手**都跑一次 `sh scripts/fleet-live.sh 30`（几秒、只读、免批准卡、跨工程全景）。
    **看到「失败」不要猜原因**：先 `apelin_conversation_read` 看最后一条报错——多半是
    `Credits exhausted / rate limit`，它自己不会再动，解法只有让用户充值或换模型，**不是改代码**。
+   **回执有现成模板（2026-11-02 加）**：`sh scripts/fleet-live.sh 30 handoff <对方sid>` 打印一段可直接复制的
+   对齐回执（自带本线 sid + 本仓库 `WORK-STATE.json` 的下一步）。回执里**必须写「我改了哪些文件」**——
+   撞车的根因不是看不见谁在跑（list 够用），而是**没人声明「谁在改哪些文件」**。
+   **`send` 被拒 ≠ 对方结束（2026-11-02 05:2x 实测）**：回 `no conversation <sid> ... not running any more`
+   多半是它正好停在回合边界（表里那会儿还写着「在跑」）。先 `apelin_conversation_list` 核 state：
+   `open` → **直接重发**（实测一分钟后就发出去了）；只有 `ended` 才要 `icli url open "apelin://conversation/<sid>"` 重开再发。
+   **状态是快照**：别凭一次被拒就放弃对接，也别把它当成「对方死了」报给别的线。
+   **表里带 `← 本线` 的那一行是自己**（`mine_sid` 自动认；认错用 `FLEET_SELF=<sid>` 指定）；
+   末尾会直接告诉你「除本线外还有 N 条在跑」。
 5. **催办用现成文本**：`sh scripts/fleet-live.sh 30 ping` 会为每个 失败/卡住 的对话打印一段可直接复制的
    催办话术（**只打印、不发送**），拷进 `apelin_conversation_send` 就行，省掉每次现编、也不会漏掉谁。
    对方回一句「在等 X／我卡在 Y」就够——**要的是让它说清状态，不是催它赶紧交活**。
