@@ -118,6 +118,8 @@ NSUInteger TCPInstallInstanceSitesForClassPrefixes(NSArray<NSString *> *prefixes
 
 // 1.0.23：图标图缓存层强制挂载（绕过 R2，含继承方法），秒加载的关键。
 NSUInteger TCPInstallIconCacheLayerSites(void);
+// 1.0.30：按选择器名找缓存层真入口（不依赖类名里含 IconImageCache）。
+NSUInteger TCPInstallIconCacheByNameSites(void);
 // 1.0.24 取证：进程里类名含 IconImageCache 的类（诊断 cachecls=）。
 NSString *TCPIconCacheClassReport(void);
 NSString *TCPIconCacheHookReport(void);

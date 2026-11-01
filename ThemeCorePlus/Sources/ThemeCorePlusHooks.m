@@ -674,6 +674,48 @@ NSUInteger TCPInstallIconCacheLayerSitesV2(void) {
     return installed;
 }
 
+// 1.0.30：按**选择器名**找缓存层真入口，不再靠「类名含 IconImageCache」。
+// 1.0.29 的实测（cache=nohook，诊断逐类写着 PKIconImageCache/SBFolderIconImageCache/
+// SBHIconImageCache 三个类的 iconImageWithInfo: 全是 nomethod）：这台 16.7.16 上，
+// 「图标图缓存」的实现不吃这三个名字 —— 真正声明 iconImageWithInfo: 的类名里没有
+// IconImageCache 这串字，被旧过滤整条漏掉（1.0.29 只在「已命中含字类」里放宽了声明者，
+// 候选类集合本身还是空的，所以等于没改到）。
+// 改法：对全进程每个类，用 class_copyMethodList 逐级向上找「自己声明了
+// iconImageWithInfo: / unmaskedIconImageWithInfo: / generateIconImageWithInfo: 的类」，
+// 只对声明者强制挂一次。缓存层一命中，桌面第一次取图就是主题图（MarkTheme 式秒加载）。
+NSUInteger TCPInstallIconCacheByNameSites(void) {
+    static NSArray<NSString *> *sels = nil;
+    if (sels == nil) {
+        sels = @[ @"iconImageWithInfo:", @"unmaskedIconImageWithInfo:", @"generateIconImageWithInfo:" ];
+    }
+    unsigned int count = 0;
+    Class *classes = objc_copyClassList(&count);
+    if (classes == NULL) return 0;
+    NSUInteger installed = 0;
+    NSMutableArray<NSString *> *log = [NSMutableArray array];
+    for (unsigned int i = 0; i < count; i++) {
+        Class cls = classes[i];
+        if (cls == Nil) continue;
+        for (NSString *selName in sels) {
+            SEL sel = NSSelectorFromString(selName);
+            Class owner = TCPDeclaringClass(cls, sel);
+            if (owner == Nil || owner != cls) continue;   // 只由声明它的那个类挂一次（子类走继承）
+            if (TCPInstallOneSiteKindForced(cls, sel, TCPSiteKindIconImageInfo)) {
+                installed++;
+                if (log.count < 10) [log addObject:[NSString stringWithFormat:@"-%@:%@", NSStringFromClass(cls), selName]];
+            }
+        }
+    }
+    if (classes) free(classes);
+    if (installed > 0) {
+        NSString *line = [NSString stringWithFormat:@"byname:%lu[%@]", (unsigned long)installed,
+                          [log componentsJoinedByString:@","]];
+        sCacheHookReport = ([sCacheHookReport isEqualToString:@"-"] ? line
+                            : [NSString stringWithFormat:@"%@;%@", sCacheHookReport, line]);
+    }
+    return installed;
+}
+
 // 1.0.23：图标图缓存层强制挂载（绕过 R2，含继承方法）。
 // 遍历类名含 "IconImageCache" 的类（SBHIconImageCache 属于 SpringBoardHome，晚加载才出现），
 // 用 TCPInstallOneSiteKindForced 挂 iconImageWithInfo:/unmaskedIconImageWithInfo:/generateIconImageWithInfo:。

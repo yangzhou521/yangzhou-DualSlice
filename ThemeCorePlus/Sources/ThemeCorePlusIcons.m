@@ -113,6 +113,9 @@ void TCPInstallIconSites(void) {
     // 的 iconImageWithInfo: 是父类/分类声明的，class_copyMethodList 列不出它。
     // 改为 Forced 挂载（class_getInstanceMethod 含继承），挂上后视图第一次从缓存取图就是主题图。
     NSUInteger cacheSites = TCPInstallIconCacheLayerSites();
+    // 1.0.30：再按选择器名全进程扫一遍 —— 这台机器上「类名含 IconImageCache」那三个类
+    // 的 iconImageWithInfo: 全是 nomethod，真正的缓存入口叫别的名字，必须靠选择器找。
+    cacheSites += TCPInstallIconCacheByNameSites();
     if (cacheSites > 0) {
         os_log(TCPLogHandle(), "TCPS_ICON_CACHE_SITES +%lu", (unsigned long)cacheSites);
     }
@@ -596,7 +599,7 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
             TCPPixelStats base = TCPPixelStatsForImage(themed);
             BOOL darkBase = base.valid ? (base.luminance <= 0.5) : NO;
             TCPCompositeCalendarInk(ctx, rect, systemImage, darkBase);
-            how = [NSString stringWithFormat:@"ink:%@,lum=%.2f", darkBase ? @"w" : @"b", (double)base.luminance];
+            how = [NSString stringWithFormat:@"ink:%@,lum=%.2f,inkdrop=%.2f", darkBase ? @"w" : @"b", (double)base.luminance, sCalendarInkDrop];
         }
     }
 
@@ -625,6 +628,8 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
 // screen 压在浅底上 → 白字也看不见。混合模式解决不了「墨要跟着底色换颜色」。
 // 正确做法：把系统图里「与背景色不同的部分」（也就是日期数字）取出来当**墨**，
 // 再按主题底图的明暗选黑/白把它画上去 —— 文字一定可见，底图也保持主题的样子。
+// 1.0.30：日历墨层筛掉多少（-1 = 一个字没留下已回退旧行为），写进 dyn last 的 inkdrop=。
+static double sCalendarInkDrop = 0.0;
 static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *systemImage, BOOL darkBase) {
     if (ctx == NULL || systemImage == nil || systemImage.CGImage == NULL) return;
     CGImageRef cg = systemImage.CGImage;
@@ -655,21 +660,141 @@ static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *syst
     // 墨 = 与背景色差异大的像素。把「差异强度」写进一张灰度图当 mask，
     // 再用 ClipToMask 裁剪后填一个纯色（亮底填黑、深底填白）——
     // 这样文字一定可见，主题底图也保持原样。
+    //
+    // 1.0.30 修「日历图标里出现时钟指针」（用户 2026-11-01 18:31）：墨层原来**把整张系统图上
+    // 所有与背景不同的像素**都当墨，于是不只日期数字，任何图形（某些主题/系统版本的日历图里
+    // 带表框线条、时/分针形状的装饰）也会被原样搬到主题底上 → 看着就像日历里插了两根指针。
+    // 现在按「形状是不是字」筛一遍：真日历的数字是**粗笔画**，一条笔画几像素宽、连通区域也大；
+    // 指针是一条细长线段，主干常常只有 1~3 像素宽（96 的采样里），连通面积也小。
+    // 判据：像素到背景的平均距离（腐蚀半径 1）→ 细线一腐蚀就没了；再按连通面积兜一层。
+    // 只在「拿到原始 mask」时筛，任何一步分配失败都退回旧行为（宁可多墨，不要日历变空白）。
     unsigned char *maskBuffer = calloc(dw * dh, 4);
     if (maskBuffer == NULL) { free(buffer); return; }
+    unsigned char *rawAlpha = calloc(dw * dh, 1);      // 0~255 的原始墨强度
+    if (rawAlpha == NULL) { free(maskBuffer); free(buffer); return; }
     for (size_t i = 0; i < dw * dh; i++) {
         unsigned char *p = buffer + i * 4;
         if (p[3] < 8) continue;
         double dr = (double)p[0] - br, dg = (double)p[1] - bg, db = (double)p[2] - bb;
         double dist = (dr * dr + dg * dg + db * db) / (255.0 * 255.0 * 3.0);
         double a = dist > 0.02 ? MIN(1.0, dist * 3.0) : 0.0;
-        unsigned char v = (unsigned char)(a * 255.0);
+        rawAlpha[i] = (unsigned char)(a * 255.0);
+    }
+    free(buffer);
+
+    // 腐蚀 1 像素（3×3 取最小）：粗笔画的字留下主干，细线（指针）整条消失。
+    unsigned char *eroded = calloc(dw * dh, 1);
+    if (eroded != NULL) {
+        for (size_t y = 0; y < dh; y++) {
+            for (size_t x = 0; x < dw; x++) {
+                unsigned char m = rawAlpha[y * dw + x];
+                for (int dy = -1; dy <= 1 && m > 0; dy++) {
+                    long yy = (long)y + dy;
+                    if (yy < 0 || yy >= (long)dh) { m = 0; break; }
+                    for (int dx = -1; dx <= 1; dx++) {
+                        long xx = (long)x + dx;
+                        if (xx < 0 || xx >= (long)dw) { m = 0; break; }
+                        unsigned char v = rawAlpha[yy * dw + xx];
+                        if (v < m) m = v;
+                    }
+                }
+                eroded[y * dw + x] = m;
+            }
+        }
+    }
+
+    // 连通区域筛：4 连通从粗主干长回原始墨区域，面积太小的整块丢掉（指针常是独立的小块）。
+    BOOL *keep = NULL;
+    size_t *stack = NULL;
+    if (eroded != NULL) {
+        keep = calloc(dw * dh, 1);
+        unsigned char *visited = calloc(dw * dh, 1);
+        stack = calloc(dw * dh, sizeof(size_t));
+        if (keep != NULL && visited != NULL && stack != NULL) {
+            size_t minArea = MAX((size_t)6, (dw * dh) / 900);   // ≈0.11% 的面积，数字笔画远大于它
+            for (size_t i = 0; i < dw * dh; i++) {
+                if (visited[i] || rawAlpha[i] == 0) continue;
+                size_t top = 0, area = 0;
+                BOOL hasCore = NO;
+                stack[top++] = i;
+                visited[i] = 1;
+                while (top > 0) {
+                    size_t cur = stack[--top];
+                    area++;
+                    if (eroded != NULL && eroded[cur] > 0) hasCore = YES;
+                    size_t cx = cur % dw, cy = cur / dw;
+                    size_t nb[4] = { cur - 1, cur + 1,
+                                     (cy > 0 ? cur - dw : cur), (cy + 1 < dh ? cur + dw : cur) };
+                    for (int k = 0; k < 4; k++) {
+                        size_t n = nb[k];
+                        if (k == 0 && cx == 0) continue;
+                        if (k == 1 && cx + 1 >= dw) continue;
+                        if (visited[n] || rawAlpha[n] == 0) continue;
+                        visited[n] = 1;
+                        stack[top++] = n;
+                    }
+                }
+                if (hasCore && area >= minArea) {
+                    // 回填：整块保留
+                    top = 0;
+                    stack[top++] = i;
+                    keep[i] = 1;
+                    while (top > 0) {
+                        size_t cur = stack[--top];
+                        size_t cx = cur % dw, cy = cur / dw;
+                        size_t nb[4] = { cur - 1, cur + 1,
+                                         (cy > 0 ? cur - dw : cur), (cy + 1 < dh ? cur + dw : cur) };
+                        for (int k = 0; k < 4; k++) {
+                            size_t n = nb[k];
+                            if (k == 0 && cx == 0) continue;
+                            if (k == 1 && cx + 1 >= dw) continue;
+                            if (keep[n] || rawAlpha[n] == 0) continue;
+                            keep[n] = 1;
+                            stack[top++] = n;
+                        }
+                    }
+                }
+            }
+            free(visited);
+        } else {
+            free(visited);
+            free(keep);
+            keep = NULL;
+        }
+        free(stack);
+    }
+
+    size_t keptPixels = 0;
+    for (size_t i = 0; i < dw * dh; i++) {
+        unsigned char v = rawAlpha[i];
+        if (keep != NULL && v > 0 && !keep[i]) v = 0;   // 没通过形状筛选的（指针、装饰线）不画
+        if (v > 0) keptPixels++;
         maskBuffer[i * 4 + 0] = v;
         maskBuffer[i * 4 + 1] = v;
         maskBuffer[i * 4 + 2] = v;
         maskBuffer[i * 4 + 3] = 255;
     }
-    free(buffer);
+    // 1.0.30 取证：筛掉了多少墨（诊断日历那段的 ink: 后缀会带上 inkdrop=）。
+    double dropped = 0.0;
+    if (keep != NULL) {
+        size_t raw = 0;
+        for (size_t i = 0; i < dw * dh; i++) if (rawAlpha[i] > 0) raw++;
+        if (raw > 0) dropped = 1.0 - (double)keptPixels / (double)raw;
+        // 一个字都没留下 → 说明这版系统图的字也没通过筛选，退回旧行为（宁可多墨，不可空白）
+        if (keptPixels < MAX((size_t)4, (dw * dh) / 4000)) {
+            for (size_t i = 0; i < dw * dh; i++) {
+                unsigned char v = rawAlpha[i];
+                maskBuffer[i * 4 + 0] = v;
+                maskBuffer[i * 4 + 1] = v;
+                maskBuffer[i * 4 + 2] = v;
+            }
+            dropped = -1.0;
+        }
+    }
+    free(eroded);
+    free(keep);
+    free(rawAlpha);
+    sCalendarInkDrop = dropped;
 
     CGColorSpaceRef maskSpace = CGColorSpaceCreateDeviceRGB();
     // buffer 是 RGBA 排布（每像素 4 字节），bytesPerRow 必须是 dw*4。
