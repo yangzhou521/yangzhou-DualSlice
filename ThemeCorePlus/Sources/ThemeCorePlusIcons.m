@@ -526,6 +526,8 @@ BOOL TCPIconNeedsSystemComposite(id icon) {
 
 // 1.0.7：日历的「数字层」提取（定义在文件后面）。
 static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *systemImage, BOOL darkBase);
+// 1.0.30：日历墨层筛掉多少（-1 = 一个字没留下已回退旧行为），写进 dyn last 的 inkdrop=。
+static double sCalendarInkDrop = 0.0;
 
 UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *systemImage) {
     if (icon == nil || info.size.width <= 0 || info.size.height <= 0) return nil;
@@ -628,8 +630,6 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
 // screen 压在浅底上 → 白字也看不见。混合模式解决不了「墨要跟着底色换颜色」。
 // 正确做法：把系统图里「与背景色不同的部分」（也就是日期数字）取出来当**墨**，
 // 再按主题底图的明暗选黑/白把它画上去 —— 文字一定可见，底图也保持主题的样子。
-// 1.0.30：日历墨层筛掉多少（-1 = 一个字没留下已回退旧行为），写进 dyn last 的 inkdrop=。
-static double sCalendarInkDrop = 0.0;
 static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *systemImage, BOOL darkBase) {
     if (ctx == NULL || systemImage == nil || systemImage.CGImage == NULL) return;
     CGImageRef cg = systemImage.CGImage;
