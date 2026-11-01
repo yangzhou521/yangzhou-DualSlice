@@ -5,6 +5,7 @@
 #import <substrate.h>
 #import <dlfcn.h>   // dladdr：反查某个 IMP 属于哪个镜像（见文末「谁 hook 了它」）
 #import <mach-o/dyld.h>   // 1.0.31：dyld_register_func_for_add_image（框架加载回调，替代定时全表扫描）
+#include <string.h>       // 1.0.33：strstr（probe 里按方法名筛 UIImage 私有接口）
 
 #define TCP_SLOT_COUNT 24
 
@@ -1135,30 +1136,34 @@ void TCPRunIconCacheProbe(void) {
             for (int i = 0; names[i]; i++) TCPDumpClassMethods(names[i], out);
 
             // UIImage 的私有取图方法（AI 说 +[UIImage _applicationIconImageForBundleIdentifier:format:scale:]
-            // 存在但签名未证实，一并 dump 出来核）
+            // 存在但签名未证实）。1.0.33：**连 method_getTypeEncoding 一起打出来**，
+            // 这样不用猜参数类型（@=id  d=double  i=int  q=long long  f=float  v=void  :=SEL）。
+            // 设置 App / 文档选择器 / 分享面板的图标都在这一层，拿到确切签名才能安全挂。
             Class ui = objc_getClass("UIImage");
             if (ui != Nil) {
-                [out appendString:@"\n===== UIImage (applicationIcon*) class methods =====\n"];
-                Class meta = object_getClass(ui);
+                [out appendString:@"\n===== UIImage 实例方法 (appIcon, name [typeEncoding]) =====\n"];
                 unsigned int mc = 0;
-                Method *ms = class_copyMethodList(meta, &mc);
+                Method *ms = class_copyMethodList(ui, &mc);
                 for (unsigned int i = 0; i < mc; i++) {
-                    NSString *sel = NSStringFromSelector(method_getName(ms[i]));
-                    if ([sel containsString:@"applicationIcon"] || [sel containsString:@"IconImage"]) {
-                        [out appendFormat:@"  + %@\n", sel];
+                    const char *name = sel_getName(method_getName(ms[i]));
+                    if (name && (strstr(name, "applicationIcon") || strstr(name, "IconImage"))) {
+                        const char *enc = method_getTypeEncoding(ms[i]);
+                        [out appendFormat:@"  - %s  [%s]\n", name, enc ? enc : "?"];
                     }
                 }
                 if (ms) free(ms);
-                [out appendString:@"\n===== UIImage (applicationIcon*) instance methods =====\n"];
-                unsigned int ic = 0;
-                Method *ims = class_copyMethodList(ui, &ic);
-                for (unsigned int i = 0; i < ic; i++) {
-                    NSString *sel = NSStringFromSelector(method_getName(ims[i]));
-                    if ([sel containsString:@"applicationIcon"] || [sel containsString:@"IconImage"]) {
-                        [out appendFormat:@"  - %@\n", sel];
+
+                [out appendString:@"\n===== UIImage 类方法 (appIcon, name [typeEncoding]) =====\n"];
+                unsigned int cc = 0;
+                Method *cms = class_copyMethodList(object_getClass(ui), &cc);
+                for (unsigned int i = 0; i < cc; i++) {
+                    const char *name = sel_getName(method_getName(cms[i]));
+                    if (name && (strstr(name, "applicationIcon") || strstr(name, "IconImage"))) {
+                        const char *enc = method_getTypeEncoding(cms[i]);
+                        [out appendFormat:@"  + %s  [%s]\n", name, enc ? enc : "?"];
                     }
                 }
-                if (ims) free(ims);
+                if (cms) free(cms);
             }
 
             NSString *path = @"/var/mobile/Library/Preferences/TCPCacheProbe.txt";
