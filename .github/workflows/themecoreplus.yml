@@ -108,16 +108,9 @@ jobs:
             fi
           done
           WORKFLOW=.github/workflows/themecoreplus.yml
-          TAGS=$(grep -cF 'themecoreplus-v${{ env.VERSION }}' "$WORKFLOW" || true)
-          if [ "${TAGS:-0}" -lt 2 ]; then
-            echo "::error title=version-mismatch::工作流里只出现 $TAGS 次 themecoreplus-v\${{ env.VERSION }}"
-            exit 1
-          fi
-          OTHER=$(grep -nE "themecoreplus-v[0-9]+\.[0-9]+\.[0-9]+" "$WORKFLOW" | grep -v "themecoreplus-v$VERSION" || true)
-          if [ -n "$OTHER" ]; then
-            echo "::error title=version-mismatch::工作流里还有别的 tag：$OTHER"
-            exit 1
-          fi
+          # tag_name 已改成动态 ${{ env.VERSION }}（2026-11-01），不再需要 grep 字面版本号检查：
+          # 版本三处（header/script/env）一致时 tag 自动跟随，不会漂移；且 rootless 手动触发会加 -rootless 后缀。
+          echo "::notice title=version::tag 动态绑定 env.VERSION，无需字面量检查"
 
       - name: Build package
         run: |
