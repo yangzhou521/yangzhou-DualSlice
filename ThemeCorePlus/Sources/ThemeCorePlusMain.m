@@ -140,6 +140,13 @@ void TCPWriteDiagnosticsNow(void) {
 
 // 让桌面把图标重新取一遍图。取不到就当没有这一步（有的版本没有这个方法）。
 static void TCPRelayoutIcons(void) {
+    // 1.0.36（修 1.0.35 安全模式）：TCPReload 在 dyld 构造函数第一轮必走进这里
+    // （sLastReloadSites 初始 0 → sitesChanged 恒真），而 +[SBIconController sharedInstance]
+    // 内部就是 +[UIScreen mainScreen] → dyld 阶段断言 → SIGABRT → SpringBoard 连崩进安全模式
+    // （崩溃栈 TCPReload:180 → TCPRelayoutIcons → +[SBIconController sharedInstance]）。
+    // 这就是 0.9.21 那个崩溃模式的翻版。闸门：图片工作未开闸（进程还没起来，+2 秒主队列
+    // 才 TCPStoreEnableImageWork）一律不碰共享实例；开闸后由 dyld 补挂轮 / 用户改设置轮再重排。
+    if (!TCPStoreImageWorkReady()) return;
     Class controllerClass = objc_getClass("SBIconController");
     if (controllerClass == Nil) return;
     SEL sharedSelector = NSSelectorFromString(@"sharedInstance");
