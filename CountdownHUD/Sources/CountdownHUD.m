@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.3";
+static NSString *const CHVersion = @"1.6.4";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -160,6 +160,7 @@ static unsigned long gTaps = 0;      // v1.6.0：胶囊被点了几次（诊断�
 
 // v1.5.0：注销确认弹窗的状态（诊断串里要报，所以和别的 static 放一起）。
 static BOOL gAskMode = NO;              // 这次是弹窗而不是胶囊 → mode=alert
+static BOOL gAskIsVPN = NO;             // 弹窗是「请开 VPN」而非「注销」（按钮文案与是否注销都不同）
 static unsigned long gAlerts = 0;       // 累计弹过几次
 static NSString *gAnswerDetail = @"-";  // 最近一次答复 confirm|cancel|timeout|-
 static NSString *gExecDetail = @"-";    // v1.6.1：点了「立即注销」之后插件实际做了什么（诊断 exec=spawned|skip-marker|term|fail|-）
@@ -468,7 +469,7 @@ static void CHWriteDiagnostics(void) {
                          gFontSize,
                          gIslandDetail, gIslandSource,
                          (unsigned long)gIslandCandidates,
-                         gAskMode ? @"alert" : (gPlainNotice ? @"plain" : @"count"),
+                         gAskMode ? (gAskIsVPN ? @"alertvpn" : @"alert") : (gPlainNotice ? @"plain" : @"count"),
                          gSelfWindowDetail, gIslandWindowDetail,
                          (unsigned long)gHaptics,
                          (unsigned long)gAlerts, gAnswerDetail, gExecDetail,
@@ -736,6 +737,8 @@ static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain, NS
 // 请求标签以 `?` 开头就走这条路：**不画胶囊**，直接在 SpringBoard 里 present 一个
 // UIAlertController（和桌面、设置里弹的完全同款：圆角面板 + 两颗按钮），
 // 标题「⚠️ 即将注销」，按钮「取消」/「立即注销」。
+// 请求标签以 `#` 开头 = 「请开 VPN」弹窗（v1.6.4）：标题「🌐 需要开 VPN」，按钮「取消」/
+// 「请开 VPN」，点「请开 VPN」只写 confirm、**绝不注销**。
 // 窗口层级 CHAlertWindowLevel 高过一切 App 与灵动岛，所以任何界面都会盖上来。
 //
 // 用户点完把结果写进 CHAnswerPath：`<epoch>|confirm|cancel|timeout`，
@@ -865,7 +868,7 @@ static void CHDismissAlert(void) {
 }
 
 // 返回 NO ＝ 现在还没有 windowScene，这次没弹，请求留着下一拍再来（不算消费掉）。
-static BOOL CHShowAlert(NSUInteger seconds, NSString *label) {
+static BOOL CHShowAlert(NSUInteger seconds, NSString *label, BOOL isVPN) {
     if (!CHEnsureAlertWindow()) {
         os_log(CHLog(), "no window scene yet, alert deferred");
         return NO;
@@ -881,6 +884,7 @@ static BOOL CHShowAlert(NSUInteger seconds, NSString *label) {
     }
 
     gAskMode = YES;
+    gAskIsVPN = isVPN;
     gPlainNotice = NO;
     gLabelText = [label copy];
     gLastSeconds = (unsigned long)seconds;
@@ -888,7 +892,7 @@ static BOOL CHShowAlert(NSUInteger seconds, NSString *label) {
     gAlerts += 1;
 
     UIAlertController *a =
-        [UIAlertController alertControllerWithTitle:@"⚠️ 即将注销"
+        [UIAlertController alertControllerWithTitle:(isVPN ? @"🌐 需要开 VPN" : @"⚠️ 即将注销")
                                            message:label
                                     preferredStyle:UIAlertControllerStyleAlert];
     // 取消：什么都不做，只把 cancel 写回去。
@@ -899,14 +903,17 @@ static BOOL CHShowAlert(NSUInteger seconds, NSString *label) {
         CHDismissAlert();
         CHWriteDiagnostics();
     }]];
-    // 立即注销：写 confirm（脚本端仍能据此记录），**然后由插件自己真的注销**（v1.6.1）——
-    // 不再依赖脚本那一刻是否还在前台轮询。
-    [a addAction:[UIAlertAction actionWithTitle:@"立即注销"
+    // 确认键：注销弹窗显示「立即注销」且真的注销；「请开 VPN」弹窗显示「请开 VPN」、只写 confirm、绝不注销。
+    [a addAction:[UIAlertAction actionWithTitle:(isVPN ? @"请开 VPN" : @"立即注销")
                                           style:UIAlertActionStyleDestructive
                                         handler:^(UIAlertAction *action) {
         CHWriteAnswer(@"confirm");
         CHDismissAlert();
         CHWriteDiagnostics();
+        if (isVPN) {
+            // v1.6.4：请开 VPN 不做任何设备动作，答案由脚本读回去即可。
+            return;
+        }
         // 留 1 秒：让答案文件落盘、诊断写完，再结束这个进程。
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
@@ -1002,6 +1009,7 @@ static BOOL CHHandleRequest(NSString *content) {
     NSString *label = @"注销";
     BOOL plain = NO;
     BOOL ask = NO;
+    BOOL isVPN = NO;
     BOOL hasSeconds = NO;
     if (parts.count >= 2) {
         NSInteger value = [parts[1] integerValue];
@@ -1035,6 +1043,7 @@ static BOOL CHHandleRequest(NSString *content) {
     // 超时写 timeout，**绝不自动注销**。
     if ([label hasPrefix:@"?"]) {
         ask = YES;
+        isVPN = NO;
         label = [label substringFromIndex:1];
         label = [label stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (label.length == 0) {
@@ -1046,6 +1055,23 @@ static BOOL CHHandleRequest(NSString *content) {
         }
         if (!hasSeconds) {
             seconds = 60;
+        }
+    }
+    // v1.6.4：标签以「#」开头＝**请开 VPN 弹窗**（标题「需要开 VPN」、按钮「请开 VPN」，
+    // 点了只写 confirm、绝不注销）。秒数同样是「挂多久没人理就自己收掉」，默认 30 秒。
+    if ([label hasPrefix:@"#"]) {
+        ask = YES;
+        isVPN = YES;
+        label = [label substringFromIndex:1];
+        label = [label stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (label.length == 0) {
+            label = @"请开 VPN";
+        }
+        if (label.length > 48) {
+            label = [[label substringToIndex:47] stringByAppendingString:@"…"];
+        }
+        if (!hasSeconds) {
+            seconds = 30;
         }
     }
     // v1.6.0：第 4 段 = 发这条消息的对话 session id。有它，胶囊就是可点的：
@@ -1088,7 +1114,7 @@ static BOOL CHHandleRequest(NSString *content) {
         if (ask) {
             gLinkSession = nil; // v1.6.0：弹窗模式不挂点击目标
         }
-        shown = ask ? CHShowAlert(seconds, label) : CHStartCountdown(seconds, label, plain, link);
+        shown = ask ? CHShowAlert(seconds, label, isVPN) : CHStartCountdown(seconds, label, plain, link);
     };
     if ([NSThread isMainThread]) {
         run();

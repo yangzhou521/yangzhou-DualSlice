@@ -40,10 +40,10 @@ esac
 : > "$ANSWER" 2>/dev/null || true
 NOW=$(date +%s)
 
-# `?` 前缀 = 确认弹窗（按钮「立即注销」；这里借它表示「确认开 VPN」——
-# 窗上的按钮文案是插件固定的，所以标签里写清楚要确认的是什么）。
-if ! printf '%s|%s|?%s\n' "$NOW" "$WAIT" "$LABEL" > "$REQ" 2>/dev/null; then
-  echo "vpn-guard: 写弹窗请求失败（多半没装 CountdownHUD 1.5.0+）" >&2
+# `#` 前缀 = 「请开 VPN」弹窗（按钮「请开 VPN」，点了只写 confirm、绝不注销、不装包；
+# 由 CountdownHUD 1.6.4+ 提供，标题「🌐 需要开 VPN」）。
+if ! printf '%s|%s|#%s\n' "$NOW" "$WAIT" "$LABEL" > "$REQ" 2>/dev/null; then
+  echo "vpn-guard: 写弹窗请求失败（多半没装 CountdownHUD 1.6.4+）" >&2
   exit 6
 fi
 echo "vpn-guard: 屏幕上已弹出确认框（${WAIT} 秒）：$LABEL"

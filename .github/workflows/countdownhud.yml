@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.3)
+    name: Release (countdownhud-v1.6.4)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,10 +133,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.3
-          name: CountdownHUD v1.6.3
+          tag_name: countdownhud-v1.6.4
+          name: CountdownHUD v1.6.4
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            v1.6.4：**「请开 VPN」弹窗**。之前 `vpn-guard.sh` 复用 `?` 注销弹窗，标题是
+            「⚠️ 即将注销」、确认键是「立即注销」而且点了真的会 spawn sbreload —— 请用户
+            开 VPN 却显示成要注销，还会真注销（雷）。现在请求标签以 `#` 开头走专用弹窗：
+            标题「🌐 需要开 VPN」、按钮「取消」/「请开 VPN」，点「请开 VPN」只把 confirm
+            写回答案文件、**绝不注销、不装包、不动任何设备**。诊断 `mode=alertvpn` 区分。
+            秒数默认 30（挂多久没人理就自己收掉），`vpn-guard.sh` 改用 `#` 请求。
 
             v1.6.3：**诊断串加 `alertWin=…`**。现在「? 注销弹窗」挂在哪个 windowScene 之前
             没有任何记录（诊断里的 `win=…scene=…` 只记胶囊窗口），弹窗能不能显示全靠胶囊窗口
@@ -241,4 +248,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.3/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.4/$(basename "$DEB")"

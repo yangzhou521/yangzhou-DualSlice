@@ -705,9 +705,12 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
     `sh scripts/respring-guard.sh --ask 120 <标签>`）让用户点确定，不能只发纯文案胶囊或 `apelin_notification_send`
     （那些不让人「确定」）。用户点「确定」后再 push。
   - **push 成功 = VPN 通 = 只发一条灵动岛胶囊「已推送」，不再弹窗、不发通知**（2026-10-31 16:00 加）。
-  - **push 失败 / 不能访问仓库 → 必须通知/弹窗让用户知道**：报网络错误（`failed to connect` /
-    `Operation timed out` / `SecureTransport OSStatus -9806`）时，正文说清原因 + 胶囊
-    `sh scripts/hud-notify.sh 8 "!push 失败，请开 VPN"`。**不许静默失败、不许空转重试十几遍不吭声**。等用户确认 VPN 就绪再重试。
+  - **push 失败 / 不能访问仓库 → 第一次失败立即弹窗请用户开 VPN**（用户 2026-11-01 19:31 硬指令：
+    「如果发现不能直连仓库和外网！第一次失败后就要让我开 vpn 直接弹窗给我！」，所有工程、所有对话永久适用）：
+    报网络错误（`failed to connect` / `Operation timed out` / `SecureTransport OSStatus -9806` /
+    `unexpected EOF`）时，**不许重试、不许探测、不许只发胶囊，立即弹 `sh scripts/vpn-guard.sh 20 "push 失败
+    （连不上 GitHub），请开 VPN"`**（专门的「请开 VPN」弹窗，不做设备动作）。正文说清原因。
+    **未得到「VPN 已开」明确答复前不许自己一轮轮裸重试 push**；用户点了「确认开」后才重试，且只试一次。
   - **原因**：GitHub 在国内被 DNS 污染，不能直连。本机实测（2026-10-31 15:4x）：github.com 普通 HTTPS
     （NSData / icli probe / apelin_web_fetch）有时能通，但 Apelin 的 `git_push` 走另一条网络路径，
     不开 VPN 就反复超时，开 VPN 后立刻恢复。

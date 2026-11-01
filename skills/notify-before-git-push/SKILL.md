@@ -19,10 +19,11 @@ description: 访问 GitHub 仓库（push）时：先自己直接试 push，通�
 2. **直接试 push**（不要先让用户开 VPN）：
    - 直接 `git_push`，看结果。
 3. **push 成功** = 网络通 = **只发一条纯文案胶囊** `sh scripts/hud-notify.sh 8 "!已推送到 GitHub"` 知会，不弹窗、不发通知、不请开 VPN。
-4. **push 失败**（网络错误 `failed to connect` / `Operation timed out` / `SecureTransport OSStatus -9806`）：
-   - 这时才请用户开 VPN：写灵动岛**确认弹窗**（`?` 模式）或纯文案胶囊 `sh scripts/hud-notify.sh 8 "!push 失败，请开 VPN"` + 正文说清；
+4. **push 失败**（网络错误 `failed to connect` / `Operation timed out` / `SecureTransport OSStatus -9806` / `unexpected EOF`）：
+   - **第一次失败后立即弹窗请用户开 VPN**（用户 2026-11-01 19:31 硬指令：「如果发现不能直连仓库和外网！第一次失败后就要让我开 vpn 直接弹窗给我！」），不许重试、不许探测、不许只发胶囊——**立即弹**。
+   - 弹窗用 `sh scripts/vpn-guard.sh 20 "push 失败（连不上 GitHub），请开 VPN"`（这是专门的「请开 VPN」弹窗，不做任何设备动作；退出码 0=确认开、4=取消、5=超时）。
    - **绝不用 `?` 注销弹窗来做「请开 VPN」**（`?` = 注销确认弹窗，按钮「立即注销」会真 spawn sbreload，2026-10-31 16:06 血的教训）；
-   - 不许静默失败、不许空转重试；等用户确认 VPN 就绪再重试。
+   - 弹窗后等用户处理（开 VPN 或取消）；**未得到「VPN 已开」的明确答复前，不许自己一轮轮裸重试 push**（重试只会再撞墙、白白消耗）。用户点了「确认开」之后才重试 push，且只试一次，通了直接干、不通再弹。
 
 ## 判断 VPN 通没通的唯一可靠办法
 
