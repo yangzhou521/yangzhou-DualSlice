@@ -201,3 +201,15 @@ description: 在这台 iPhone10,1（A11 / iOS 16.7.16 / roothide）上做越狱 
 `sh scripts/install-deb.sh <deb> "<标签>"` 是唯一装包入口：先跑 `safemode-check.sh`，退出码 1（崩溃循环/疑似安全模式）或 3（插件没在跑）→ 打印 `SAFEMODE_DIRECT`，**跳过弹窗直接装 + sbreload**；其它 → 弹窗等用户点「立即注销」。
 
 **为什么**：安全模式下 tweak 全不注入、CountdownHUD 也死，弹窗根本显示不出来；旧做法「发弹窗一直等」会永远等不到（2026-11-01 15:5x 在安全模式空等 4 分钟，用户两次催问）。**永远不要在没有弹窗反馈的情况下干等**。
+
+## 布局保存三个拦路虎（ThemeCorePlus 1.0.28 实测打通）
+
+排查「图标摆位崩溃/注销后不保存」，按顺序查这三层：
+
+1. **护栏文件残留** → 诊断 `lay{safeskip=1,tick=0,site=none}`。删 `/var/mobile/Library/ThemeCorePlus/.tcp-launch-guard` 一个文件即可恢复。
+2. **保存站点名兜底** → iOS 16.7 真入口是 **`SBHIconModel:_saveIconState`**（另有 `SBIconController:_updateIconModelStore`）。
+   `SBIconModelPropertyListFileStore:_save`、`SBDefaultIconModelStore:saveCurrentIconState`、`SBHIconModel:saveCurrentIconState` 在本机全是 nil——那是别的 iOS 版本的名字，别照抄网上插件。
+   诊断 `probe=` 里的 `named:类:方法=OK/nil/bad(签名)` 一眼看出挂没挂上。
+3. **模型实例主动取** → `last=noinstance` 表示站挂上了但系统不调它。改 `SBIconController +sharedInstance` → `-iconModel`，诊断变 `model=adopt:iconModel`。
+
+成败判定：`site=` 有站 + `model=adopt:...` + `last=baseline` 三条齐了就是通了。

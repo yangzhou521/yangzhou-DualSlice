@@ -1204,3 +1204,12 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 **为什么**：安全模式下 tweak 全不注入、CountdownHUD 也死，弹窗**根本显示不出来**；旧做法「发弹窗一直等」
 会永远等不到，包也装不上（2026-11-01 15:5x 在安全模式里空等了 4 分钟，用户两次催问）。
+
+## 布局保存：三个拦路虎（1.0.28 打通，详见 docs/cases/themecoreplus-layout-save-fixed.md）
+
+① **护栏文件** `/var/mobile/Library/ThemeCorePlus/.tcp-launch-guard` 残留 → `lay{safeskip=1,tick=0}`，
+   删掉那一个文件即恢复尝试。**排查布局问题先看这个文件在不在**。
+② **保存站点名兜底**：iOS 16.7 真入口是 **`SBHIconModel:_saveIconState`**（+ `SBIconController:_updateIconModelStore`）；
+   `SBIconModelPropertyListFileStore:_save`、`SBDefaultIconModelStore:saveCurrentIconState`、
+   `SBHIconModel:saveCurrentIconState` 在本机全是 **nil**（那是别的 iOS 版本的名字，别照抄）。
+③ **模型实例主动取**：站里的 self 拿不到就 `SBIconController +sharedInstance` → `-iconModel`（`model=adopt:iconModel`）。
