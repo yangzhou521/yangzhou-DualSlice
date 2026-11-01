@@ -49,4 +49,13 @@ void TCPInstallFolderGridCellSites(void) {
     if (installed > 0) {
         os_log(TCPLogHandle(), "TCPS_FOLDER_GRID_SITES +%lu", (unsigned long)installed);
     }
+
+    // 1.0.20 取证：gridCellImageOfSize 本机 look=0（系统不逐格问）。再挂两个候选整图入口，
+    // 只计数、原样返回，装完读 minigrid{look} 就知道到底哪个方法在出 mini 拼图。
+    NSUInteger mg = TCPInstallInstanceSitesForClassPrefixes(prefixes, @[],
+                                                            @[ @"genericMiniGridImage" ],
+                                                            TCPSiteKindFolderMiniGrid);
+    if (mg > 0) {
+        os_log(TCPLogHandle(), "TCPS_FOLDER_MINIGRID_SITES +%lu", (unsigned long)mg);
+    }
 }

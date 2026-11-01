@@ -415,6 +415,38 @@ TCP_SLOT_INDEX_LIST(TCP_DEFINE_FOLDERGRID_SLOT)
 static IMP *const kFolderGridSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_FOLDERGRID) };
 static const IMP kFolderGridHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_FOLDERGRID) };
 
+// SBFolderIconImageCache 的 -genericMiniGridImage：零参数，返回文件夹收起状态那张 2×2 拼图。
+typedef UIImage *(*TCPFolderMiniGridFn)(id, SEL);
+
+static long sFolderMiniGridLook = 0, sFolderMiniGridHit = 0;
+
+NSString *TCPFolderMiniGridProbeReport(void) {
+    return [NSString stringWithFormat:@"minigrid{look=%ld,hit=%ld}",
+            sFolderMiniGridLook, sFolderMiniGridHit];
+}
+
+static UIImage *TCPFolderMiniGridHandle(IMP *slot, id self, SEL _cmd) {
+    IMP original = *slot;
+    if (original == NULL) return nil;
+    __sync_fetch_and_add(&sFolderMiniGridLook, 1);
+    // 1.0.20 纯探针：只计数，原样返回系统图。装完看 minigrid{look} 是否 >0，
+    // 坐实 genericMiniGridImage 是不是 mini 拼图的真入口，下一版再精准叠主题图。
+    UIImage *originalImage = ((TCPFolderMiniGridFn)original)(self, _cmd);
+    return originalImage;
+}
+
+#define TCP_DEFINE_FOLDERMINI_SLOT(n)                                          \
+    static IMP tcpFolderMiniOrig##n = NULL;                                    \
+    static UIImage *tcpFolderMiniHook##n(id self, SEL _cmd) {                  \
+        return TCPFolderMiniGridHandle(&tcpFolderMiniOrig##n, self, _cmd);     \
+    }
+TCP_SLOT_INDEX_LIST(TCP_DEFINE_FOLDERMINI_SLOT)
+
+#define TCP_SLOT_PTR_FOLDERMINI(n) &tcpFolderMiniOrig##n,
+#define TCP_FN_PTR_FOLDERMINI(n) (IMP)tcpFolderMiniHook##n,
+static IMP *const kFolderMiniSlotStorage[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_SLOT_PTR_FOLDERMINI) };
+static const IMP kFolderMiniHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_PTR_FOLDERMINI) };
+
 #pragma mark - 槽位表
 
 typedef struct {
@@ -430,6 +462,7 @@ static const TCPSlotGroup kSlotGroups[TCPSiteKindCount] = {
     { kFolderBackSlotStorage,  kFolderBackHookFns },  // TCPSiteKindFolderBackground
     { kDisplaySlotStorage,     kDisplayHookFns },     // TCPSiteKindDisplayImage
     { kFolderGridSlotStorage,  kFolderGridHookFns },  // TCPSiteKindFolderGridCell
+    { kFolderMiniSlotStorage,  kFolderMiniHookFns },  // TCPSiteKindFolderMiniGrid
 };
 
 #pragma mark - 挂站

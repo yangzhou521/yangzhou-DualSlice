@@ -81,6 +81,10 @@ typedef NS_ENUM(NSUInteger, TCPSiteKind) {
     // 与 icon 站的差别：icon 站走 SBIcon 家族，这个走 SBFolderIconImageCache（一个缓存类），
     // 参数里直接带着「那一格是哪个 App 的 icon」，所以不用先拿文件夹的 leaf 列表（lv=noleafsel）。
     TCPSiteKindFolderGridCell,
+    // 文件夹收起状态 mini 拼图的**整张图**：SBFolderIconImageCache 的 -genericMiniGridImage（零参数）。
+    // gridCellImageOfSize:forIcon:iconImageInfo: 在本机 look=0（系统不逐格问），
+    // genericMiniGridImage 一次出整张 2×2 拼图，是最可能的真入口。
+    TCPSiteKindFolderMiniGrid,
     TCPSiteKindCount
 };
 
@@ -165,6 +169,8 @@ void TCPFolderCacheRefresh(void);
 // 由 ThemeCorePlusFolders.m 实现（0.9.x 那份一直没接进来，这里重新声明好让站表能引用）。
 void TCPInstallFolderGridCellSites(void);
 NSString *TCPFolderGridCellProbeReport(void);
+// 文件夹 mini 整图探针：SBFolderIconImageCache 的 -genericMiniGridImage（1.0.20 取证）。
+NSString *TCPFolderMiniGridProbeReport(void);
 // 普查用：屏幕上某张角标图是不是我们合成的（只读）。
 BOOL TCPBadgeIsOurImage(UIImage *image);
 // 桌面图标布局的备份/恢复（用户 2026-10-31 05:30）：注销或 SpringBoard 崩溃后保住之前的图标布局。

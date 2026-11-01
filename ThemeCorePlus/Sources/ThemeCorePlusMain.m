@@ -69,6 +69,7 @@ static void TCPWriteDiagnostics(void) {
                       TCPScreenCensusReport(),
                       TCPDynamicProbeReport(), TCPClockViewProbeReport(), TCPFolderProbeReport(),
                       TCPFolderGridCellProbeReport(),
+                      TCPFolderMiniGridProbeReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
                       TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText];
     TCPWriteProcessPreference(TCPKeyDiagnostics, text);
