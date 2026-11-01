@@ -447,6 +447,62 @@ static NSArray<Class> *TCPLayoutControllerClasses(void) {
     return out;
 }
 
+// ── 点名兜底：直接 hook 已知 Store 类的保存方法（1.0.26，借鉴 IconRestore/IconOrder）──
+// 枚举 SBIconModel/SBIconController 家族一直找不到保存站（site=none），因为 iOS 16 真正把
+// IconState.plist 写盘的是 SBIconModelPropertyListFileStore（IconRestore 实测 hook 它的 _save）
+// 与 SBDefaultIconModelStore（IconOrder 实测 hook 它的 saveCurrentIconState）——
+// 两者都不继承 SBIconModel，我们的枚举永远看不到。这里直接点名，跳过猜名。
+typedef struct { const char *clsName; const char *selName; } TCPLayoutNamedStation;
+static const TCPLayoutNamedStation kTCPLayoutNamedStations[] = {
+    { "SBIconModelPropertyListFileStore", "_save" },
+    { "SBDefaultIconModelStore",          "saveCurrentIconState" },
+    { "SBHIconModel",                     "saveCurrentIconState" },
+    { "SBHIconModel",                     "_saveIconState" },
+    { "SBHIconModel",                     "_saveIconStateWithError" },
+};
+static const NSUInteger kTCPLayoutNamedStationCount =
+    sizeof(kTCPLayoutNamedStations) / sizeof(kTCPLayoutNamedStations[0]);
+
+// 挂一个点名站：签名必须是零参数 void（TCPLayoutSignatureHookable），去重后 MSHookMessageEx。
+// 挂上就记进 hooked 与 probe，失败也把原因写进 probe。
+static BOOL TCPLayoutHookNamedOne(const char *clsName, const char *selName,
+                                  NSMutableArray<NSString *> *hooked,
+                                  NSMutableArray<NSString *> *probe) {
+    Class cls = objc_getClass(clsName);
+    if (cls == Nil) return NO;
+    SEL sel = sel_registerName(selName);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (m == NULL) {
+        [probe addObject:[NSString stringWithFormat:@"named:%s:%s=nil", clsName, selName]];
+        return NO;
+    }
+    if (!TCPLayoutSignatureHookable(m)) {
+        [probe addObject:[NSString stringWithFormat:@"named:%s:%s=bad(%s)",
+                          clsName, selName, method_getTypeEncoding(m) ?: "?"]];
+        return NO;
+    }
+    for (int k = 0; k < sLayoutSlotCount; k++) {
+        if (sLayoutSlots[k].cls == cls && sel_isEqual(sLayoutSlots[k].sel, sel)) return NO;
+    }
+    if (sLayoutSlotCount >= TCPLayoutMaxSlots) return NO;
+
+    IMP orig = NULL;
+    MSHookMessageEx(cls, sel, (IMP)tcpLayoutSaveHook, &orig);
+    if (orig == NULL) {
+        [probe addObject:[NSString stringWithFormat:@"named:%s:%s=hookfail", clsName, selName]];
+        return NO;
+    }
+    sLayoutSlots[sLayoutSlotCount].cls = cls;
+    sLayoutSlots[sLayoutSlotCount].sel = sel;
+    sLayoutSlots[sLayoutSlotCount].orig = orig;
+    sLayoutSlots[sLayoutSlotCount].kind = TCPLayoutKindSave;
+    sLayoutSlotCount++;
+    __sync_fetch_and_add(&sLayoutHooked, 1);
+    [hooked addObject:[NSString stringWithFormat:@"-%s:%s", clsName, selName]];
+    [probe addObject:[NSString stringWithFormat:@"named:%s:%s=OK", clsName, selName]];
+    return YES;
+}
+
 // 挂站。构造函数里 SBIconModel 可能还没被 dyld 载进来，所以定时器每一拍都会再试一次，
 // 挂上就不再重挂（同一 (类,选择器) 只挂一次）。
 static void TCPLayoutHookSave(void) {
@@ -466,6 +522,14 @@ static void TCPLayoutHookSave(void) {
     // 于是「找到了类但一个名字都没匹配上」会退化成 probe=-，看起来像什么都没枚举到。
     [probe addObject:[NSString stringWithFormat:@"cand[model=%lu,ctrl=%lu]",
                       (unsigned long)modelClasses.count, (unsigned long)ctrlClasses.count]];
+
+    // 1.0.26：先点名挂已知 Store 类的保存站（SBIconModelPropertyListFileStore._save 等），
+    // 成功就不用再赌枚举；失败也把原因写进 probe。
+    for (NSUInteger i = 0; i < kTCPLayoutNamedStationCount; i++) {
+        TCPLayoutHookNamedOne(kTCPLayoutNamedStations[i].clsName,
+                              kTCPLayoutNamedStations[i].selName,
+                              hooked, probe);
+    }
 
     for (Class cls in classes) {
         unsigned int count = 0;
