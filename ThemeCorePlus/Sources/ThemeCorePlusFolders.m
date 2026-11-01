@@ -19,15 +19,17 @@ UIImage *TCPThemedFolderBackground(CGFloat scale) {
 
 // 1.0.4：恢复文件夹底板站。候选方法名按「存在就挂」挂，不同 iOS 版本可能走不同入口。
 void TCPInstallFolderSites(void) {
-    NSArray<NSString *> *prefixes = @[ @"SBFolderIconImageView", @"SBFolderBackgroundView" ];
+    // 1.0.31：固定类名直取（原来按前缀扫全表；此函数当前未被调用，改掉是防止以后启用时
+    // 又把全表拷贝带回启动路径）。
+    NSArray<NSString *> *folderClasses = @[ @"SBFolderIconImageView", @"SBFolderBackgroundView" ];
     // 旧版本曾挂过 _folderBackgroundImage / backgroundImage / _backgroundImage；
     // iOS 16.7 实测哪条存在用哪条，不猜。
     NSArray<NSString *> *selectors = @[@"_folderBackgroundImage",
                                         @"backgroundImage",
                                         @"_backgroundImage",
                                         @"folderBackgroundImage"];
-    NSUInteger installed = TCPInstallSitesForClassPrefixes(prefixes, @[], selectors,
-                                                           TCPSiteKindFolderBackground);
+    NSUInteger installed = TCPInstallSitesFromClassList(folderClasses, selectors,
+                                                        TCPSiteKindFolderBackground, NO);
     if (installed > 0) {
         os_log(TCPLogHandle(), "TCPS_FOLDER_SITES +%lu", (unsigned long)installed);
     }
@@ -39,22 +41,23 @@ void TCPInstallFolderSites(void) {
 // 所以不用拿文件夹 leaf 列表（lv=SBFolderIcon:noleafsel 那条路已证死，别再试）。
 // 只挂缓存类这一个前缀：别的 SBFolder* 类不声明这个选择器，R2（类自己声明才挂）会自然跳过。
 void TCPInstallFolderGridCellSites(void) {
-    NSArray<NSString *> *prefixes = @[ @"SBFolderIconImageCache" ];
+    // 1.0.31：固定类名直取（原来按 "SBFolderIconImageCache" 前缀扫全表）。
+    NSArray<NSString *> *cacheClasses = @[ @"SBFolderIconImageCache" ];
     NSArray<NSString *> *selectors = @[ @"gridCellImageOfSize:forIcon:iconImageInfo:" ];
     // 必须用「只挂实例方法」的入口：SBFolderIconImageCache 的元类上有个同名的 convenience
     // 类方法，通用站「类方法优先」会挂到 + 版本（诊断 sites= 里是 +SBFolderIconImageCache:…
     // 且 grid{look=0}），系统真正调的 - 版本就拦不到。挂实例方法后 grid{look} 才会涨。
-    NSUInteger installed = TCPInstallInstanceSitesForClassPrefixes(prefixes, @[], selectors,
-                                                                   TCPSiteKindFolderGridCell);
+    NSUInteger installed = TCPInstallSitesFromClassList(cacheClasses, selectors,
+                                                        TCPSiteKindFolderGridCell, YES);
     if (installed > 0) {
         os_log(TCPLogHandle(), "TCPS_FOLDER_GRID_SITES +%lu", (unsigned long)installed);
     }
 
     // 1.0.20 取证：gridCellImageOfSize 本机 look=0（系统不逐格问）。再挂两个候选整图入口，
     // 只计数、原样返回，装完读 minigrid{look} 就知道到底哪个方法在出 mini 拼图。
-    NSUInteger mg = TCPInstallInstanceSitesForClassPrefixes(prefixes, @[],
-                                                            @[ @"genericMiniGridImage" ],
-                                                            TCPSiteKindFolderMiniGrid);
+    NSUInteger mg = TCPInstallSitesFromClassList(cacheClasses,
+                                                 @[ @"genericMiniGridImage" ],
+                                                 TCPSiteKindFolderMiniGrid, YES);
     if (mg > 0) {
         os_log(TCPLogHandle(), "TCPS_FOLDER_MINIGRID_SITES +%lu", (unsigned long)mg);
     }

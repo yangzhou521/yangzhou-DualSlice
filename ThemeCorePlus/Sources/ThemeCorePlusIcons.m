@@ -87,13 +87,24 @@ NSString *TCPIconIdentifierOf(id icon) {
 }
 
 void TCPInstallIconSites(void) {
-    NSArray<NSString *> *prefixes = @[ @"SBIcon", @"SBLeaf", @"SBApplication", @"SBH",
-                                       @"SBFolder", @"SBSearch", @"SBWidget", @"SBNewsstand" ];
-    // 视图/缓存/控制器类不吃这一站：它们只是拿图来画，套两次遮罩就糊了。
-    NSArray<NSString *> *excluding = @[ @"View", @"Badge", @"Image", @"Cache", @"Controller",
-                                        @"List", @"Accessory", @"Animator", @"Crossfade",
-                                        @"Transition", @"Drag", @"Drop", @"Page", @"Scroll",
-                                        @"Layout", @"Observer", @"Provider", @"Settings" ];
+    // 1.0.31：改成**固定类名清单直取**（原来按 8 个宽前缀全进程扫类表，见
+    // TCPInstallSitesFromClassList 上方的说明）。清单 = 本机诊断 sites= 里实际命中的类
+    // + 原前缀覆盖到、但这次可能还没 dlopen 的同族类（取不到就跳过，下一轮再来）。
+    NSArray<NSString *> *iconClasses = @[ @"SBIcon",
+                                          @"SBLeafIcon",
+                                          @"SBApplicationIcon",
+                                          @"SBHApplicationIcon",
+                                          @"SBHCalendarApplicationIcon",
+                                          @"SBCalendarIconImageProvider",
+                                          @"SBCalendarApplicationIcon",
+                                          @"SBHBookmarkIcon",
+                                          @"SBHBookmark",
+                                          @"SBPlaceholderIcon",
+                                          @"SBInCallPresentationScreenSharingIcon",
+                                          @"SBFolderIcon",
+                                          @"SBSearchIcon",
+                                          @"SBWidgetIcon",
+                                          @"SBNewsstandIcon" ];
     // generateIconImageWithInfo: 是真正的「生图」入口：本机运行期按 IMP 归属查出来的结果是
     // MarkThemeRuntime.dylib 挂在 SBApplicationIcon:generateIconImageWithInfo:，ThemeCore 0.5.1
     // 的二进制里也有同名方法；而我们原来只挂 getter（iconImageWithInfo:），在这台 16.7.16 上
@@ -102,23 +113,20 @@ void TCPInstallIconSites(void) {
                                         @"unmaskedIconImageWithInfo:",
                                         @"iconImageWithImageInfo:",
                                         @"generateIconImageWithInfo:" ];
-    NSUInteger installed = TCPInstallSitesForClassPrefixes(prefixes, excluding, selectors,
-                                                           TCPSiteKindIconImageInfo);
+    NSUInteger installed = TCPInstallSitesFromClassList(iconClasses, selectors,
+                                                        TCPSiteKindIconImageInfo, NO);
     if (installed > 0) {
         os_log(TCPLogHandle(), "TCPS_ICON_SITES +%lu", (unsigned long)installed);
     }
 
     // 1.0.23：图标图**缓存层**（MarkTheme16 秒加载的关键，二进制符号取证）。
-    // 1.0.22 用 R2（类自己声明才挂）没挂上——sites 里没有缓存层站，因为 SBHIconImageCache
-    // 的 iconImageWithInfo: 是父类/分类声明的，class_copyMethodList 列不出它。
     // 改为 Forced 挂载（class_getInstanceMethod 含继承），挂上后视图第一次从缓存取图就是主题图。
     NSUInteger cacheSites = TCPInstallIconCacheLayerSites();
-    // 1.0.30：再按选择器名全进程扫一遍 —— 这台机器上「类名含 IconImageCache」那三个类
-    // 的 iconImageWithInfo: 全是 nomethod，真正的缓存入口叫别的名字，必须靠选择器找。
-    cacheSites += TCPInstallIconCacheByNameSites();
     if (cacheSites > 0) {
         os_log(TCPLogHandle(), "TCPS_ICON_CACHE_SITES +%lu", (unsigned long)cacheSites);
     }
+    // 1.0.30 的「按选择器名全进程扫一遍」已撤：1.0.30 实测全进程没有任何类声明这三个选择器
+    // （诊断里三个 *IconImageCache 全是 nomethod、byname 无输出），空跑一轮白吃启动预算。
 }
 
 #pragma mark - 即时生效：不注销也能换图
@@ -517,6 +525,88 @@ NSString *TCPDynamicProbeReport(void) {
             (long)sDynFailNoAsset, (long)sDynFailNoCtx, (long)sDynFailNoImage,
             (long)sDynSeen, (long)sDynNotImage, sDynLast ?: @"-", TCPSiteClassSummary(),
             TCPDynamicClassProbe()];
+}
+
+// 1.0.31 取证：**iOS 16.7.16 上真正声明了「图标图」方法的类**。
+//
+// 为什么需要：秒加载要挂的缓存层真入口，1.0.30 已证伪原假设（SBHIconImageCache 三兄弟
+// 根本不实现 iconImageWithInfo:）。猜名字的代价是 0.9.21 那种安全模式，所以必须实测。
+// icli 之类的外部探针看不到 SpringBoard 私有类（沙箱 + 不在本进程），只有插件自己能在
+// SpringBoard 里问 —— 这就是本函数存在的理由。
+//
+// 只跑一次（静态标志），只读：objc_copyClassList + class_copyMethodList，
+// 结果写进诊断的 ientry= 一项。不上任何钩子。
+static NSString *sIconEntryReport = nil;
+
+NSString *TCPIconImageEntryCensus(void) {
+    if (sIconEntryReport != nil) return sIconEntryReport;
+
+    // 只认「出图」这条路的方法名。
+    NSArray<NSString *> *needles = @[ @"iconImageWithInfo", @"unmaskedIconImageWithInfo",
+                                      @"generateIconImageWithInfo", @"iconImageForIcon",
+                                      @"iconImageWithOptions", @"iconImageWithImageInfo",
+                                      @"gridCellImageOfSize", @"imageForIcon" ];
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    unsigned int count = 0;
+    Class *classes = objc_copyClassList(&count);
+    if (classes == NULL) {
+        sIconEntryReport = @"-";
+        return sIconEntryReport;
+    }
+    for (unsigned int i = 0; i < count && parts.count < 12; i++) {
+        Class cls = classes[i];
+        if (cls == Nil) continue;
+        unsigned int mcount = 0;
+        Method *methods = class_copyMethodList(cls, &mcount);
+        if (methods == NULL) continue;
+        NSMutableArray<NSString *> *hits = [NSMutableArray array];
+        for (unsigned int j = 0; j < mcount && hits.count < 4; j++) {
+            NSString *sel = NSStringFromSelector(method_getName(methods[j]));
+            for (NSString *needle in needles) {
+                if ([sel hasPrefix:needle]) {
+                    if (![hits containsObject:sel]) [hits addObject:sel];
+                    break;
+                }
+            }
+        }
+        free(methods);
+        if (hits.count == 0) continue;
+        [parts addObject:[NSString stringWithFormat:@"%@:%@",
+                          NSStringFromClass(cls), [hits componentsJoinedByString:@"/"]]];
+    }
+    if (classes) free(classes);
+    sIconEntryReport = parts.count > 0 ? [parts componentsJoinedByString:@";"] : @"none";
+    os_log(TCPLogHandle(), "TCPS_IENTRY %{public}@", sIconEntryReport);
+    return sIconEntryReport;
+}
+
+// 1.0.31 取证：同样的方法名，在**图标缓存类**上再查一遍（含继承）。
+// 上一项只列「自己声明」的，缓存类往往是父类/分类声明，所以这里用 class_getInstanceMethod
+// 问「实例能不能响应」，这才是能不能挂的判断依据。
+NSString *TCPIconCacheEntryReport(void) {
+    static NSString *sCacheEntry = nil;
+    if (sCacheEntry != nil) return sCacheEntry;
+    NSArray<NSString *> *classes = @[ @"SBHIconImageCache", @"SBFolderIconImageCache",
+                                      @"SBIconImageCache", @"PKIconImageCache",
+                                      @"SBIconModel", @"SBIconController" ];
+    NSArray<NSString *> *sels = @[ @"iconImageWithInfo:", @"unmaskedIconImageWithInfo:",
+                                   @"generateIconImageWithInfo:", @"iconImageForIcon:" ];
+    NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    for (NSString *name in classes) {
+        Class cls = NSClassFromString(name);
+        if (cls == Nil) { [parts addObject:[name stringByAppendingString:@"=nil"]]; continue; }
+        NSMutableArray<NSString *> *has = [NSMutableArray array];
+        for (NSString *selName in sels) {
+            if (class_getInstanceMethod(cls, NSSelectorFromString(selName)) != NULL) {
+                [has addObject:selName];
+            }
+        }
+        [parts addObject:[NSString stringWithFormat:@"%@=%@", name,
+                          has.count ? [has componentsJoinedByString:@"/"] : @"none"]];
+    }
+    sCacheEntry = [parts componentsJoinedByString:@";"];
+    os_log(TCPLogHandle(), "TCPS_CACHE_ENTRY %{public}@", sCacheEntry);
+    return sCacheEntry;
 }
 
 BOOL TCPIconNeedsSystemComposite(id icon) {
@@ -1987,11 +2077,12 @@ void TCPInstallDisplaySites(void) {
     // 只挂 SBIconImageView（应用图标视图：主屏、Dock、App 库、切换器都用它）。
     // 不挂 SBFolderIconImageView 的 contentsImage：那里是文件夹里小图拼成的大图，
     // 换成主题底板会把里面所有小图标一并抹掉。也不挂时钟视图：时钟要动态指针。
-    NSArray<NSString *> *prefixes = @[ @"SBIconImageView" ];
+    // 1.0.31：固定类名直取（原来按 "SBIconImageView" 前缀扫全表）。
+    NSArray<NSString *> *viewClasses = @[ @"SBIconImageView" ];
     NSArray<NSString *> *selectors = @[ @"displayedImage", @"contentsImage",
                                         @"squareContentsImage" ];
-    NSUInteger installed = TCPInstallSitesForClassPrefixes(prefixes, @[], selectors,
-                                                           TCPSiteKindDisplayImage);
+    NSUInteger installed = TCPInstallSitesFromClassList(viewClasses, selectors,
+                                                        TCPSiteKindDisplayImage, NO);
     if (installed > 0) {
         os_log(TCPLogHandle(), "TCPS_ICON_DISPLAY_SITES +%lu", (unsigned long)installed);
     }

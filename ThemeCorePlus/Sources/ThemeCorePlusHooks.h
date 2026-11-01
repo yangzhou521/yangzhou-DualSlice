@@ -107,6 +107,25 @@ NSUInteger TCPInstallSitesForClassSubstrings(NSArray<NSString *> *substrings,
                                              NSArray<NSString *> *selectors,
                                              TCPSiteKind kind);
 
+// 1.0.31：固定类名清单直取（**不扫类表**，objc_getClass 一次哈希查找）。
+// 为什么有它：本机五个主题引擎（MarkTheme / ThemeCore / SnowBoard / Mikkyy）全部零运行时
+// 扫描、类名写死；ThemeCorePlus 原来按宽前缀反复 objc_copyClassList 拷全进程类表，
+// 启动时把 SpringBoard 的看门狗预算吃光 → 反复重启才进桌面。挂站一律优先用它。
+// instanceOnly = YES 时只挂实例方法（见 TCPInstallInstanceSitesForClassPrefixes 的说明）。
+NSUInteger TCPInstallSitesFromClassList(NSArray<NSString *> *classNames,
+                                        NSArray<NSString *> *selectors,
+                                        TCPSiteKind kind,
+                                        BOOL instanceOnly);
+
+// 1.0.31：锁屏角标的「类名含 Badge」兜底，整轮只扫一次类表（每个进程只跑一次）。
+NSUInteger TCPInstallBadgeSubstringSitesOnce(void);
+
+// 1.0.31：注册 dyld 镜像加载回调 —— SpringBoardHome 一加载就通知补挂，
+// 替代原来「0 / 0.3 / 1 / 2 秒定时全表扫描」。handler 会在主队列上被调用。
+// 本机 Mikkyy 用的正是这条事件路径（实测零全表扫描）。
+void TCPInstallDyldImageObserver(void (^handler)(void));
+BOOL TCPDyldPendingReload(void);   // 取走「有新框架来了」的标志（取完自动清零）
+
 // 强制只挂「实例方法」，不做通用站那种「类方法优先」判断。
 // 用途：SBFolderIconImageCache 的 -gridCellImageOfSize:forIcon:iconImageInfo: 上，实例/类方法
 // 同名（元类上有个 convenience 类方法），通用站优先类方法会挂到 + 版本，系统真正调的实例方法
@@ -162,6 +181,11 @@ BOOL TCPIconNeedsSystemComposite(id icon);
 UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *systemImage);
 // 动态图标合成打点：各叠了几张、混合模式、最后一次的像素量，写进诊断。
 NSString *TCPDynamicProbeReport(void);
+
+// 1.0.31 取证：iOS 16.7.16 上真正声明「图标图」方法的类（只读，进程内只算一次）。
+// 秒加载要挂的缓存层真入口靠它实测出来，不靠猜（1.0.30 已证伪 SBHIconImageCache 三兄弟）。
+NSString *TCPIconImageEntryCensus(void);
+NSString *TCPIconCacheEntryReport(void);
 // 时钟图标的视图层（0.9.17）：时钟从不走图标取图那几站，只能挂它的 layoutSubviews 换表盘。
 void TCPInstallClockViewSite(void);
 NSString *TCPClockViewProbeReport(void);

@@ -4,6 +4,7 @@
 #import "ThemeCorePlusHooks.h"
 #import <substrate.h>
 #import <dlfcn.h>   // dladdr：反查某个 IMP 属于哪个镜像（见文末「谁 hook 了它」）
+#import <mach-o/dyld.h>   // 1.0.31：dyld_register_func_for_add_image（框架加载回调，替代定时全表扫描）
 
 #define TCP_SLOT_COUNT 24
 
@@ -537,6 +538,41 @@ static BOOL TCPInstallOneSiteKindForced(Class cls, SEL sel, TCPSiteKind kind) {
     return YES;
 }
 
+// 1.0.31：固定类名清单直取（**不扫类表**）。
+//
+// 为什么改（用户 2026-11-01 20:00「这插件从一开始就多次加载才能进桌面，是不是架构没写好」）：
+// 原来每轮挂站都走 objc_copyClassList 把全进程几千个类拷出来，再对每个类做字符串前缀比对
+// （前缀里还有 "SBH"、"SBIcon" 这种命中整个 SpringBoardHome 的宽前缀），命中后还要试 4 个
+// 选择器。启动时主线程连做 4 轮（0 / 0.3 / 1 / 2 秒），SpringBoard 的看门狗预算被吃光 →
+// 进程被杀 → 系统拉起 → 再崩 → 用户看到的就是「黑屏反复加载，要好几次才进桌面」。
+//
+// 对照参考（2026-11-01 20:0x 实地扫描本机五个主题引擎，全部零扫描）：
+//   MarkTheme 0.2.0/0.3.3、ThemeCore 0.5.1、SnowBoard、Mikkyy 1.0.2
+//   —— 它们的 objc_getClassList / objc_copyClassList / class_copyMethodList 全为 0，
+//      类名写死、只用 MSHookMessageEx（Mikkyy 用自研 hook）静态挂。
+//   ThemeCorePlus 自己是唯一按前缀反复全表扫描的。
+//
+// 现在改成：要挂的类写成固定清单，用 objc_getClass 直接取（一次哈希查找），取不到就跳过。
+// 类还没 dlopen 时返回 Nil，由窗口出现后的补挂轮再取一次即可，不必为此扫全表。
+NSUInteger TCPInstallSitesFromClassList(NSArray<NSString *> *classNames,
+                                        NSArray<NSString *> *selectors,
+                                        TCPSiteKind kind,
+                                        BOOL instanceOnly) {
+    if (classNames.count == 0 || selectors.count == 0) return 0;
+    NSUInteger installed = 0;
+    for (NSString *name in classNames) {
+        if (name.length == 0) continue;
+        Class cls = objc_getClass(name.UTF8String);   // 没 dlopen 就是 Nil，直接跳过
+        if (cls == Nil) continue;
+        for (NSString *selectorName in selectors) {
+            if (TCPInstallOneSiteKind(cls, NSSelectorFromString(selectorName), kind, instanceOnly)) {
+                installed++;
+            }
+        }
+    }
+    return installed;
+}
+
 // 类名匹配：byPrefix = YES 按前缀，NO 按「包含」。
 // instanceOnly = YES 时只挂实例方法（见 TCPInstallOneSiteKind 的注释）。
 static NSUInteger TCPInstallSitesMatching(NSArray<NSString *> *patterns,
@@ -596,6 +632,42 @@ NSUInteger TCPInstallSitesForClassSubstrings(NSArray<NSString *> *substrings,
                                              NSArray<NSString *> *selectors,
                                              TCPSiteKind kind) {
     return TCPInstallSitesMatching(substrings, NO, excludingSubstrings, selectors, kind, NO);
+}
+
+// 1.0.31：锁屏角标的子串兜底 —— **整轮只扫一次类表**。
+//
+// 原来 ThemeCorePlusBadges.m 对 3 个选择器各调一次 TCPInstallSitesForClassSubstrings，
+// 等于一轮 3 次 objc_copyClassList（拷全进程几千个类）。启动时 4 轮补挂 = 12 次全表拷贝，
+// 这是启动重的第二大来源。现在合成一个函数：拷一次类表，对命中的类连挂 3 个选择器，
+// 并且用静态标志保证整个进程生命周期只跑一次。
+static BOOL sBadgeSubstringScanned = NO;
+
+NSUInteger TCPInstallBadgeSubstringSitesOnce(void) {
+    if (sBadgeSubstringScanned) return 0;
+    unsigned int count = 0;
+    Class *classes = objc_copyClassList(&count);
+    if (classes == NULL) return 0;
+    sBadgeSubstringScanned = YES;   // 拿到了类表才算跑过，下次不再拷
+
+    NSUInteger installed = 0;
+    for (unsigned int i = 0; i < count; i++) {
+        Class cls = classes[i];
+        if (cls == Nil) continue;
+        const char *raw = class_getName(cls);
+        if (raw == NULL) continue;
+        NSString *name = @(raw);
+        if (![name containsString:@"Badge"]) continue;
+        if ([name containsString:@"Accessibility"]) continue;
+        if (TCPInstallOneSiteKind(cls, NSSelectorFromString(@"_checkoutBackgroundImage"),
+                                  TCPSiteKindBadgeBackground, NO)) installed++;
+        if (TCPInstallOneSiteKind(cls, NSSelectorFromString(@"_checkoutBackgroundImageTuple"),
+                                  TCPSiteKindBadgeTuple, NO)) installed++;
+        if (TCPInstallOneSiteKind(cls,
+                                  NSSelectorFromString(@"_checkoutImageForText:font:highlighted:"),
+                                  TCPSiteKindBadgeTextImage, NO)) installed++;
+    }
+    free(classes);
+    return installed;
 }
 
 // 1.0.25 取证：缓存层挂载实况（诊断 cache=）。写清挂到哪个类的哪个方法，没挂上也写原因。
@@ -968,4 +1040,52 @@ NSString *TCPHookOwnerCensus(NSArray<NSString *> *classNames,
     NSString *text = [hits componentsJoinedByString:@","];
     if (limit > 4 && text.length > limit) text = [text substringToIndex:limit];
     return text;
+}
+
+#pragma mark - 1.0.31：dyld 镜像加载回调（替代定时全表扫描补挂）
+
+// 为什么用这个（用户 2026-11-01 20:09「这是不是目前最优解」→ 是）：
+// 本机五个主题引擎里 Mikkyy 1.0.2 的做法是 objc_getClass 按名字直取 + 注册
+// dyld_register_func_for_add_image 在框架真正加载时补挂，实测 objc_getClassList /
+// objc_copyClassList / class_copyMethodList 全为 0 次。
+//
+// 我们的问题一直是「SpringBoardHome 的类晚到，所以只能定时反复扫全表」。
+// dyld 回调把这个「猜时间」换成「等事件」：框架一加载就通知我们，那时类一定已经注册好，
+// 用 objc_getClass 直取即可 —— 零全表拷贝，也不会漏。
+//
+// 线程规则（血的教训 0.9.21）：回调可能在任意线程、且在 dyld 早期触发。所以这里
+// **只置标志 + 往主队列丢一次**，绝不在回调里做挂站以外的重活（不改界面、不写偏好）。
+static BOOL sDyldPending = NO;          // 有新框架加载过、还没处理
+static void (^sDyldHandler)(void) = nil; // 由 Main.m 注入「该补挂了」
+
+static void TCPDyldImageAdded(const struct mach_header *mh, intptr_t slide) {
+    // 只看类名直取能得到的东西，不做任何扫描。
+    // SpringBoardHome / SpringBoard 一到就把标志立起来，主队列下一拍再挂。
+    static BOOL sbhLoaded = NO;
+    if (sbhLoaded) return;
+    if (objc_getClass("SBIcon") == Nil && objc_getClass("SBIconView") == Nil) {
+        return;   // 这两个类还没来，说明来的不是我们要的框架
+    }
+    sbhLoaded = YES;
+    sDyldPending = YES;
+    void (^handler)(void) = sDyldHandler;
+    if (handler != nil) {
+        dispatch_async(dispatch_get_main_queue(), handler);
+    }
+    os_log(TCPLogHandle(), "TCPS_DYLD SpringBoardHome ready, schedule reload");
+}
+
+void TCPInstallDyldImageObserver(void (^handler)(void)) {
+    static dispatch_once_t once;
+    sDyldHandler = [handler copy];
+    dispatch_once(&once, ^{
+        dyld_register_func_for_add_image(TCPDyldImageAdded);
+        os_log(TCPLogHandle(), "TCPS_DYLD observer registered");
+    });
+}
+
+BOOL TCPDyldPendingReload(void) {
+    BOOL p = sDyldPending;
+    sDyldPending = NO;
+    return p;
 }

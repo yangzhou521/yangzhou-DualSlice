@@ -948,36 +948,22 @@ static void TCPInstallBadgeViewSites(void) {
 }
 
 void TCPInstallBadgeSites(void) {
-    NSArray<NSString *> *badgeClasses = @[ @"SBIconBadge" ];
-    NSArray<NSString *> *badgeSelectors = @[ @"_checkoutBackgroundImage",
-                                             @"_checkoutBackgroundImageTuple",
-                                             @"_checkoutImageForText:font:highlighted:" ];
-    TCPInstallSitesForClassPrefixes(badgeClasses, nil, @[ @"_checkoutBackgroundImage" ],
-                                    TCPSiteKindBadgeBackground);
-    TCPInstallSitesForClassPrefixes(@[ @"SBHIconAccessory" ], nil, @[ @"_checkoutBackgroundImage" ],
-                                    TCPSiteKindBadgeBackground);
-    TCPInstallSitesForClassPrefixes(badgeClasses, nil, @[ @"_checkoutBackgroundImageTuple" ],
-                                    TCPSiteKindBadgeTuple);
-    TCPInstallSitesForClassPrefixes(badgeClasses, nil, @[ @"_checkoutImageForText:font:highlighted:" ],
-                                    TCPSiteKindBadgeTextImage);
+    // 1.0.31：全部改成固定类名直取（原来按 "SBIconBadge"/"SBHIconAccessory" 前缀、
+    // 以及 "Badge" 子串扫全表，一轮要扫 4 次类表，是启动重的第二个来源）。
+    NSArray<NSString *> *badgeClasses = @[ @"SBIconBadge", @"SBIconBadgeView" ];
+    TCPInstallSitesFromClassList(badgeClasses, @[ @"_checkoutBackgroundImage" ],
+                                 TCPSiteKindBadgeBackground, NO);
+    TCPInstallSitesFromClassList(@[ @"SBHIconAccessory" ], @[ @"_checkoutBackgroundImage" ],
+                                 TCPSiteKindBadgeBackground, NO);
+    TCPInstallSitesFromClassList(badgeClasses, @[ @"_checkoutBackgroundImageTuple" ],
+                                 TCPSiteKindBadgeTuple, NO);
+    TCPInstallSitesFromClassList(badgeClasses, @[ @"_checkoutImageForText:font:highlighted:" ],
+                                 TCPSiteKindBadgeTextImage, NO);
 
-    // 用户 2026-10-30 15:13 的要求：**「角标」开着时，锁屏通知上的角标也要跟着主题走**
-    // （桌面与锁屏通知同时生效，默认就生效，面板里不写这几个字）。
-    //
-    // 锁屏通知那套视图不是 SBIconBadge* 家族的类（通知列表在 SpringBoard 里自成一系），
-    // 名字又不固定，所以这里按「类名含 Badge」兜：**只要这个类自己声明了角标站**，就挂上；
-    // 不是角标类（没声明这些方法）根本挂不上，挂上了也只在主题真有角标素材时才动图。
-    // 挂到的类名写进诊断（ThemeCorePlusBadgeCensus），设备上能直接看是哪几个类在干活。
-    NSArray<NSString *> *excluding = @[ @"Accessibility" ];
-    for (NSString *selectorName in badgeSelectors) {
-        TCPSiteKind kind = TCPSiteKindBadgeBackground;
-        if ([selectorName isEqualToString:@"_checkoutBackgroundImageTuple"]) {
-            kind = TCPSiteKindBadgeTuple;
-        } else if ([selectorName hasPrefix:@"_checkoutImageForText"]) {
-            kind = TCPSiteKindBadgeTextImage;
-        }
-        TCPInstallSitesForClassSubstrings(@[ @"Badge" ], excluding, @[ selectorName ], kind);
-    }
+    // 锁屏通知上的角标：那套视图不是 SBIconBadge* 家族，名字又不固定。
+    // 这里保留一次「类名含 Badge」的兜底扫描，但整轮只扫一次类表
+    // （原来 3 个选择器各扫一遍 = 3 次全表拷贝，见 Hooks.m 的 TCPInstallBadgeSubstringSitesOnce）。
+    TCPInstallBadgeSubstringSitesOnce();
 
     // 0.9.11：单层化的视图侧入口（见上面 TCPInstallBadgeViewSites 的注释）。
     TCPInstallBadgeViewSites();

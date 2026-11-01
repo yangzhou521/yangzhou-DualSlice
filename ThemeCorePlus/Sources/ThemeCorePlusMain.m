@@ -62,7 +62,7 @@ static void TCPWriteDiagnostics(void) {
 
     // 像素自检（gen{}/pix{}）原来写好了却没接进来，诊断里一直看不到 —— 2026-10-30 15:4x 接上：
     // 「图标没换」到底是①我们合成把图抹透明了、还是②屏幕上挂的压根不是我们那张图，靠这组数区分。
-    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@];ientry=[%@];centry=[%@]",
                       [store diagnostics], TCPDisplayProbeReport(), TCPRefreshProbeReport(),
                       TCPIconProbeReport(),
                       TCPBadgeProbeReport(), TCPIconPixelProbeReport(),
@@ -73,7 +73,8 @@ static void TCPWriteDiagnostics(void) {
                       TCPFolderNotifyReport(),
                       TCPIconCacheHookReport(), TCPIconCacheClassReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
-                      TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText];
+                      TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText,
+                      TCPIconImageEntryCensus(), TCPIconCacheEntryReport()];
     TCPWriteProcessPreference(TCPKeyDiagnostics, text);
 
     NSString *census = TCPCensusForClasses(TCPCensusClassNames(), 3600);
@@ -269,16 +270,25 @@ __attribute__((constructor)) static void TCPInitialize(void) {
                                         NULL,
                                         CFNotificationSuspensionBehaviorDeliverImmediately);
 
-        // 补挂几轮：SpringBoardHome 的类按需加载，晚到的类只有下一轮才扫得到。
-        // 1.0.22 提速：0/0.5/2/6 → 0/0.3/1/2。用户报「注销进桌面先原生 UI 几秒才上主题」：
-        // 站点挂得越早，图标视图第一次取图就越可能直接吃到主题图，原生窗口期越短。
-        for (NSNumber *delay in @[ @0.0, @0.3, @1.0, @2.0 ]) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
-                                         (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{
-                TCPReload(NO);
-            });
-        }
+        // 1.0.31：**启动时序重写**（用户 2026-11-01 20:00「这插件从一开始就多次加载才能
+        // 进桌面，是不是架构没写好」—— 是架构问题，已按本机五个主题引擎的通行做法改掉）。
+        //
+        // 原来：构造函数里立刻排 4 轮 TCPReload（0 / 0.3 / 1 / 2 秒），每轮都要
+        //   objc_copyClassList 拷全进程类表（挂站 + 角标子串，一轮好几次）并重刷视图。
+        //   这四轮全挤在 SpringBoard 刚起来的几秒里，看门狗预算被吃光 → 进程被杀 →
+        //   系统拉起 → 又崩 → 用户看到的就是「黑屏反复加载，要好几次才进桌面」。
+        //
+        // 现在：构造函数里只挂一次（固定类名清单 objc_getClass 直取，零全表拷贝），
+        //   等 SpringBoard 窗口建出来之后补挂两轮（那时 SpringBoardHome 一定已 dlopen）。
+        TCPReload(NO);
+
+        // 1.0.31：**补挂改成 dyld 事件，不再定时扫描**（用户 2026-11-01 20:09 确认这条是最优解）。
+        // 本机五个主题引擎里 Mikkyy 用的正是 dyld_register_func_for_add_image：框架一加载就通知，
+        // 那时类一定已注册，objc_getClass 直取即可。定时拍只能撞运气，且每拍都拷全表。
+        // 回调已在 Hooks.m 里保证只在主队列回调、只做挂站。
+        TCPInstallDyldImageObserver(^{
+            TCPReload(NO);
+        });
 
         // 「注销后自动生效」（精简版 2026-10-31）：图标视图一建好就刷，尽量接近「注销即加载」。
         // 1.0.22 按用户要求第一拍 0 秒（视图还没建好时刷了白刷，但成本极低——遍历窗口树
