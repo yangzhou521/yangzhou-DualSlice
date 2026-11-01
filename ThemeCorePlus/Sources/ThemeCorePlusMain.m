@@ -62,7 +62,7 @@ static void TCPWriteDiagnostics(void) {
 
     // 像素自检（gen{}/pix{}）原来写好了却没接进来，诊断里一直看不到 —— 2026-10-30 15:4x 接上：
     // 「图标没换」到底是①我们合成把图抹透明了、还是②屏幕上挂的压根不是我们那张图，靠这组数区分。
-    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
+    NSString *text = [NSString stringWithFormat:@"%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;%@;sites=%lu[%@];roots=[%@];%@;themes=%lu[%@]",
                       [store diagnostics], TCPDisplayProbeReport(), TCPRefreshProbeReport(),
                       TCPIconProbeReport(),
                       TCPBadgeProbeReport(), TCPIconPixelProbeReport(),
@@ -70,6 +70,7 @@ static void TCPWriteDiagnostics(void) {
                       TCPDynamicProbeReport(), TCPClockViewProbeReport(), TCPFolderProbeReport(),
                       TCPFolderGridCellProbeReport(),
                       TCPFolderMiniGridProbeReport(),
+                      TCPFolderNotifyReport(),
                       (unsigned long)TCPTotalSiteCount(), siteList, roots,
                       TCPSourceThemeRootsReport(), (unsigned long)themes.count, themeText];
     TCPWriteProcessPreference(TCPKeyDiagnostics, text);
@@ -174,6 +175,13 @@ static void TCPReload(BOOL refreshImages) {
         // 文件夹预览那张拼图（收起状态的 mini 图标）由 SBFolderIconImageCache 缓存：
         // 主题换上来之后它不会自己重算，于是「打开是主题图标、收起还是原图标」。这里叫它重算一次。
         TCPFolderCacheRefresh();
+
+        // 1.0.22：站点挂齐的那一刻立即强刷（用户：别的主题引擎进桌面秒加载）。
+        // 启动轮 refreshImages=NO，原来要等固定 1/2.5 秒的强刷拍；现在晚到的类一挂上
+        // （sitesChanged）就当场把已建出来的视图换成主题图，不等定时拍。
+        if (!refreshImages) {
+            TCPRefreshIconImages();
+        }
     }
 
     // 每次重载记一行「这一轮解析成什么样」，另起一行贴素材快照：面板「运行日志」里看到的就是
@@ -261,7 +269,9 @@ __attribute__((constructor)) static void TCPInitialize(void) {
                                         CFNotificationSuspensionBehaviorDeliverImmediately);
 
         // 补挂几轮：SpringBoardHome 的类按需加载，晚到的类只有下一轮才扫得到。
-        for (NSNumber *delay in @[ @0.0, @0.5, @2.0, @6.0 ]) {
+        // 1.0.22 提速：0/0.5/2/6 → 0/0.3/1/2。用户报「注销进桌面先原生 UI 几秒才上主题」：
+        // 站点挂得越早，图标视图第一次取图就越可能直接吃到主题图，原生窗口期越短。
+        for (NSNumber *delay in @[ @0.0, @0.3, @1.0, @2.0 ]) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
                                          (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
@@ -270,12 +280,10 @@ __attribute__((constructor)) static void TCPInitialize(void) {
         }
 
         // 「注销后自动生效」（精简版 2026-10-31）：图标视图一建好就刷，尽量接近「注销即加载」。
-        // 为什么不能 0 秒：注销后 SBIconImageView 要等 SpringBoard 启动约 1 秒才建出来，0 秒时
-        // 视图还不存在，刷了白刷。所以第一拍 1 秒刷一次，2.5 秒再补一次兜底（第一拍若视图还没
-        // 建好，pushed=0，第二拍补上）。两次都走 -updateImageAnimated:NO 安全路径，不复用当年
-        // clearIconImageInfo 那条崩过的路。只在 SpringBoard 进程。
+        // 1.0.22 按用户要求第一拍 0 秒（视图还没建好时刷了白刷，但成本极低——遍历窗口树
+        // 找不到 SBIconImageView 就返回），2.5 秒兜底拍负责把视图建好后的那次补上。
         if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"]) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.0 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
                 TCPRefreshIconImages();
             });

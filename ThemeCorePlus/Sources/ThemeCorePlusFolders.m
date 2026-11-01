@@ -59,3 +59,68 @@ void TCPInstallFolderGridCellSites(void) {
         os_log(TCPLogHandle(), "TCPS_FOLDER_MINIGRID_SITES +%lu", (unsigned long)mg);
     }
 }
+
+// 1.0.22：文件夹收起 mini 拼图不重新生成的修法。
+// 取证（1.0.20/1.0.21）：gridCellImageOfSize 与 genericMiniGridImage 两个探针 look=0——
+// 系统出 mini 图不走 SBFolderIconImageCache 的这两个方法；mini 图是 SBFolderIcon 的
+// generateIconImageWithInfo:（已挂在 icon 站）生成后**缓存**的，换主题不会自动重算。
+// 修法：找到屏幕上的 SBFolderIcon（视图的 _folderIcon / folderIcon 属性），
+// 对缓存类调 -informObserversOfUpdateForFolderIcon:（allm= 坐实该类声明了它，/3 = 一个对象参数），
+// 通知「文件夹图更新了」→ 系统重算 mini 图，重算时 leaf 站（SBLeafIcon:generateIconImageWithInfo: 已挂）出主题图。
+static NSInteger sFolderNotifyCount = 0;
+static NSString *sFolderNotifyLast = @"-";
+
+NSString *TCPFolderNotifyReport(void) {
+    return [NSString stringWithFormat:@"foldernotify{n=%ld,last=%@}",
+            (long)sFolderNotifyCount, sFolderNotifyLast];
+}
+
+void TCPFolderNotifyRecalc(void) {
+    if (![NSThread isMainThread]) return;
+    TCPThemeStore *store = [TCPThemeStore shared];
+    if (!store.active || !store.iconsEnabled) { sFolderNotifyLast = @"inactive"; return; }
+    Class cacheClass = NSClassFromString(@"SBFolderIconImageCache");
+    Class viewClass = NSClassFromString(@"SBFolderIconImageView");
+    if (cacheClass == Nil || viewClass == Nil) { sFolderNotifyLast = @"nocls"; return; }
+    SEL informSel = NSSelectorFromString(@"informObserversOfUpdateForFolderIcon:");
+    if (![cacheClass instancesRespondToSelector:informSel]) { sFolderNotifyLast = @"nosel"; return; }
+
+    // 拿缓存单例
+    id cache = nil;
+    for (NSString *name in @[ @"sharedInstance", @"sharedCache", @"defaultCache", @"sharedImageCache" ]) {
+        SEL sel = NSSelectorFromString(name);
+        if ([cacheClass respondsToSelector:sel]) {
+            cache = ((id (*)(id, SEL))objc_msgSend)((id)cacheClass, sel);
+            if (cache != nil) break;
+        }
+    }
+    if (cache == nil) { sFolderNotifyLast = @"nocache"; return; }
+
+    // 遍历窗口树找文件夹视图 → 取它的 folderIcon
+    NSMutableArray *stack = [NSMutableArray array];
+    for (UIWindow *window in [UIApplication sharedApplication].windows) [stack addObject:window];
+    NSUInteger guard = 0;
+    NSInteger notified = 0;
+    NSMutableSet *seenIcons = [NSMutableSet set];
+    while (stack.count > 0 && guard++ < 6000) {
+        UIView *view = [stack lastObject];
+        [stack removeLastObject];
+        if ([view isKindOfClass:viewClass]) {
+            id folderIcon = nil;
+            @try { folderIcon = [view valueForKey:@"_folderIcon"]; } @catch (NSException *e) { (void)e; }
+            if (folderIcon == nil) {
+                @try { folderIcon = [view valueForKey:@"folderIcon"]; } @catch (NSException *e) { (void)e; }
+            }
+            if (folderIcon != nil && ![seenIcons containsObject:folderIcon]) {
+                [seenIcons addObject:folderIcon];
+                @try {
+                    ((void (*)(id, SEL, id))objc_msgSend)(cache, informSel, folderIcon);
+                    notified++;
+                } @catch (NSException *e) { (void)e; }
+            }
+        }
+        [stack addObjectsFromArray:view.subviews];
+    }
+    sFolderNotifyCount += notified;
+    sFolderNotifyLast = [NSString stringWithFormat:@"ok:%ld", (long)notified];
+}

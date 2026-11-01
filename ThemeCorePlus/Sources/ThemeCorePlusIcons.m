@@ -107,6 +107,20 @@ void TCPInstallIconSites(void) {
     if (installed > 0) {
         os_log(TCPLogHandle(), "TCPS_ICON_SITES +%lu", (unsigned long)installed);
     }
+
+    // 1.0.22：图标图**缓存层**（MarkTheme16 秒加载的关键，二进制符号取证）。
+    // MarkThemeRuntime 挂的就是 SBHIconImageCache 的 iconImageWithInfo:（36 处引用）——
+    // 所有图标图进出缓存都过它，视图第一次取图（从缓存拿）就已经是主题图，零延迟秒加载。
+    // 我们的站原来漏了这一层（上面 excluding 的 "Cache" 把缓存类挡了），于是桌面先显示
+    // 缓存里预热好的系统原图、等强刷才换 → 用户看到的「进桌面先原生几秒才上主题」。
+    // 单独补挂：复用 icon 站槽位（同签名 4-double HFA 结构体），只挂实例方法。
+    NSUInteger cacheSites = TCPInstallInstanceSitesForClassPrefixes(
+        @[ @"SBHIconImageCache" ], @[],
+        @[ @"iconImageWithInfo:", @"unmaskedIconImageWithInfo:" ],
+        TCPSiteKindIconImageInfo);
+    if (cacheSites > 0) {
+        os_log(TCPLogHandle(), "TCPS_ICON_CACHE_SITES +%lu", (unsigned long)cacheSites);
+    }
 }
 
 #pragma mark - 即时生效：不注销也能换图
@@ -1710,6 +1724,8 @@ void TCPRefreshIconImages(void) {
     // 1.0.18：热刷新也重画时钟视图 —— 时钟视图从不走 layoutSubviews（只靠 30 秒 tick），
     // 点「刷新图标」后要立即重画，否则时钟素材要等 30 秒或注销才换。
     TCPClockTick();
+    // 1.0.22：热刷新也通知文件夹 mini 拼图重算（换主题后收起状态才显示主题格子）。
+    TCPFolderNotifyRecalc();
     sRefreshing = NO;
 }
 
