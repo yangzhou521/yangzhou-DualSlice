@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.7";
+static NSString *const CHVersion = @"1.6.8";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
