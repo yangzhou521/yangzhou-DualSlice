@@ -263,6 +263,11 @@ NSString *TCPScreenCensusReport(void);
 // 改完设置（面板广播、或 shell 手写偏好后 respring）由 ThemeCorePlusMain.m 调。
 void TCPRefreshIconImages(void);
 NSString *TCPRefreshProbeReport(void);
+// 1.0.38：从 SBIconController→iconManager 上取「活的」图标缓存与文件夹缓存。
+// 视图自己身上的 -iconImageCache 实测全是 nil（诊断 ref=...cache=0,miss=2），
+// 系统把原图缓存在管理器这两个对象里，秒加载与文件夹重算都要靠它们。
+id TCPLiveIconImageCache(void);
+id TCPLiveFolderImageCache(void);
 UIImage *TCPThemedBadgeBackground(CGFloat scale);
 UIImage *TCPThemedBadgeBackgroundInBox(CGFloat scale, CGSize box);
 UIImage *TCPThemedBadgeTextImage(NSString *text, UIFont *font, CGFloat scale, CGSize systemBox);

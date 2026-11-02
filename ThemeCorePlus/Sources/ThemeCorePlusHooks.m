@@ -383,10 +383,16 @@ static const IMP kDisplayHookFns[TCP_SLOT_COUNT] = { TCP_SLOT_INDEX_LIST(TCP_FN_
 typedef UIImage *(*TCPFolderGridCellFn)(id, SEL, CGSize, id, TCPIconImageInfo);
 
 static long sFolderGridLook = 0, sFolderGridHit = 0, sFolderGridMiss = 0;
+// 1.0.38：再加两类失败原因，一眼看出 41 次全 miss 是哪一种：
+//   noid = 那个 icon 认不出 App（bundle id 空）；nopath = 认出来了但主题没这张素材；
+//   small = 尺寸太小被跳过；last = 最近一次的「bundle id|尺寸|结论」。
+static long sFolderGridNoId = 0, sFolderGridNoPath = 0;
+static NSString *sFolderGridLast = @"-";
 
 NSString *TCPFolderGridCellProbeReport(void) {
-    return [NSString stringWithFormat:@"grid{look=%ld,hit=%ld,miss=%ld}",
-            sFolderGridLook, sFolderGridHit, sFolderGridMiss];
+    return [NSString stringWithFormat:@"grid{look=%ld,hit=%ld,miss=%ld,noid=%ld,nopath=%ld,last=%@}",
+            sFolderGridLook, sFolderGridHit, sFolderGridMiss,
+            sFolderGridNoId, sFolderGridNoPath, sFolderGridLast];
 }
 
 static UIImage *TCPFolderGridHandle(IMP *slot, id self, SEL _cmd, CGSize size,
@@ -403,9 +409,21 @@ static UIImage *TCPFolderGridHandle(IMP *slot, id self, SEL _cmd, CGSize size,
     UIImage *themed = TCPThemedIconImage(icon, info);
     if (themed == nil) {
         __sync_fetch_and_add(&sFolderGridMiss, 1);
+        // 1.0.38：记下这次为什么没换成 —— 认不出 App / 主题没这张素材，是两条完全不同的修法。
+        NSString *bid = TCPIconIdentifierOf(icon);
+        if (bid.length == 0) {
+            __sync_fetch_and_add(&sFolderGridNoId, 1);
+            sFolderGridLast = [NSString stringWithFormat:@"noid|%.0fx%.0f", size.width, size.height];
+        } else {
+            __sync_fetch_and_add(&sFolderGridNoPath, 1);
+            sFolderGridLast = [NSString stringWithFormat:@"%@|%.0fx%.0f",
+                               bid, size.width, size.height];
+        }
         return originalImage;
     }
     __sync_fetch_and_add(&sFolderGridHit, 1);
+    sFolderGridLast = [NSString stringWithFormat:@"hit:%@|%.0fx%.0f",
+                       TCPIconIdentifierOf(icon) ?: @"-", size.width, size.height];
     return themed;
 }
 

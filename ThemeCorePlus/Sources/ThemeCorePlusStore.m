@@ -40,6 +40,10 @@ void TCPStoreEnableImageWork(void) {
     if (sTCPImageWorkReady) return;
     sTCPImageWorkReady = YES;
     [[TCPThemeStore shared] performDeferredImageWork];
+    // 1.0.38（用户报「秒加载没实现」）：开闸时系统已经把原图渲染好、缓存在
+    // SBIconController→iconManager→iconImageCache 里了，光预热不够 —— 必须先把这个缓存清掉，
+    // 之后主入口那一轮刷新让图标视图重出图，第一次重画才会拿到我们的主题图，而不是又贴回原图。
+    [[TCPThemeStore shared] purgeSystemIconCache];
 }
 
 #pragma mark - 文件名解析
@@ -562,6 +566,29 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
             }
         }
     });
+}
+
+// 1.0.38：清系统图标缓存 —— 「秒加载」真正缺的那一步。
+// 为什么放在 Store 里：开闸（TCPStoreEnableImageWork）与主题重载都在这个文件，缓存对象也在
+// 这里拿最方便；真正的重画由主入口那轮刷新做（那边才碰视图）。
+- (void)purgeSystemIconCache {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self purgeSystemIconCache]; });
+        return;
+    }
+    id cache = TCPLiveIconImageCache();
+    if (cache == nil) { self.purgeName = @"nocache"; return; }
+    for (NSString *name in @[ @"purgeCache", @"purgeAllCaches", @"purgeCaches",
+                              @"clearCache", @"removeAllObjects" ]) {
+        SEL sel = NSSelectorFromString(name);
+        if ([cache respondsToSelector:sel]) {
+            ((void (*)(id, SEL))objc_msgSend)(cache, sel);
+            self.purgeName = name;
+            self.purgeCount = self.purgeCount + 1;
+            return;
+        }
+    }
+    self.purgeName = @"nosel";
 }
 
 // 1.0.35：闸门打开时补做构造函数里被推迟的图片工作（遮罩体检 + 图标预热）。

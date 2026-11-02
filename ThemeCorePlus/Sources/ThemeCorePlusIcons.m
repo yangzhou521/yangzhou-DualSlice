@@ -142,9 +142,11 @@ static NSInteger sRefreshCacheMiss = 0;
 static NSString *sRefreshPurgeName = nil;
 
 NSString *TCPRefreshProbeReport(void) {
-    return [NSString stringWithFormat:@"ref{views=%ld,pushed=%ld,model=%ld,cache=%ld,miss=%ld,purge=%@}",
+    TCPThemeStore *store = [TCPThemeStore shared];
+    return [NSString stringWithFormat:@"ref{views=%ld,pushed=%ld,model=%ld,cache=%ld,miss=%ld,purge=%@%lu}",
             (long)sRefreshViews, (long)sRefreshPushed, (long)sRefreshModel, (long)sRefreshCache,
-            (long)sRefreshCacheMiss, sRefreshPurgeName ?: @"-"];
+            (long)sRefreshCacheMiss, store.purgeName ?: @"-",
+            (unsigned long)store.purgeCount];
 }
 
 // SBIconImageView 自己声明的 -iconImageInfo / -setIconImageInfo: 用的就是这个结构。
@@ -154,15 +156,62 @@ typedef TCPIconImageInfo TCPIconImageInfoShort;
 
 // 图标图缓存对象上的清空方法：不同版本名字不同，按顺序试第一个存在的。
 // 都是无参方法 —— 带参数的那种（purgeCachedImagesForIcons:）要传图标集合，不在刷新路径上冒险。
+// 1.0.38：视图自己身上拿不到缓存（诊断 ref=...cache=0,miss=2 = 16 个视图的 -iconImageCache
+// 全是 nil），真正的缓存挂在 SBIconController→iconManager→iconImageCache 上（探针坐实：
+// 控制器声明零参 -iconManager，管理器声明零参 -iconImageCache / -folderIconImageCache）。
+// 所以先照旧问视图，拿不到就整条链重取一次。这是「秒加载」的关键那一步：
+// 系统把原图缓存在这个对象里，不清掉，视图重画时还会把原图贴回来。
+static id TCPLiveIconImageCache(void) {
+    static SEL managerGetter = NULL, cacheGetter = NULL, folderCacheGetter = NULL;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        managerGetter = NSSelectorFromString(@"iconManager");
+        cacheGetter = NSSelectorFromString(@"iconImageCache");
+        folderCacheGetter = NSSelectorFromString(@"folderIconImageCache");
+    });
+    Class controllerClass = objc_getClass("SBIconController");
+    if (controllerClass == Nil) return nil;
+    SEL sharedSel = NSSelectorFromString(@"sharedInstance");
+    if (![controllerClass respondsToSelector:sharedSel]) return nil;
+    id controller = ((id (*)(id, SEL))objc_msgSend)((id)controllerClass, sharedSel);
+    if (controller == nil || ![controller respondsToSelector:managerGetter]) return nil;
+    id manager = ((id (*)(id, SEL))objc_msgSend)(controller, managerGetter);
+    if (manager == nil || ![manager respondsToSelector:cacheGetter]) return nil;
+    return ((id (*)(id, SEL))objc_msgSend)(manager, cacheGetter);
+}
+
+// 文件夹的图标缓存（同一条链，只是换成 folderIconImageCache）：文件夹收起状态的 mini 拼图
+// 存在这个对象里，主题换了它不会自己重算，要靠它重算一次。
+id TCPLiveFolderImageCache(void) {
+    static SEL managerGetter = NULL, folderCacheGetter = NULL;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        managerGetter = NSSelectorFromString(@"iconManager");
+        folderCacheGetter = NSSelectorFromString(@"folderIconImageCache");
+    });
+    Class controllerClass = objc_getClass("SBIconController");
+    if (controllerClass == Nil) return nil;
+    SEL sharedSel = NSSelectorFromString(@"sharedInstance");
+    if (![controllerClass respondsToSelector:sharedSel]) return nil;
+    id controller = ((id (*)(id, SEL))objc_msgSend)((id)controllerClass, sharedSel);
+    if (controller == nil || ![controller respondsToSelector:managerGetter]) return nil;
+    id manager = ((id (*)(id, SEL))objc_msgSend)(controller, managerGetter);
+    if (manager == nil || ![manager respondsToSelector:folderCacheGetter]) return nil;
+    return ((id (*)(id, SEL))objc_msgSend)(manager, folderCacheGetter);
+}
+
 static void TCPPurgeViewImageCache(id view) {
     static SEL sCacheGetter = NULL;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         sCacheGetter = NSSelectorFromString(@"iconImageCache");
     });
-    if (![view respondsToSelector:sCacheGetter]) return;
 
-    id cache = ((id (*)(id, SEL))objc_msgSend)(view, sCacheGetter);
+    id cache = nil;
+    if (view != nil && [view respondsToSelector:sCacheGetter]) {
+        cache = ((id (*)(id, SEL))objc_msgSend)(view, sCacheGetter);
+    }
+    if (cache == nil) cache = TCPLiveIconImageCache();   // 1.0.38：改从控制器→管理器那条链取
     if (cache == nil) {
         sRefreshCacheMiss++;
         return;

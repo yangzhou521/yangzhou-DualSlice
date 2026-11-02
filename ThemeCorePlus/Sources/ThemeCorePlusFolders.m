@@ -88,13 +88,14 @@ void TCPFolderNotifyRecalc(void) {
     SEL informSel = NSSelectorFromString(@"informObserversOfUpdateForFolderIcon:");
     if (![cacheClass instancesRespondToSelector:informSel]) { sFolderNotifyLast = @"nosel"; return; }
 
-    // 拿缓存单例
-    id cache = nil;
+    // 拿缓存单例：1.0.38 起先走控制器→管理器那条链（探针坐实它声明了零参 iconManager /
+    // folderIconImageCache），拿不到再退回老的 sharedInstance 之类尝试。
+    id cache = TCPLiveFolderImageCache();
     for (NSString *name in @[ @"sharedInstance", @"sharedCache", @"defaultCache", @"sharedImageCache" ]) {
+        if (cache != nil) break;
         SEL sel = NSSelectorFromString(name);
         if ([cacheClass respondsToSelector:sel]) {
             cache = ((id (*)(id, SEL))objc_msgSend)((id)cacheClass, sel);
-            if (cache != nil) break;
         }
     }
     if (cache == nil) { sFolderNotifyLast = @"nocache"; return; }

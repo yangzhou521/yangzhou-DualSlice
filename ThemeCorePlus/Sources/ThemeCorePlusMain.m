@@ -311,6 +311,11 @@ __attribute__((constructor)) static void TCPInitialize(void) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             TCPStoreEnableImageWork();
+            // 1.0.38（用户报「秒加载没实现」）：开闸时系统缓存里已经全是原图。开闸先把缓存清掉，
+            // 再让屏幕上的图标视图重出一遍图 —— 这一步才是「一进桌面就是主题图」，不是等用户
+            // 滑一下、进一次 App 才慢慢换。放在主队列、开闸之后，不在构造函数里碰任何视图。
+            TCPRefreshIconImages();
+            TCPWriteDiagnosticsNow();
         });
 
         // 1.0.31：**补挂改成 dyld 事件，不再定时扫描**（用户 2026-11-01 20:09 确认这条是最优解）。
