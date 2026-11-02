@@ -8,17 +8,18 @@
 ## 当前主线：ThemeCorePlus 图标主题化覆盖（调度台 = 3d91f924，本线）
 
 - **目标**：图标主题化全覆盖 + 日历/文件夹修好 + 秒加载。
-- **做到哪**：
-  - **1.0.37 已装并在跑**（dpkg=1.0.37、诊断 `v1.0.37;active=1`、无新崩溃）。
-  - **日历墨层已生效**：`dyn{last=com.apple.mobilecal:60x60@2,base+ink,cov=0.78}` —— 1.0.37 之前只画底图，现在底图+墨层都画。
-  - **布局保存已打通**：`lay{rst=0,sav=1,tick=337,hooked=2,model=adopt:iconModel}`（`SBHIconModel:_saveIconState` + `SBIconController -iconModel`）。
-  - 安全模式已退出（1.0.36 修构造函数闸门；退出靠**完整关机重启**，sbreload/killall 在 roothide 上杀不动 SpringBoard）。
-  - **CountdownHUD 1.6.7 已装未注销**（磁盘 dylib 10:57 新，SpringBoard 内存仍是 1.6.6）。
+- **做到哪**（2026-11-02 11:32 注销后实测）：
+  - **1.0.37 在跑**：诊断 `v1.0.37;active=1;icon{look=887,hit=779}`，无新崩溃。
+  - **HUD 1.6.7 在跑**：诊断 `v1.6.7;shows=2`，长文案**两行显示不截断**（1.6.7 的能力已生效）。
+  - **日历墨层已生效**：`dyn{last=com.apple.mobilecal:60x60@2,base+ink,cov=0.78}`。
+  - **布局保存已打通**：`lay{rst=0,sav=1,tick=337,hooked=2,model=adopt:iconModel}`。
+  - 安全模式已退出（1.0.36 修构造函数闸门；退出靠**完整关机重启**，sbreload/killall 杀不动 SpringBoard）。
+  - **第二遍 probe 已读**（mtime 11:32）：段头与第一遍完全相同，**没有新增类**；`TCPIconServiceProbe.txt` 仍不存在（iconservicesagent 侧那路没通）。
 - **下一步**：
-  1. **一次注销**让 HUD 1.6.7（两行长文字）生效 —— 需用户点头，先弹窗；
-  2. 注销后重读 `TCPCacheProbe.txt`（第二遍）确认新增站点有没有 hit；
-  3. 按 probe 定秒加载路线（缓存层 / 视图层 / 动态图标，**一次只改一条路线**）。
-- **卡谁**：注销需用户点头；其余不卡。
+  1. 按第二遍 probe 定**秒加载路线**：三条候选里 **缓存层最可行** —— 探针里 `SBHIconManager` 有 773 个方法，含零参的 `-iconImageCache` / `-folderIconImageCache`；
+  2. 动码前先写清：挂哪个类的哪个方法、为什么符合「一站一槽（Per-Site Original Slot）」；
+  3. 改 `ThemeCorePlusHooks.m` 是禁改的 → 走 `ThemeCorePlusStore.m` 或新建 `ThemeCorePlusCache.m` + 改 build 脚本编译清单，走云编译。
+- **卡谁**：不卡（装包/注销时才需用户点头）。
 
 ## 别人在干的（不碰他的文件）
 

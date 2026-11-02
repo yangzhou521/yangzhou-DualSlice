@@ -626,8 +626,9 @@ static BOOL CHEnsureWindow(void) {
         gLabel.font = [UIFont monospacedDigitSystemFontOfSize:12.5 weight:UIFontWeightMedium];
         gLabel.numberOfLines = 2; // v1.6.7：长文字两行显示，中间对齐，不再单行截断
         gLabel.lineBreakMode = NSLineBreakByWordWrapping;
-        gLabel.adjustsFontSizeToFitWidth = YES;
-        gLabel.minimumScaleFactor = 0.55;
+        // v1.6.8：去掉 adjustsFontSizeToFitWidth —— 两行模式下它会把字「放大」到填满宽度
+        // （实测 font=15.7，比基准 12.5 还大；用户 11:34 反馈「二行文字太大 缩小它」）。
+        // 改成自己在 CHPaint 里按文字长度挑字号。
         gLabel.userInteractionEnabled = NO;
 
         [gPill addSubview:gLabel];
@@ -659,6 +660,14 @@ static void CHPaint(void) {
         }
         gLabel.textColor = tint;
         gLabel.text = [NSString stringWithFormat:@"%lu 秒后%@", (unsigned long)gRemaining, gLabelText];
+    }
+
+    // v1.6.8：按文字长度挑字号 —— 长文字（要两行）用 10.5pt（= 放大后的 15.7 的 2/3，
+    // 用户 11:34 要求「缩小三分之一」）；单行短内容保持 12.5pt 不变。
+    {
+        NSUInteger len = gLabel.text.length;
+        CGFloat size = (len > 14) ? 10.5 : 12.5;
+        gLabel.font = [UIFont monospacedDigitSystemFontOfSize:size weight:UIFontWeightMedium];
     }
 
     gPill.transform = CGAffineTransformMakeScale(1.08, 1.08);
