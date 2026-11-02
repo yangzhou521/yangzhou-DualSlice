@@ -23,6 +23,7 @@
   2. 装机前先定身份：交付版 5.2.0 与自研线共用 `com.yangzhou.themecoreplus` → 先问「换 id 还是先卸旧版」；
   3. 装机后读 `ref{...purge=<方法名><次数>}`、`grid{…}`、`icon{look,hit}`，判秒加载那一步有没有真走到。
 - **卡谁**：等用户指示（装包/注销才需点头）。
+- **跨线对齐（2026-11-02 15:45）**：已给并线 `11ac7e15` 发对齐回执。边界：本线只碰 `ThemeCorePlus/Sources/ThemeCorePlusIcons.m`、`ThemeCorePlusStore.m` + 构建脚本/工作流；`Prefs/`、`ThemeCorePlusHooks.m`、YzThemeCorePlus 交付版文件不碰；共享文件 `scripts/ci-err.js` 的 sha 各自改回自己的，别互相覆盖。
 
 ## 并行的第二件事：交付版 ThemeCore+ 5.2.0 移植（本线，2026-11-02 14:5x）
 
