@@ -15,6 +15,8 @@
 #import "ThemeCorePlusVersion.h"
 
 #import <math.h>
+// purgeSystemIconCache 里直接发 objc_msgSend（本文件不引 Hooks.h，缺这个头就是隐式声明 → 新 clang 报错）
+#import <objc/message.h>
 
 // 1.0.38：取「活的」系统图标缓存那个函数定义在 ThemeCorePlusIcons.m（ThemeCorePlusHooks.h 里
 // 也有声明）。这里只做前向声明 —— Store.m 不引 Hooks.h（两个头互相包含没必要），

@@ -1,6 +1,7 @@
 #import "YzThemeCorePlusThemeStore.h"
 #import "YzThemeCorePlusConfig.h"
 #import "YzThemeCorePlusPaths.h"
+#import "YzThemeCorePlusPrivate.h"   // UIKit 私有圆角方法 bezierPathWithRoundedRect:byRoundingCorners:cornerInsets: 的声明
 
 // Directory conventions kept compatible with the existing ecosystem:
 //   <jbroot>/Library/ThemeCore/<Theme>/icons/<bundleid>@2x.png          (ThemeCore)
@@ -258,9 +259,19 @@ static NSDictionary *yz_themecoreplus_themeInfoPlistAtPath(NSString *themePath) 
         CGRect bounds = CGRectMake(0, 0, size.width, size.height);
         if (applyMask) {
             CGFloat radius = 0.2237 * MIN(size.width, size.height);
-            UIBezierPath *mask = [UIBezierPath bezierPathWithRoundedRect:bounds
-                                                       byRoundingCorners:UIRectCornerAllCorners
-                                                            cornerInsets:UIEdgeInsetsMake(radius, radius, radius, radius)];
+            // 交付版用 UIKit 私有 `…cornerInsets:`；本机 UIKit 没实现它时会 unrecognized selector
+            // 崩在 SpringBoard，所以先探再用，退回公开的 `…cornerRadii:`（几何等价）。
+            UIBezierPath *mask = nil;
+            if ([UIBezierPath respondsToSelector:NSSelectorFromString(
+                    @"bezierPathWithRoundedRect:byRoundingCorners:cornerInsets:")]) {
+                mask = [UIBezierPath bezierPathWithRoundedRect:bounds
+                                             byRoundingCorners:UIRectCornerAllCorners
+                                                 cornerInsets:UIEdgeInsetsMake(radius, radius, radius, radius)];
+            } else {
+                mask = [UIBezierPath bezierPathWithRoundedRect:bounds
+                                             byRoundingCorners:UIRectCornerAllCorners
+                                                 cornerRadii:CGSizeMake(radius, radius)];
+            }
             [mask addClip];
         }
         [raw drawInRect:bounds];

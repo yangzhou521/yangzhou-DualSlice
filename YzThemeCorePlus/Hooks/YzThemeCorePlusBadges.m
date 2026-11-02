@@ -54,7 +54,7 @@ static id yz_themecoreplus_textImage(NSString *text, UIFont *fallbackFont, BOOL 
         ? [fontSizeValue floatValue]
         : (fallbackFont.pointSize > 0 ? fallbackFont.pointSize : 16.0);
     UIFont *font = nil;
-    if ([fontNameValue isKindOfClass:[NSString class]] && fontNameValue.length > 0) {
+    if ([fontNameValue isKindOfClass:[NSString class]] && [(NSString *)fontNameValue length] > 0) {
         font = [UIFont fontWithName:fontNameValue size:fontSize];
     }
     if (!font) {

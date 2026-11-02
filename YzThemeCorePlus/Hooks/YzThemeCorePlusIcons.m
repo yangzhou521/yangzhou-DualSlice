@@ -22,7 +22,7 @@ static UIImage *repl_iconImageWithInfo(id self, SEL _cmd, SBIconImageInfo info) 
     BOOL hasThemeIcon = [store yz_themecoreplus_iconPathForBundleID:bundleID scale:info.scale] != nil;
 
     BOOL themeMask = [store yz_themecoreplus_themeFlagForKey:@"IconCornerMask" defaultValue:YES];
-    BOOL configMask = [[YzThemeCorePlusConfig yz_themecoreplus_shared]
+    id configMask = [[YzThemeCorePlusConfig yz_themecoreplus_shared]
         yz_themecoreplus_valueForKey:@"IconCornerMask" defaultValue:@(YES)];
     BOOL applyMask = [configMask isKindOfClass:[NSNumber class]]
         ? ([configMask boolValue] && themeMask) : themeMask;

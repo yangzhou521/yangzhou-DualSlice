@@ -47,3 +47,12 @@ typedef struct {
 @interface SBFolderIcon : NSObject
 - (id)miniGridCellImageForIcon:(id)icon;
 @end
+
+// 圆角遮罩：交付版用的是 UIKit 私有 `…cornerInsets:`（SpringBoard 自己那套）。
+// SDK 头里没有 → 不声明新 clang 直接报 no known class method；这里补声明，
+// 运行时若本机 UIKit 没实现它，ThemeStore 会退回公开的 `…cornerRadii:`（全角+四边等内缩 ≡ 等半径圆角，几何等价）。
+@interface UIBezierPath (YzThemeCorePlusPrivate)
++ (UIBezierPath *)bezierPathWithRoundedRect:(CGRect)rect
+                          byRoundingCorners:(UIRectCorner)corners
+                              cornerInsets:(UIEdgeInsets)insets;
+@end
