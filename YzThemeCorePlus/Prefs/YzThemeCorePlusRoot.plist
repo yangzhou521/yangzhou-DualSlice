@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>title</key><string>ThemeCore+</string>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>cell</key><string>PSGroupCell</string>
+            <key>label</key><string>通用</string>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSSwitchCell</string>
+            <key>label</key><string>启用插件</string>
+            <key>key</key><string>enabled</string>
+            <key>defaults</key><string>com.yangzhou.themecoreplus</string>
+            <key>default</key><false/>
+        </dict>
+
+        <dict>
+            <key>cell</key><string>PSGroupCell</string>
+            <key>label</key><string>主题</string>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSLinkCell</string>
+            <key>label</key><string>选择主题</string>
+            <key>detail</key><string>YzThemeCorePlusThemeListController</string>
+            <key>isController</key><true/>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSSwitchCell</string>
+            <key>label</key><string>图标圆角遮罩</string>
+            <key>key</key><string>IconCornerMask</string>
+            <key>defaults</key><string>com.yangzhou.themecoreplus</string>
+            <key>default</key><true/>
+        </dict>
+
+        <dict>
+            <key>cell</key><string>PSGroupCell</string>
+            <key>label</key><string>通知角标</string>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSSwitchCell</string>
+            <key>label</key><string>启用角标主题</string>
+            <key>key</key><string>BadgeEnabled</string>
+            <key>defaults</key><string>com.yangzhou.themecoreplus</string>
+            <key>default</key><true/>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSButtonCell</string>
+            <key>label</key><string>刷新图标</string>
+            <key>action</key><string>yz_themecoreplus_refreshIcons:</string>
+        </dict>
+    </array>
+</dict>
+</plist>

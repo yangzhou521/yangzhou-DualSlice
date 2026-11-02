@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "ThemeCorePlus",
+  "id": "themecoreplus",
+  "display_name": "ThemeCore+",
+  "class_prefix": "YzThemeCorePlus",
+  "symbol_prefix": "yz_themecoreplus",
+  "package": "com.yangzhou.themecoreplus",
+  "bundle": "com.apple.springboard",
+  "sdk_version": "16.5",
+  "minimum_ios": "15.0",
+  "preferences": true,
+  "slider": false,
+  "github_actions": true
+}

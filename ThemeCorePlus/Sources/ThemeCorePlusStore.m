@@ -16,6 +16,11 @@
 
 #import <math.h>
 
+// 1.0.38：取「活的」系统图标缓存那个函数定义在 ThemeCorePlusIcons.m（ThemeCorePlusHooks.h 里
+// 也有声明）。这里只做前向声明 —— Store.m 不引 Hooks.h（两个头互相包含没必要），
+// 不声明的话就是隐式函数声明，新 clang 直接当错误（云编译就是这样挂的）。
+id TCPLiveIconImageCache(void);
+
 #pragma mark - 图片工作量闸门（1.0.35）
 
 // 1.0.35（修 2026-11-02 00:24 SpringBoard 连崩两次进安全模式）：**dyld 构造函数阶段一律不读图**。
