@@ -48,26 +48,17 @@
 			<key>action</key>
 			<string>refreshIcons</string>
 		</dict>
-		<!-- 底部：作者 + 越狱源（照 ThemeCorePrefs/Root.plist 的 PSFooterHyperlinkView 写法。
-		     footerHyperlinkRange 是要变成蓝色的那一段（按 UTF-16 记账）：
-		     "作者：yangzhou\n越狱源" —— 0..2「作者：」3..10「yangzhou」11 换行 12..14「越狱源」。 -->
+		<!-- 底部：只写作者（1.0.40 起去掉「越狱源」那一行与整条超链接 ——
+		     用户 2026-11-03：「我没越狱源，点它没必要」。所以不再用
+		     PSFooterHyperlinkView / footerHyperlinkRange / footerHyperlinkAction，
+		     就是一个居中的纯文字页脚。 -->
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerAlignment</key>
 			<integer>1</integer>
-			<key>footerCellClass</key>
-			<string>PSFooterHyperlinkView</string>
-			<key>footerHyperlinkAction</key>
-			<string>tcOpenRepository:</string>
-			<key>footerHyperlinkRange</key>
-			<string>{12, 3}</string>
 			<key>footerText</key>
-			<string>作者：yangzhou
-越狱源</string>
-			<key>headerFooterHyperlinkButtonTitle</key>
-			<string>作者：yangzhou
-越狱源</string>
+			<string>作者：yangzhou</string>
 		</dict>
 	</array>
 </dict>

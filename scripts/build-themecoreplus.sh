@@ -25,7 +25,7 @@ set -eu
 PRODUCT=ThemeCorePlus
 PREFS_BUNDLE=ThemeCorePlusPrefs
 PACKAGE_ID=com.yangzhou.themecoreplus
-VERSION=1.0.39
+VERSION=1.0.40
 NAME_ZH="主题美化 +"
 AUTHOR=yangzhou
 DESCRIPTION="轻量化桌面图标主题插件，修改图标、图标角标及图标阴影如此轻松，覆盖绝大部分区域，时钟日历可动态图标。兼容 SnowBoard / IconBundles / ThemeCore / Anemone 主题格式，支持多主题叠加，面板点「刷新图标」当场生效、不用注销。作者 yangzhou。"

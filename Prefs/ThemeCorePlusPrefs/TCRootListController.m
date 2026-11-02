@@ -7,10 +7,11 @@
 //
 //  1.0.39（2026-11-03）：用户要求「与 ThemeCore 面板保持一致」，照
 //  $JB/Library/PreferenceBundles/ThemeCorePrefs.bundle/Root.plist 的写法补齐：
-//   · 一级页页脚 = 两行「作者：yangzhou / 越狱源」，越狱源是要点得动的链接
-//     （footerCellClass=PSFooterHyperlinkView + footerHyperlinkRange + footerHyperlinkAction），
-//     所以版本号 footer 从代码里删掉、页脚整段交给 Root.plist（选择器 tcOpenRepository:）。
-//   · 二级页：导航标题「选择主题」、组头「可用主题」、同款页脚，列表为空时给「没有找到主题」。
+//   · 一级页页脚 = 「作者：yangzhou」；二级页：导航标题「选择主题」、组头「可用主题」、
+//     同款页脚，列表为空时给「没有找到主题」。
+//  1.0.40（2026-11-03）：用户「我没越狱源，点它没必要」→ 页脚去掉「越狱源」那一行与
+//     整条超链接（不再用 PSFooterHyperlinkView / footerHyperlinkRange /
+//     footerHyperlinkAction / `tcOpenRepository:`），只留居中的「作者：yangzhou」。
 //
 //  两个历史坑（详见 AGENTS.md「面板空白」与「选择主题页」两节），务必别踩回去：
 //   · 早先有一版二级页是「声明不全 / 纯 UIKit 页 + PSLinkCell」，Preferences push 时会往它身上
@@ -66,43 +67,23 @@ enum {
 - (NSArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
 @end
 
-#pragma mark - 页脚：作者 + 越狱源（照 ThemeCore 面板）
+#pragma mark - 页脚：只写作者（1.0.40 起不再有「越狱源」链接）
+//
+// 用户 2026-11-03：「我没越狱源，点它没必要」→ 页脚不再有可点的那一段，于是
+// PSFooterHyperlinkView / footerHyperlinkRange / footerHyperlinkAction 全部不用，
+// 「点开仓库」那条路径（原 TCPOpenProjectRepository()）一并删除。
 
-// 页脚两行文字：第二行「越狱源」是指定要变链接的那一段（见下方 range）。
+// 页脚文字：一级页由 Root.plist 给同一份字面，二级页在代码里生成同样的组单元。
 static NSString *TCPPanelFooterText(void) {
-    return @"作者：yangzhou\n越狱源";
+    return @"作者：yangzhou";
 }
 
-// 链接段 = 上面那串 UTF-16 里的 12..14（0..2「作者：」3..10「yangzhou」11 换行 12..14「越狱源」），
-// 与 ThemeCorePrefs/Root.plist 的 {12, 3} 同一个算法。
-static NSString *TCPPanelFooterLinkRange(void) {
-    return @"{12, 3}";
-}
-
-// 点「越狱源」= 打开本项目的仓库页（面板在「设置」进程里，是有 UIApplication 的真 App）。
-static void TCPOpenProjectRepository(void) {
-    NSURL *url = [NSURL URLWithString:@"https://github.com/yangzhou521/yangzhou-DualSlice"];
-    if (url == nil) return;
-    UIApplication *app = [UIApplication sharedApplication];
-    if ([app respondsToSelector:@selector(openURL:options:completionHandler:)]) {
-        [app openURL:url options:@{} completionHandler:nil];
-    } else if ([app respondsToSelector:@selector(openURL:)]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        [app openURL:url];
-#pragma clang diagnostic pop
-    }
-}
-
-// 代码生成的组单元要做页脚：这几把键与 Root.plist 里那份逐字一致（Preferences 只认字面键名）。
+// 代码生成的组单元要做页脚：一级页由 Root.plist 给同一份字面（Preferences 只认字面键名）。
+// 1.0.40 起只有纯文字 + 居中，不再有 footerCellClass / footerHyperlink* 那几把键。
 static PSSpecifier *TCPPanelFooterSpecifier(id target) {
+    (void)target;
     PSSpecifier *footer = [PSSpecifier groupSpecifierWithName:@""];
-    NSString *text = TCPPanelFooterText();
-    [footer setProperty:text forKey:@"footerText"];
-    [footer setProperty:@"PSFooterHyperlinkView" forKey:@"footerCellClass"];
-    [footer setProperty:text forKey:@"headerFooterHyperlinkButtonTitle"];
-    [footer setProperty:TCPPanelFooterLinkRange() forKey:@"footerHyperlinkRange"];
-    [footer setProperty:@"tcOpenRepository:" forKey:@"footerHyperlinkAction"];
+    [footer setProperty:TCPPanelFooterText() forKey:@"footerText"];
     [footer setProperty:@1 forKey:@"footerAlignment"];
     return footer;
 }
@@ -256,12 +237,6 @@ static NSArray<NSString *> *TCPStoredThemeChain(void) {
     TCPPostPreferencesChanged();                                     // SpringBoard 收到立刻重读 + 重排图标
 }
 
-// 页脚里的「越狱源」：选择器由 specifier 指定（plist 与代码生成的组单元都指到这里）。
-- (void)tcOpenRepository:(id)sender {
-    (void)sender;
-    TCPOpenProjectRepository();
-}
-
 #pragma mark 生命周期（照旧代码的稳定骨架）
 
 - (NSArray *)tcpBuildSpecifiers {
@@ -320,7 +295,7 @@ static NSArray<NSString *> *TCPStoredThemeChain(void) {
 // 版面照 ThemeCore 0.5.1：
 //   通用 = 启用插件（PSSwitchCell，Root.plist 承载，域 com.yangzhou.themecoreplus）
 //   主题 = 选择主题（PSLinkCell → TCThemeListController）＋ 刷新图标（PSButtonCell，action=refreshIcons）
-//   底部 = 作者 yangzhou / 越狱源（Root.plist 的 PSFooterHyperlinkView，链接选择器 tcOpenRepository:）
+//   底部 = 作者：yangzhou（纯文字居中，1.0.40 起不再有「越狱源」链接）
 // 诊断串、功能说明、运行日志入口都不再出现（用户要求面板简洁）。
 
 @interface TCRootListController : PSListController
@@ -360,12 +335,6 @@ static NSArray<NSString *> *TCPStoredThemeChain(void) {
     if (self.isViewLoaded) {
         [self reloadSpecifiers];
     }
-}
-
-// 一级页页脚里的「越狱源」：点一下跳到本项目的仓库页（选择器由 Root.plist 指定）。
-- (void)tcOpenRepository:(id)sender {
-    (void)sender;
-    TCPOpenProjectRepository();
 }
 
 // 「刷新图标」：广播 Darwin 通知，SpringBoard 里的插件收到后重读快照、清视图与缓存、当场重新出图。
