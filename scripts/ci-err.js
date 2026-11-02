@@ -1,6 +1,6 @@
 // 查指定 sha 的 CI check-run 里 error 级别的注解（匿名可读），只打印错误。
 // 用法：icli probe scripts/ci-err.js    （sha 改这里）
-var sha = '863d7f5a2df6bb0e5d40c6b56008c7b3381115dc';
+var sha = '9990eef5e2da4d274ccfb2d39fb20cd5007833c0';
 var base = 'https://api.github.com/repos/yangzhou521/yangzhou-DualSlice';
 
 function getText(path) {
