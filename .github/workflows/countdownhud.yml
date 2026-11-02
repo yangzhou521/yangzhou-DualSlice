@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.8)
+    name: Release (countdownhud-v1.6.9)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,15 +133,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.8
-          name: CountdownHUD v1.6.8
+          tag_name: countdownhud-v1.6.9
+          name: CountdownHUD v1.6.9
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
 
-            v1.6.8：**两行文字缩小三分之一**。v1.6.7 改成两行后，`adjustsFontSizeToFitWidth`
-            在多行模式下会把字「放大」到填满宽度（实测 font=15.7，比基准 12.5 还大，
-            用户 11:34 反馈「二行文字太大 缩小它」）。现在去掉自动缩放，改为自己按文字
-            长度挑字号：长文字（两行）10.5pt（= 15.7 的 2/3），单行短内容仍 12.5pt。
+            v1.6.9：**修「长文字字号弹回去」**。v1.6.8 把「长文字压到 2/3」写在 CHPaint 里，
+            但 `CHLayOut`（每秒都跑）会调 `CHApplyPillRect` 按高度重算字号，把 10.5 覆盖回
+            15.7；纯文案又不再每秒重画文字，于是字号一秒后就弹回原样（真机实测
+            `font=15.7`，用户 16:30「字号缩小三分之一」）。现在字号只有一个来源
+            `CHPreferredFontSize(height)`：高度÷3 后，文字长度 > 14 再压 2/3 → 10.5。
+            CHApplyPillRect 与 CHPaint 都走它，诊断的 `font=` 也跟着报真值。
+
+            v1.6.8：**两行文字缩小三分之一**（同上目标，改的位置不对）。v1.6.7 改成两行后，
+            `adjustsFontSizeToFitWidth` 在多行模式下会把字「放大」到填满宽度（实测 font=15.7，
+            比基准 12.5 还大）。现在去掉自动缩放，改为自己按文字长度挑字号。
 
             v1.6.7：**胶囊长文字支持两行显示**。之前 gLabel 默认单行（numberOfLines=1）+
             adjustsFontSizeToFitWidth 缩字号塞一行，长文字还是被截断（用户 10:54 反馈
@@ -269,4 +275,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.8/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.9/$(basename "$DEB")"

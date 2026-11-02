@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.8";
+static NSString *const CHVersion = @"1.6.9";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -545,15 +545,30 @@ static void CHHandlePillTap(void) {
 
 #pragma mark - 摆放与绘制
 
+// v1.6.9：字号只有一个来源 —— 这里。CHLayOut 每秒都会调 CHApplyPillRect 重算字号，
+// 之前把「长文字压到 2/3」写在 CHPaint 里，下一秒就被这里覆盖回高度÷3（实测 font=15.7），
+// 纯文案又不再重画文字 → 字号弹回原样。现在两边都走 CHPreferredFontSize。
+#define CH_LONG_TEXT_LENGTH 14
+
+static CGFloat CHPreferredFontSize(CGFloat height) {
+    // v1.1.1：原先取高度的一半（125×37 的岛＝18.5pt），用户嫌大；压到 2/3 → 高度 ÷ 3。
+    CGFloat size = height / 3.0;
+    size = MAX(9.0, MIN(size, 16.0));
+    // v1.6.8/1.6.9：要分两行的长文字再压三分之一（用户 11:34「二行文字太大 缩小它」、
+    // 16:30「字号缩小三分之一」）——15.7 → 10.5。短内容（倒计时、一两字提示）不受影响。
+    if (gLabel.text.length > CH_LONG_TEXT_LENGTH) {
+        size = MAX(7.0, size * 2.0 / 3.0);
+    }
+    return size;
+}
+
 // 把胶囊摆到给定矩形上：圆角取半高（岛的胶囊形），字号跟着高度走，宽了自动缩。
 static void CHApplyPillRect(CGRect rect) {
     gPill.frame = rect;
     gPill.layer.cornerRadius = MIN(rect.size.height, rect.size.width) / 2.0;
     gLabel.frame = gPill.bounds;
-    // v1.1.1：原先取高度的一半（125×37 的岛＝18.5pt），用户嫌大；压到 2/3 → 高度 ÷ 3。
-    CGFloat size = rect.size.height / 3.0;
-    size = MAX(9.0, MIN(size, 16.0));
     // 等宽数字：每秒跳动的数字不会左右抖；Medium 比 Semibold 细一号，更像系统岛的观感。
+    CGFloat size = CHPreferredFontSize(rect.size.height);
     gFontSize = size;
     gLabel.font = [UIFont monospacedDigitSystemFontOfSize:size weight:UIFontWeightMedium];
 }
@@ -662,13 +677,10 @@ static void CHPaint(void) {
         gLabel.text = [NSString stringWithFormat:@"%lu 秒后%@", (unsigned long)gRemaining, gLabelText];
     }
 
-    // v1.6.8：按文字长度挑字号 —— 长文字（要两行）用 10.5pt（= 放大后的 15.7 的 2/3，
-    // 用户 11:34 要求「缩小三分之一」）；单行短内容保持 12.5pt 不变。
-    {
-        NSUInteger len = gLabel.text.length;
-        CGFloat size = (len > 14) ? 10.5 : 12.5;
-        gLabel.font = [UIFont monospacedDigitSystemFontOfSize:size weight:UIFontWeightMedium];
-    }
+    // v1.6.9：文字刚换过，字号要按新文字长度立刻重算（长文字分两行 → 压到 2/3）。
+    // 走 CHPreferredFontSize 保证与 CHLayOut 每秒那次重算用的是同一套规则，不会再被覆盖回去。
+    gFontSize = CHPreferredFontSize(gPill.bounds.size.height);
+    gLabel.font = [UIFont monospacedDigitSystemFontOfSize:gFontSize weight:UIFontWeightMedium];
 
     gPill.transform = CGAffineTransformMakeScale(1.08, 1.08);
     [UIView animateWithDuration:0.28
