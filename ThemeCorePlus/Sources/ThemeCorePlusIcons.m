@@ -161,26 +161,10 @@ typedef TCPIconImageInfo TCPIconImageInfoShort;
 // 控制器声明零参 -iconManager，管理器声明零参 -iconImageCache / -folderIconImageCache）。
 // 所以先照旧问视图，拿不到就整条链重取一次。这是「秒加载」的关键那一步：
 // 系统把原图缓存在这个对象里，不清掉，视图重画时还会把原图贴回来。
-// 1.0.38 修正：这里绝不能写 static —— ThemeCorePlusHooks.h 里是外部声明，
-// static 会撞成「static declaration follows non-static declaration」而编译失败；
-// 而且 Store.m / Folders.m 也要用它，static 会让它们链接不到。
-id TCPLiveIconImageCache(void) {
-    static SEL managerGetter = NULL, cacheGetter = NULL;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        managerGetter = NSSelectorFromString(@"iconManager");
-        cacheGetter = NSSelectorFromString(@"iconImageCache");
-    });
-    Class controllerClass = objc_getClass("SBIconController");
-    if (controllerClass == Nil) return nil;
-    SEL sharedSel = NSSelectorFromString(@"sharedInstance");
-    if (![controllerClass respondsToSelector:sharedSel]) return nil;
-    id controller = ((id (*)(id, SEL))objc_msgSend)((id)controllerClass, sharedSel);
-    if (controller == nil || ![controller respondsToSelector:managerGetter]) return nil;
-    id manager = ((id (*)(id, SEL))objc_msgSend)(controller, managerGetter);
-    if (manager == nil || ![manager respondsToSelector:cacheGetter]) return nil;
-    return ((id (*)(id, SEL))objc_msgSend)(manager, cacheGetter);
-}
+// 1.0.38 修正：函数体已搬到 ThemeCorePlusStore.m（2026-11-02）。原因：本文件只进插件本体，
+// 而设置面板的源码清单也含 Store.m —— 定义只留在本文件里，面板链接期就报
+// 「Undefined symbols _TCPLiveIconImageCache」（云编译 run 41405575029）。
+// 本文件照 ThemeCorePlusHooks.h 的 extern 声明调用它即可（同一个 dylib 内解析）。
 
 // 文件夹的图标缓存（同一条链，只是换成 folderIconImageCache）：文件夹收起状态的 mini 拼图
 // 存在这个对象里，主题换了它不会自己重算，要靠它重算一次。

@@ -17,16 +17,34 @@
 #import <math.h>
 // purgeSystemIconCache 里直接发 objc_msgSend（本文件不引 Hooks.h，缺这个头就是隐式声明 → 新 clang 报错）
 #import <objc/message.h>
+// objc_getClass：下面 TCPLiveIconImageCache 搬到本文件后要按类名找 SBIconController
+#import <objc/runtime.h>
 
-// 1.0.38：取「活的」系统图标缓存那个函数定义在 ThemeCorePlusIcons.m（ThemeCorePlusHooks.h 里
-// 也有声明）。这里只做前向声明 —— Store.m 不引 Hooks.h（两个头互相包含没必要），
-// 不声明的话就是隐式函数声明，新 clang 直接当错误（云编译就是这样挂的）。
+// 1.0.38：取「活的」系统图标缓存。**函数体放在本文件**（2026-11-02 从 ThemeCorePlusIcons.m 搬来）。
 //
-// 1.0.38 修云编译（run 41405575029）：Store.m 被**两份** Mach-O 编译 —— 插件本体（含 Icons.m，
-// 有真实定义）与设置面板（面板源码清单里没有 Icons.m，那份要挂站不能进面板），
-// 于是面板链接期报「Undefined symbols _TCPLiveIconImageCache」。
-// 声明成 weak_import：本体里绑到 Icons.m 的真实定义，面板里解析为 NULL，调用点判空走开。
-id TCPLiveIconImageCache(void) __attribute__((weak_import));
+// 为什么搬：Store.m 同时被插件本体与设置面板编译，而面板的源码清单里没有 Icons.m
+// （那份要挂站，必须留在本体）→ 面板链接期报「Undefined symbols _TCPLiveIconImageCache」
+// （云编译 run 41405575029 就是这么挂的）。weak_import 也试过，这条 SDK/ld 组合不放行。
+// 共享源码里自带定义，是唯一不靠链接器施舍的修法。
+// 只做 runtime 查找、不碰任何静态状态，搬过来语义与在 Icons.m 里逐字相同；
+// ThemeCorePlusHooks.h 仍保留 extern 声明，Icons.m / Folders.m 照旧调用。
+id TCPLiveIconImageCache(void) {
+    static SEL managerGetter = NULL, cacheGetter = NULL;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        managerGetter = NSSelectorFromString(@"iconManager");
+        cacheGetter = NSSelectorFromString(@"iconImageCache");
+    });
+    Class controllerClass = objc_getClass("SBIconController");
+    if (controllerClass == Nil) return nil;
+    SEL sharedSel = NSSelectorFromString(@"sharedInstance");
+    if (![controllerClass respondsToSelector:sharedSel]) return nil;
+    id controller = ((id (*)(id, SEL))objc_msgSend)((id)controllerClass, sharedSel);
+    if (controller == nil || ![controller respondsToSelector:managerGetter]) return nil;
+    id manager = ((id (*)(id, SEL))objc_msgSend)(controller, managerGetter);
+    if (manager == nil || ![manager respondsToSelector:cacheGetter]) return nil;
+    return ((id (*)(id, SEL))objc_msgSend)(manager, cacheGetter);
+}
 
 #pragma mark - 图片工作量闸门（1.0.35）
 
@@ -588,8 +606,6 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         dispatch_async(dispatch_get_main_queue(), ^{ [self purgeSystemIconCache]; });
         return;
     }
-    // 本体里这个符号存在；设置面板里它是弱引用（NULL）—— 面板本来也不该去清 SpringBoard 的缓存。
-    if (TCPLiveIconImageCache == NULL) { self.purgeName = @"nolib"; return; }
     id cache = TCPLiveIconImageCache();
     if (cache == nil) { self.purgeName = @"nocache"; return; }
     for (NSString *name in @[ @"purgeCache", @"purgeAllCaches", @"purgeCaches",
