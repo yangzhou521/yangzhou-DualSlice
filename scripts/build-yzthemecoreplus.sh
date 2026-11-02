@@ -123,7 +123,13 @@ fi
 # 凡用到 CGContext… / CGRect… 必须显式列出来（日历墨层就在用）。
 SHARED_FLAGS="-fobjc-arc -miphoneos-version-min=$MIN_IOS -isysroot $SDKROOT -O2 \
 -I$THEOS/vendor/include -I$SRC -I$HOOKS -IYzThemeCorePlus/Headers $BOOTSTRAP_DEFINE"
-FRAMEWORKS="-framework Foundation -framework UIKit -framework CoreGraphics"
+FRAMEWORKS="-framework Foundation -framework UIKit -framework CoreGraphics -framework QuartzCore"
+
+# 交付件的时钟钩子直接引用了 SBIconController 的类符号（Hooks/YzThemeCorePlusMain.m）——
+# 原 Theos 工程靠 Theos 默认的 -undefined dynamic_lookup 蒙过去，本仓库铁律不许整体放开
+# （dlopen 时符号全留空会让「编得过、装上崩」），所以**逐个符号** -U：只放开这一个，
+# 其余未绑定符号照样在链接期报错。run 41405575032 报的就是它。
+TWEAK_LDFLAGS="-Wl,-U,_OBJC_CLASS_\$_SBIconController"
 
 BUILD=build/yzthemecoreplus
 DY="$BUILD/out/$PRODUCT.dylib"
@@ -134,6 +140,7 @@ echo "build-yzthemecoreplus.sh: $(uname -s) $(uname -m)"
 echo "build-yzthemecoreplus.sh: SDKROOT=$SDKROOT"
 echo "build-yzthemecoreplus.sh: THEOS=$THEOS"
 echo "build-yzthemecoreplus.sh: prefs link: $PREFS_LDFLAGS"
+echo "build-yzthemecoreplus.sh: tweak extra link: $TWEAK_LDFLAGS"
 
 rm -rf "$BUILD/thin" "$BUILD/out" "$BUILD/stage"
 mkdir -p "$BUILD/thin" "$BUILD/out" "$BUILD/stage"
@@ -143,7 +150,7 @@ for arch in $ARCHS; do
   echo "build-yzthemecoreplus.sh: compiling $arch (tweak)"
   # shellcheck disable=SC2086
   clang -dynamiclib -arch "$arch" -fvisibility=hidden $SHARED_FLAGS $FRAMEWORKS \
-      $SUBSTRATE_LDFLAGS \
+      $SUBSTRATE_LDFLAGS $TWEAK_LDFLAGS \
       -install_name "$INSTALL_NAME" \
       $TWEAK_SRCS \
       -o "$BUILD/thin/$arch/$PRODUCT.dylib"

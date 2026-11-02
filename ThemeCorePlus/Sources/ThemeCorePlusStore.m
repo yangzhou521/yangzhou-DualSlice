@@ -21,7 +21,12 @@
 // 1.0.38：取「活的」系统图标缓存那个函数定义在 ThemeCorePlusIcons.m（ThemeCorePlusHooks.h 里
 // 也有声明）。这里只做前向声明 —— Store.m 不引 Hooks.h（两个头互相包含没必要），
 // 不声明的话就是隐式函数声明，新 clang 直接当错误（云编译就是这样挂的）。
-id TCPLiveIconImageCache(void);
+//
+// 1.0.38 修云编译（run 41405575029）：Store.m 被**两份** Mach-O 编译 —— 插件本体（含 Icons.m，
+// 有真实定义）与设置面板（面板源码清单里没有 Icons.m，那份要挂站不能进面板），
+// 于是面板链接期报「Undefined symbols _TCPLiveIconImageCache」。
+// 声明成 weak_import：本体里绑到 Icons.m 的真实定义，面板里解析为 NULL，调用点判空走开。
+id TCPLiveIconImageCache(void) __attribute__((weak_import));
 
 #pragma mark - 图片工作量闸门（1.0.35）
 
@@ -583,6 +588,8 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         dispatch_async(dispatch_get_main_queue(), ^{ [self purgeSystemIconCache]; });
         return;
     }
+    // 本体里这个符号存在；设置面板里它是弱引用（NULL）—— 面板本来也不该去清 SpringBoard 的缓存。
+    if (TCPLiveIconImageCache == NULL) { self.purgeName = @"nolib"; return; }
     id cache = TCPLiveIconImageCache();
     if (cache == nil) { self.purgeName = @"nocache"; return; }
     for (NSString *name in @[ @"purgeCache", @"purgeAllCaches", @"purgeCaches",
