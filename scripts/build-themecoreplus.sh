@@ -25,10 +25,10 @@ set -eu
 PRODUCT=ThemeCorePlus
 PREFS_BUNDLE=ThemeCorePlusPrefs
 PACKAGE_ID=com.yangzhou.themecoreplus
-VERSION=1.0.38
+VERSION=1.0.39
 NAME_ZH="主题美化 +"
 AUTHOR=yangzhou
-DESCRIPTION="MarkTheme 式主题引擎：读 SnowBoard / IconBundles 主题原素材，改主屏与文件夹图标、角标底图与系统图片覆盖；支持多主题叠加，面板里点「刷新图标」即可当场生效、不用注销。作者 yangzhou。"
+DESCRIPTION="轻量化桌面图标主题插件，修改图标、图标角标及图标阴影如此轻松，覆盖绝大部分区域，时钟日历可动态图标。兼容 SnowBoard / IconBundles / ThemeCore / Anemone 主题格式，支持多主题叠加，面板点「刷新图标」当场生效、不用注销。作者 yangzhou。"
 MIN_IOS=16.0
 # ───────────────────────────────────────────────────────────────────────
 

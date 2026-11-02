@@ -180,7 +180,8 @@ jobs:
             交付版 **ThemeCore+ 5.3.0**（作者 yangzhou）移植进本仓库后的云编译产物 —— **纯 ObjC 直编**
             （clang arm64 + arm64e 双切片 + lipo + ldid + dpkg-deb），不走 Theos 构建规则。
 
-            这是什么：轻量化桌面图标 + 通知角标（Badge）主题化插件，rootless / roothide 均可，
+            这是什么：轻量化桌面图标主题插件，修改图标、图标角标及图标阴影如此轻松，覆盖绝大部分区域，
+            时钟日历可动态图标；rootless / roothide 均可，
             iOS 15+，只注入 SpringBoard。原始交付件是 Theos 工程（`YzThemeCorePlus/`，`Hooks/*.m` +
             `Sources/*.m` + `Prefs/*.m`），本仓库只做「移植 + 云编译」，**不动它的业务逻辑**。
 

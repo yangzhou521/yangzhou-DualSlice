@@ -31,7 +31,7 @@ PACKAGE_ID=com.yangzhou.themecoreplus
 VERSION=5.3.0
 NAME_ZH="ThemeCore+"
 AUTHOR=yangzhou
-DESCRIPTION="轻量化桌面图标与通知角标主题插件：第三方图标替换 + 桌面通知角标主题化，兼容 ThemeCore/Anemone 主题格式。作者 yangzhou。"
+DESCRIPTION="轻量化桌面图标主题插件，修改图标、图标角标及图标阴影如此轻松，覆盖绝大部分区域，时钟日历可动态图标。兼容 ThemeCore / SnowBoard / Anemone 主题格式。作者 yangzhou。"
 MIN_IOS=15.0
 # ───────────────────────────────────────────────────────────────────────
 
