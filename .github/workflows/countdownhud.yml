@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.10)
+    name: Release (countdownhud-v1.6.11)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,15 +133,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.10
-          name: CountdownHUD v1.6.10
+          tag_name: countdownhud-v1.6.11
+          name: CountdownHUD v1.6.11
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
 
-            v1.6.10：**两行文字排版重做**（用户 21:47 定）。① 两行长文字的字号＝基准字号 × 50%
-            （15.7 → 7.8，原来只压到 2/3＝10.5）；② 文字水平 + 垂直居中；③ 左右各留 5 个字符宽
-            （5ch；ch＝当前字号下 "0" 的前进宽度，同 CSS 定义）的 padding，可用文字宽度＝岛宽 −
-            左右各 5ch（145pt 长岛约 5×4.7=23.4 → 可用约 98pt）；④ 放不下（超两行或高过胶囊）
+            v1.6.11：**两行文字排版重做**（用户 21:47 定排版、22:11 定 padding；1.6.10 的 5ch
+            **作废勿装**）。① 两行长文字的字号＝基准字号 × 50%（15.7 → 7.8，
+            原来只压到 2/3＝10.5）；② 文字水平 + 垂直居中；③ 左右各留 1 个字符宽（1ch；
+            ch＝当前字号下 "0" 的前进宽度，同 CSS 定义）的 padding，可用文字宽度＝岛宽 −
+            左右各 1ch（145pt 长岛约 1×4.7=4.7 → 可用约 135pt）；④ 放不下（超两行或高过胶囊）
             只继续缩字号（下限 5.5pt），**绝不裁切、绝不溢出**，行数仍限两行；⑤ 其他元素
             （倒计时数字、颜色升级、动画、点击跳转）一律不动。诊断串新增
             `pad=` / `avail=` / `ch=` / `lines=`，光看数字就能验收。全项目只有
@@ -284,4 +285,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.10/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.11/$(basename "$DEB")"

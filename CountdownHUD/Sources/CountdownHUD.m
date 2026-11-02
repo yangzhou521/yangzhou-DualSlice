@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.10";
+static NSString *const CHVersion = @"1.6.11";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -177,8 +177,8 @@ static NSString *gSelfWindowDetail = @"-";   // v1.3.0 诊断：我们自己的�
 static CGFloat gFontSize = 12.5;         // v1.1.1：诊断串里报出来，省得靠眼睛量字号
 // v1.6.10：文字排版读数（诊断串报出来，光看数字就能验收）；定义在这里是因为
 // CHWriteDiagnostics 在排版函数之前，变量必须先声明。
-static CGFloat gTextPad = 0.0;           // 左右各留的 padding（pt，＝5ch）
-static CGFloat gTextAvail = 0.0;         // 可用文字宽度（pt，＝岛宽 − 左右各 5ch）
+static CGFloat gTextPad = 0.0;           // 左右各留的 padding（pt，＝1ch）
+static CGFloat gTextAvail = 0.0;         // 可用文字宽度（pt，＝岛宽 − 左右各 1ch）
 static CGFloat gTextCh = 0.0;            // 一个字宽 ch（pt，当前字号下 "0" 的前进宽度）
 static NSUInteger gTextLines = 0;        // 文字实际占几行
 
@@ -558,13 +558,13 @@ static void CHHandlePillTap(void) {
 // CHLayoutLabelContent（内部调 CHPreferredFontSize），一眼看得出只有一处排版。
 #define CH_LONG_TEXT_LENGTH 14
 
-// v1.6.10（用户 21:47 定的排版）：
+// v1.6.11（用户 22:11 定的排版；1.6.10 的 5ch 与中途试过的 2ch 都作废）：
 //   ① 两行长文字的字号＝基准字号 × 50%（原来 15.7 → 7.8）；
 //   ② 文字水平 + 垂直居中；
-//   ③ 左右各留 5 个字符宽（5ch；ch＝当前字号下 "0" 的前进宽度，同 CSS 的 ch 定义），
-//      可用文字宽度＝岛宽 − 左右各 5ch；
+//   ③ 左右各留 1 个字符宽（1ch；ch＝当前字号下 "0" 的前进宽度，同 CSS 的 ch 定义），
+//      可用文字宽度＝岛宽 − 左右各 1ch；
 //   ④ 空间不足只缩字号（下限 5.5pt），**绝不裁切、绝不溢出**，行数仍限两行。
-#define CH_TEXT_PAD_CHARS 5.0
+#define CH_TEXT_PAD_CHARS 1.0
 #define CH_TEXT_MIN_FONT 5.5
 #define CH_TEXT_MAX_LINES 2
 
@@ -656,7 +656,7 @@ static void CHLayoutLabelContent(void) {
 static void CHApplyPillRect(CGRect rect) {
     gPill.frame = rect;
     gPill.layer.cornerRadius = MIN(rect.size.height, rect.size.width) / 2.0;
-    // v1.6.10：字号、5ch 左右 padding、居中都在这一处算（每秒重算也走它，不会覆盖回去）。
+    // v1.6.11：字号、1ch 左右 padding、居中都在这一处算（每秒重算也走它，不会覆盖回去）。
     CHLayoutLabelContent();
 }
 
@@ -764,7 +764,7 @@ static void CHPaint(void) {
         gLabel.text = [NSString stringWithFormat:@"%lu 秒后%@", (unsigned long)gRemaining, gLabelText];
     }
 
-    // v1.6.10：文字刚换过，字号 / 5ch padding / 居中都按新文字立刻重算。
+    // v1.6.11：文字刚换过，字号 / 1ch padding / 居中都按新文字立刻重算。
     // 走 CHLayoutLabelContent 保证与 CHLayOut 每秒那次重算用的是同一套规则，不会再被覆盖回去。
     CHLayoutLabelContent();
 
