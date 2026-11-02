@@ -478,7 +478,7 @@ static void CHWriteDiagnostics(void) {
     NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;want=%d;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@;exec=%@;alertWin=%@;link=%@;taps=%lu",
                          CHVersion, gShows, gLastSeconds,
                          gLabelText.length ? gLabelText : @"-",
-                         gFontSize,
+                         (gLabel != nil ? gLabel.font.pointSize : gFontSize), // v1.6.9：报文字的真实字号，不再报布局变量（1.6.8 就是被它误导）
                          gWantLongIsland ? 1 : 0,
                          gIslandDetail, gIslandSource,
                          (unsigned long)gIslandCandidates,
