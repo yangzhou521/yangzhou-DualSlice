@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.9";
+static NSString *const CHVersion = @"1.6.10";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -175,6 +175,12 @@ static NSUInteger gIslandCandidates = 0;
 static NSString *gIslandWindowDetail = @"-"; // v1.3.0 诊断：岛所在的那个窗口 <类名>|lvl=…
 static NSString *gSelfWindowDetail = @"-";   // v1.3.0 诊断：我们自己的窗口有没有 scene / 层级
 static CGFloat gFontSize = 12.5;         // v1.1.1：诊断串里报出来，省得靠眼睛量字号
+// v1.6.10：文字排版读数（诊断串报出来，光看数字就能验收）；定义在这里是因为
+// CHWriteDiagnostics 在排版函数之前，变量必须先声明。
+static CGFloat gTextPad = 0.0;           // 左右各留的 padding（pt，＝5ch）
+static CGFloat gTextAvail = 0.0;         // 可用文字宽度（pt，＝岛宽 − 左右各 5ch）
+static CGFloat gTextCh = 0.0;            // 一个字宽 ch（pt，当前字号下 "0" 的前进宽度）
+static NSUInteger gTextLines = 0;        // 文字实际占几行
 
 // v1.3.0：窗口必须挂在一块真实的 windowScene 上，否则 iOS 13+ 根本不渲染它。
 // 老写法在量不到 scene 时退回 `[[UIWindow alloc] initWithFrame:]`，那种窗口有 window、
@@ -475,10 +481,11 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
 }
 
 static void CHWriteDiagnostics(void) {
-    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;want=%d;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@;exec=%@;alertWin=%@;link=%@;taps=%lu",
+    NSString *summary = [NSString stringWithFormat:@"v%@;shows=%lu;last=%lus;label=%@;font=%.1f;pad=%.1f;avail=%.1f;ch=%.1f;lines=%lu;want=%d;island=%@;src=%@;cand=%lu;mode=%@;win=%@;islandWin=%@;haptic=%lu;alerts=%lu;ans=%@;exec=%@;alertWin=%@;link=%@;taps=%lu",
                          CHVersion, gShows, gLastSeconds,
                          gLabelText.length ? gLabelText : @"-",
                          (gLabel != nil ? gLabel.font.pointSize : gFontSize), // v1.6.9：报文字的真实字号，不再报布局变量（1.6.8 就是被它误导）
+                         gTextPad, gTextAvail, gTextCh, (unsigned long)gTextLines, // v1.6.10：左右 padding / 可用宽度 / 一个字宽 / 行数
                          gWantLongIsland ? 1 : 0,
                          gIslandDetail, gIslandSource,
                          (unsigned long)gIslandCandidates,
@@ -545,32 +552,112 @@ static void CHHandlePillTap(void) {
 
 #pragma mark - 摆放与绘制
 
-// v1.6.9：字号只有一个来源 —— 这里。CHLayOut 每秒都会调 CHApplyPillRect 重算字号，
+// v1.6.9：字号只有一个来源。CHLayOut 每秒都会调 CHApplyPillRect 重算字号，
 // 之前把「长文字压到 2/3」写在 CHPaint 里，下一秒就被这里覆盖回高度÷3（实测 font=15.7），
-// 纯文案又不再重画文字 → 字号弹回原样。现在两边都走 CHPreferredFontSize。
+// 纯文案又不再重画文字 → 字号弹回原样。现在 CHApplyPillRect 与 CHPaint 都走
+// CHLayoutLabelContent（内部调 CHPreferredFontSize），一眼看得出只有一处排版。
 #define CH_LONG_TEXT_LENGTH 14
+
+// v1.6.10（用户 21:47 定的排版）：
+//   ① 两行长文字的字号＝基准字号 × 50%（原来 15.7 → 7.8）；
+//   ② 文字水平 + 垂直居中；
+//   ③ 左右各留 5 个字符宽（5ch；ch＝当前字号下 "0" 的前进宽度，同 CSS 的 ch 定义），
+//      可用文字宽度＝岛宽 − 左右各 5ch；
+//   ④ 空间不足只缩字号（下限 5.5pt），**绝不裁切、绝不溢出**，行数仍限两行。
+#define CH_TEXT_PAD_CHARS 5.0
+#define CH_TEXT_MIN_FONT 5.5
+#define CH_TEXT_MAX_LINES 2
 
 static CGFloat CHPreferredFontSize(CGFloat height) {
     // v1.1.1：原先取高度的一半（125×37 的岛＝18.5pt），用户嫌大；压到 2/3 → 高度 ÷ 3。
     CGFloat size = height / 3.0;
     size = MAX(9.0, MIN(size, 16.0));
-    // v1.6.8/1.6.9：要分两行的长文字再压三分之一（用户 11:34「二行文字太大 缩小它」、
-    // 16:30「字号缩小三分之一」）——15.7 → 10.5。短内容（倒计时、一两字提示）不受影响。
+    // v1.6.10：要分两行的长文字压到 **50%**（用户 21:47「字号缩为原来 50%」）——15.7 → 7.8。
+    // 短内容（倒计时、一两字提示）不受影响，其他元素一律不动。
     if (gLabel.text.length > CH_LONG_TEXT_LENGTH) {
-        size = MAX(7.0, size * 2.0 / 3.0);
+        size = MAX(6.0, size * 0.5);
     }
     return size;
+}
+
+// 一个字宽：SF 等宽数字字体里用 "0" 的前进宽度代表 ch（与 CSS 的 ch 同义）。
+static CGFloat CHCharWidth(UIFont *font) {
+    if (font == nil) return 0.0;
+    return [@"0" sizeWithAttributes:@{NSFontAttributeName: font}].width;
+}
+
+// 按 UILabel 同样的换行规则量：给定宽度下这段文字要占几行、多高。
+static void CHMeasureText(NSString *text, UIFont *font, CGFloat width,
+                          CGFloat *outHeight, NSUInteger *outLines) {
+    if (outHeight) *outHeight = 0.0;
+    if (outLines) *outLines = 0;
+    if (text.length == 0 || width <= 0.0) return;
+    CGRect rect = [text boundingRectWithSize:CGSizeMake(width, CGFLOAT_MAX)
+                                     options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
+                                  attributes:@{NSFontAttributeName: font}
+                                     context:nil];
+    CGFloat height = ceil(rect.size.height);
+    CGFloat lineHeight = ceil(font.lineHeight);
+    NSUInteger lines = lineHeight > 0.0 ? (NSUInteger)((height + lineHeight * 0.5) / lineHeight) : 1;
+    if (lines < 1) lines = 1;
+    if (outHeight) *outHeight = height;
+    if (outLines) *outLines = lines;
+}
+
+// v1.6.10：字号、padding、居中一次算好 —— 全项目**只有这里**改 gLabel 的 frame/font，
+// 免得又被 CHLayOut 每秒那次重算覆盖回去（1.6.8 的坑）。
+static void CHLayoutLabelContent(void) {
+    if (gLabel == nil || gPill == nil) return;
+    CGFloat pillW = gPill.bounds.size.width;
+    CGFloat pillH = gPill.bounds.size.height;
+    NSString *text = gLabel.text ?: @"";
+
+    CGFloat size = CHPreferredFontSize(pillH);
+    UIFont *font = [UIFont monospacedDigitSystemFontOfSize:size weight:UIFontWeightMedium];
+    CGFloat ch = CHCharWidth(font);
+    CGFloat pad = CH_TEXT_PAD_CHARS * ch;
+    CGFloat avail = pillW - 2.0 * pad;
+    if (avail < 24.0) {
+        // 极窄岛兜底：给文字区留 24pt，padding 跟着让路；宁可 padding 小，也不裁字。
+        avail = MIN(pillW, 24.0);
+        pad = MAX(0.0, (pillW - avail) / 2.0);
+    }
+
+    CGFloat height = 0.0;
+    NSUInteger lines = 0;
+    CHMeasureText(text, font, avail, &height, &lines);
+    // 放不下（超两行或高过胶囊）→ 只缩字号，不裁切、不加行。
+    NSUInteger guard = 0;
+    while (size > CH_TEXT_MIN_FONT && (lines > CH_TEXT_MAX_LINES || height > pillH)) {
+        size = MAX(CH_TEXT_MIN_FONT, size * 0.92);
+        font = [UIFont monospacedDigitSystemFontOfSize:size weight:UIFontWeightMedium];
+        ch = CHCharWidth(font);
+        pad = CH_TEXT_PAD_CHARS * ch;
+        avail = pillW - 2.0 * pad;
+        if (avail < 24.0) {
+            avail = MIN(pillW, 24.0);
+            pad = MAX(0.0, (pillW - avail) / 2.0);
+        }
+        CHMeasureText(text, font, avail, &height, &lines);
+        if (++guard > 40) break;
+    }
+
+    gFontSize = size;
+    gTextPad = pad;
+    gTextAvail = avail;
+    gTextCh = ch;
+    gTextLines = lines;
+    gLabel.font = font;
+    // 居中：左右各让出 pad（对称 → 水平居中），高度给整条胶囊（UILabel 自己把文字块竖直居中）。
+    gLabel.frame = CGRectMake(pad, 0.0, avail, pillH);
 }
 
 // 把胶囊摆到给定矩形上：圆角取半高（岛的胶囊形），字号跟着高度走，宽了自动缩。
 static void CHApplyPillRect(CGRect rect) {
     gPill.frame = rect;
     gPill.layer.cornerRadius = MIN(rect.size.height, rect.size.width) / 2.0;
-    gLabel.frame = gPill.bounds;
-    // 等宽数字：每秒跳动的数字不会左右抖；Medium 比 Semibold 细一号，更像系统岛的观感。
-    CGFloat size = CHPreferredFontSize(rect.size.height);
-    gFontSize = size;
-    gLabel.font = [UIFont monospacedDigitSystemFontOfSize:size weight:UIFontWeightMedium];
+    // v1.6.10：字号、5ch 左右 padding、居中都在这一处算（每秒重算也走它，不会覆盖回去）。
+    CHLayoutLabelContent();
 }
 
 static void CHLayOut(void) {
@@ -677,10 +764,9 @@ static void CHPaint(void) {
         gLabel.text = [NSString stringWithFormat:@"%lu 秒后%@", (unsigned long)gRemaining, gLabelText];
     }
 
-    // v1.6.9：文字刚换过，字号要按新文字长度立刻重算（长文字分两行 → 压到 2/3）。
-    // 走 CHPreferredFontSize 保证与 CHLayOut 每秒那次重算用的是同一套规则，不会再被覆盖回去。
-    gFontSize = CHPreferredFontSize(gPill.bounds.size.height);
-    gLabel.font = [UIFont monospacedDigitSystemFontOfSize:gFontSize weight:UIFontWeightMedium];
+    // v1.6.10：文字刚换过，字号 / 5ch padding / 居中都按新文字立刻重算。
+    // 走 CHLayoutLabelContent 保证与 CHLayOut 每秒那次重算用的是同一套规则，不会再被覆盖回去。
+    CHLayoutLabelContent();
 
     gPill.transform = CGAffineTransformMakeScale(1.08, 1.08);
     [UIView animateWithDuration:0.28

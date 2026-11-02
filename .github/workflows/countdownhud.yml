@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.9)
+    name: Release (countdownhud-v1.6.10)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,10 +133,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.9
-          name: CountdownHUD v1.6.9
+          tag_name: countdownhud-v1.6.10
+          name: CountdownHUD v1.6.10
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            v1.6.10：**两行文字排版重做**（用户 21:47 定）。① 两行长文字的字号＝基准字号 × 50%
+            （15.7 → 7.8，原来只压到 2/3＝10.5）；② 文字水平 + 垂直居中；③ 左右各留 5 个字符宽
+            （5ch；ch＝当前字号下 "0" 的前进宽度，同 CSS 定义）的 padding，可用文字宽度＝岛宽 −
+            左右各 5ch（145pt 长岛约 5×4.7=23.4 → 可用约 98pt）；④ 放不下（超两行或高过胶囊）
+            只继续缩字号（下限 5.5pt），**绝不裁切、绝不溢出**，行数仍限两行；⑤ 其他元素
+            （倒计时数字、颜色升级、动画、点击跳转）一律不动。诊断串新增
+            `pad=` / `avail=` / `ch=` / `lines=`，光看数字就能验收。全项目只有
+            `CHLayoutLabelContent()` 改 gLabel 的 frame/font，CHApplyPillRect 与 CHPaint 都走它。
 
             v1.6.9：**修「长文字字号弹回去」**。v1.6.8 把「长文字压到 2/3」写在 CHPaint 里，
             但 `CHLayOut`（每秒都跑）会调 `CHApplyPillRect` 按高度重算字号，把 10.5 覆盖回
@@ -275,4 +284,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.9/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.10/$(basename "$DEB")"
