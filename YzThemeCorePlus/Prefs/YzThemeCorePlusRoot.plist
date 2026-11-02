@@ -23,8 +23,14 @@
         </dict>
         <dict>
             <key>cell</key><string>PSLinkCell</string>
-            <key>label</key><string>选择主题</string>
+            <key>label</key><string>图标主题</string>
             <key>detail</key><string>YzThemeCorePlusThemeListController</string>
+            <key>isController</key><true/>
+        </dict>
+        <dict>
+            <key>cell</key><string>PSLinkCell</string>
+            <key>label</key><string>角标主题</string>
+            <key>detail</key><string>YzThemeCorePlusBadgeThemeListController</string>
             <key>isController</key><true/>
         </dict>
         <dict>

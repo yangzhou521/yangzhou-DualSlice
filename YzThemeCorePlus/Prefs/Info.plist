@@ -6,8 +6,8 @@
     <key>CFBundleIdentifier</key><string>com.yangzhou.themecoreplus.preferences</string>
     <key>CFBundleName</key><string>ThemeCore+</string>
     <key>CFBundlePackageType</key><string>BNDL</string>
-    <key>CFBundleShortVersionString</key><string>5.2.0</string>
-    <key>CFBundleVersion</key><string>5.2.0</string>
+    <key>CFBundleShortVersionString</key><string>5.3.0</string>
+    <key>CFBundleVersion</key><string>5.3.0</string>
     <key>NSPrincipalClass</key><string>YzThemeCorePlusRootListController</string>
 </dict>
 </plist>

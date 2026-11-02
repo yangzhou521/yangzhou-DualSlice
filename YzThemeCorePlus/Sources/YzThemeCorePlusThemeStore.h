@@ -38,6 +38,11 @@
 // Preference panel support (called rarely).
 - (NSArray<NSDictionary *> *)yz_themecoreplus_availableThemes;
 - (NSUInteger)yz_themecoreplus_iconCountForThemeAtPath:(NSString *)path;
+
+// 面板计数按「槽」分辨：图标槽数 icons/ + IconBundles/ + Bundles/，角标槽数 Badges/ +
+// Bundles/com.apple.springboard/ 里的底板图（2026-11-02 用户报那个「(0 个图标)」的修法）。
++ (NSUInteger)yz_themecoreplus_countIconsInThemePath:(NSString *)themePath;
++ (NSUInteger)yz_themecoreplus_countBadgesInThemePath:(NSString *)themePath;
 - (NSString *)yz_themecoreplus_activeThemeName;
 - (UIColor *)yz_themecoreplus_colorWithCSSString:(NSString *)css;
 

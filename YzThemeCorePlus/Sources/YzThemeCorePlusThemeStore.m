@@ -4,6 +4,7 @@
 #import "YzThemeCorePlusPrivate.h"   // UIKit 私有圆角方法 bezierPathWithRoundedRect:byRoundingCorners:cornerInsets: 的声明
 
 // Directory conventions kept compatible with the existing ecosystem:
+//   <jbroot>/Library/ThemeCore/<Theme>/IconBundles/<bundleid>[-large][@2x].png (SnowBoard/IconBundles)
 //   <jbroot>/Library/ThemeCore/<Theme>/icons/<bundleid>@2x.png          (ThemeCore)
 //   <jbroot>/Library/Themes/<Name>.theme/Bundles/<bundleid>/icon@2x.png (Anemone)
 //   /var/mobile/Library/Themes/<Name>.theme/...                         (mobile themes)
@@ -32,14 +33,26 @@ static NSDictionary *yz_themecoreplus_themeInfoPlistAtPath(NSString *themePath) 
     return @{};
 }
 
+static NSString *yz_themecoreplus_themeNameValue(id value) {
+    return ([value isKindOfClass:[NSString class]] && [(NSString *)value length] > 0)
+        ? (NSString *)value : nil;
+}
+
+static NSDictionary *yz_themecoreplus_badgeSettingsFromInfo(NSDictionary *info) {
+    id settings = info[@"BadgeSettings"] ?: info[@"ThemeLib-BadgeSettings"];
+    return [settings isKindOfClass:[NSDictionary class]] ? settings : @{};
+}
+
 @implementation YzThemeCorePlusThemeStore {
     NSUInteger _generation;
     NSCache *_renderCache;
     // bundleID(lowercased) -> @{@"3": path, @"2": path, @"0": path}
     NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *_iconPaths;
     NSDictionary<NSString *, NSString *> *_badgeBackgroundPaths;
-    NSDictionary *_themeInfo;
-    NSString *_activeThemePath;
+    NSDictionary *_themeInfo;          // 图标主题的 Info.plist（可能为空）
+    NSDictionary *_badgeThemeInfo;     // 角标主题的 Info.plist
+    NSString *_activeThemePath;        // 图标主题的目录
+    NSString *_badgeThemePath;         // 角标主题的目录
     NSDictionary *_badgeSettings;
     BOOL _hasBadgeConfiguration;
 }
@@ -80,37 +93,44 @@ static NSDictionary *yz_themecoreplus_themeInfoPlistAtPath(NSString *themePath) 
 }
 
 - (void)yz_themecoreplus_reload {
-    NSString *activeName = [[YzThemeCorePlusConfig yz_themecoreplus_shared]
-        yz_themecoreplus_valueForKey:@"ActiveTheme" defaultValue:nil];
-    activeName = [activeName isKindOfClass:[NSString class]] && activeName.length > 0 ? activeName : nil;
+    YzThemeCorePlusConfig *config = [YzThemeCorePlusConfig yz_themecoreplus_shared];
+    // 图标与角标各一个槽（用户 2026-11-02 16:10 报的「只能二选一」）。
+    // 旧键 ActiveTheme 保留兼容：哪个槽没设，就用它补哪个。
+    NSString *legacy = yz_themecoreplus_themeNameValue(
+        [config yz_themecoreplus_valueForKey:@"ActiveTheme" defaultValue:nil]);
+    NSString *iconName = yz_themecoreplus_themeNameValue(
+        [config yz_themecoreplus_valueForKey:@"IconTheme" defaultValue:nil]) ?: legacy;
+    NSString *badgeName = yz_themecoreplus_themeNameValue(
+        [config yz_themecoreplus_valueForKey:@"BadgeTheme" defaultValue:nil]) ?: legacy;
 
-    NSString *themePath = nil;
-    if (activeName) {
-        NSFileManager *manager = [NSFileManager defaultManager];
-        for (NSString *root in yz_themecoreplus_themeRootDirectories()) {
-            for (NSString *suffix in @[@"", @".theme"]) {
-                NSString *candidate = [[root stringByAppendingPathComponent:activeName]
-                    stringByAppendingString:suffix];
-                if ([manager fileExistsAtPath:candidate]) {
-                    themePath = candidate;
-                    break;
-                }
-            }
-            if (themePath) break;
-        }
-    }
+    NSString *iconPath = [self.class yz_themecoreplus_themePathForName:iconName];
+    NSString *badgePath = [self.class yz_themecoreplus_themePathForName:badgeName];
 
     NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *iconPaths = @{};
     NSDictionary<NSString *, NSString *> *badgePaths = @{};
     NSDictionary *themeInfo = @{};
+    NSDictionary *badgeThemeInfo = @{};
     NSDictionary *badgeSettings = @{};
 
-    if (themePath) {
-        themeInfo = yz_themecoreplus_themeInfoPlistAtPath(themePath);
-        id settings = themeInfo[@"BadgeSettings"] ?: themeInfo[@"ThemeLib-BadgeSettings"];
-        if ([settings isKindOfClass:[NSDictionary class]]) badgeSettings = settings;
-        iconPaths = [self.class yz_themecoreplus_iconMapForThemePath:themePath];
-        badgePaths = [self.class yz_themecoreplus_badgeMapForThemePath:themePath];
+    if (iconPath) {
+        themeInfo = yz_themecoreplus_themeInfoPlistAtPath(iconPath);
+        iconPaths = [self.class yz_themecoreplus_iconMapForThemePath:iconPath];
+    }
+    if (badgePath) {
+        badgeThemeInfo = yz_themecoreplus_themeInfoPlistAtPath(badgePath);
+        badgePaths = [self.class yz_themecoreplus_badgeMapForThemePath:badgePath];
+        badgeSettings = yz_themecoreplus_badgeSettingsFromInfo(badgeThemeInfo);
+    }
+
+    // 旧主题一身两用：图标槽里可能有角标素材，角标槽里可能有图标素材。
+    // 缺的那一边互相补位，免得用户只选了一个槽就丢掉另一类资源。
+    if (iconPaths.count == 0 && badgePath) {
+        iconPaths = [self.class yz_themecoreplus_iconMapForThemePath:badgePath];
+        if (themeInfo.count == 0) themeInfo = badgeThemeInfo;
+    }
+    if (badgePaths.count == 0 && badgeSettings.count == 0 && iconPath) {
+        badgePaths = [self.class yz_themecoreplus_badgeMapForThemePath:iconPath];
+        badgeSettings = yz_themecoreplus_badgeSettingsFromInfo(themeInfo);
     }
 
     BOOL hasBadge = badgePaths.count > 0 || badgeSettings.count > 0;
@@ -119,11 +139,28 @@ static NSDictionary *yz_themecoreplus_themeInfoPlistAtPath(NSString *themePath) 
     _iconPaths = iconPaths;
     _badgeBackgroundPaths = badgePaths;
     _themeInfo = themeInfo;
+    _badgeThemeInfo = badgeThemeInfo;
     _badgeSettings = badgeSettings;
     _hasBadgeConfiguration = hasBadge;
-    _activeThemePath = themePath;
+    _activeThemePath = iconPath;
+    _badgeThemePath = badgePath;
     [_renderCache removeAllObjects];
     _generation = _generation + 1;
+}
+
+// 主题名 → 目录（先 /Library/ThemeCore，再 /Library/Themes，最后 /var/mobile/Library/Themes；
+// 目录名带不带 .theme 都认）。
++ (NSString *)yz_themecoreplus_themePathForName:(NSString *)name {
+    if (name.length == 0) return nil;
+    NSFileManager *manager = [NSFileManager defaultManager];
+    for (NSString *root in yz_themecoreplus_themeRootDirectories()) {
+        for (NSString *suffix in @[@"", @".theme"]) {
+            NSString *candidate = [[root stringByAppendingPathComponent:name]
+                stringByAppendingString:suffix];
+            if ([manager fileExistsAtPath:candidate]) return candidate;
+        }
+    }
+    return nil;
 }
 
 #pragma mark - Resource maps
@@ -158,6 +195,32 @@ static NSDictionary *yz_themecoreplus_themeInfoPlistAtPath(NSString *themePath) 
         registerVariant(base, scale, [iconsDir stringByAppendingPathComponent:file]);
     }
 
+    // SnowBoard / IconBundles 格式（2026-11-02 加）：IconBundles/<bid>-large.png = 高分辨率那档，
+    // <bid>@Nx.png 自带档位，<bid>.png = 任意档（按 0 记，取图时兜底）。
+    // 本机「液态玻璃」的 84 个图标全在这里 —— 旧版只读 icons/ 与 Bundles/，一个都认不到，
+    // 于是面板显示「(0 个图标)」、桌面一个图标也不换。这是两个 bug 的同一个根。
+    NSString *iconBundlesDir = [themePath stringByAppendingPathComponent:@"IconBundles"];
+    for (NSString *file in [manager contentsOfDirectoryAtPath:iconBundlesDir error:nil]) {
+        if (![file.pathExtension.lowercaseString isEqualToString:@"png"]) continue;
+        NSString *base = [file stringByDeletingPathExtension];
+        if ([base hasSuffix:@"~iphone"]) base = [base substringToIndex:base.length - 7];
+        CGFloat scale = 0;
+        if ([base hasSuffix:@"-large"]) {
+            base = [base substringToIndex:base.length - 6];
+            scale = 3;
+        }
+        NSRange at = [base rangeOfString:@"@" options:NSBackwardsSearch];
+        if (at.location != NSNotFound) {
+            NSString *suffix = [base substringFromIndex:at.location];
+            base = [base substringToIndex:at.location];
+            if ([suffix isEqualToString:@"@3x"]) scale = 3;
+            else if ([suffix isEqualToString:@"@2x"]) scale = 2;
+            else if ([suffix isEqualToString:@"@1x"]) scale = 1;
+            else continue;
+        }
+        registerVariant(base, scale, [iconBundlesDir stringByAppendingPathComponent:file]);
+    }
+
     NSString *bundlesDir = [themePath stringByAppendingPathComponent:@"Bundles"];
     for (NSString *bundleID in [manager contentsOfDirectoryAtPath:bundlesDir error:nil]) {
         NSString *bundleDir = [bundlesDir stringByAppendingPathComponent:bundleID];
@@ -177,23 +240,38 @@ static NSDictionary *yz_themecoreplus_themeInfoPlistAtPath(NSString *themePath) 
     return map;
 }
 
+// 文件名 → 它在 SnowBoard/Anemone 里声明的档位（0 = 没写档位，取图时按 3→2→0 兜底）。
+static CGFloat yz_themecoreplus_scaleFromFileName(NSString *file) {
+    NSString *base = [file stringByDeletingPathExtension];
+    if ([base hasSuffix:@"-large"]) return 3;
+    NSRange at = [base rangeOfString:@"@" options:NSBackwardsSearch];
+    if (at.location == NSNotFound) return 0;
+    NSString *suffix = [base substringFromIndex:at.location];
+    if ([suffix hasPrefix:@"@3x"]) return 3;
+    if ([suffix hasPrefix:@"@2x"]) return 2;
+    if ([suffix hasPrefix:@"@1x"]) return 1;
+    return 0;
+}
+
+static BOOL yz_themecoreplus_isBadgeBackgroundFileName(NSString *file) {
+    NSString *lower = file.lowercaseString;
+    if (![lower hasSuffix:@".png"]) return NO;
+    // SBBadgeBG / SBBadgeBackground / BadgeBG 三种常见命名都收。
+    return [lower containsString:@"badgebg"] || [lower containsString:@"badgebackground"];
+}
+
 + (NSDictionary<NSString *, NSString *> *)yz_themecoreplus_badgeMapForThemePath:(NSString *)themePath {
-    // Candidates paired with the scale their filename declares (0 = unnamed).
-    NSArray<NSString *> *candidates = @[
-        @"Badges/SBBadgeBG@3x.png", @"Badges/SBBadgeBG@2x.png", @"Badges/SBBadgeBG.png",
-        @"Bundles/com.apple.springboard/SBBadgeBG@3x.png",
-        @"Bundles/com.apple.springboard/SBBadgeBG@2x.png",
-        @"Bundles/com.apple.springboard/SBBadgeBG.png",
-        @"SBBadgeBG@3x.png", @"SBBadgeBG@2x.png", @"SBBadgeBG.png",
-    ];
-    CGFloat scales[] = {3, 2, 0, 3, 2, 0, 3, 2, 0};
     NSMutableDictionary<NSString *, NSString *> *map = [NSMutableDictionary dictionary];
     NSFileManager *manager = [NSFileManager defaultManager];
-    for (NSUInteger index = 0; index < candidates.count; index++) {
-        NSString *path = [themePath stringByAppendingPathComponent:candidates[index]];
-        if (![manager fileExistsAtPath:path]) continue;
-        NSString *key = @(scales[index]).stringValue;
-        if (![map objectForKey:key]) map[key] = path;
+    NSArray<NSString *> *dirs = @[@"Badges", @"Bundles/com.apple.springboard", @""];
+    for (NSString *dir in dirs) {
+        NSString *dirPath = dir.length ? [themePath stringByAppendingPathComponent:dir] : themePath;
+        NSArray<NSString *> *files = [manager contentsOfDirectoryAtPath:dirPath error:nil] ?: @[];
+        for (NSString *file in files) {
+            if (!yz_themecoreplus_isBadgeBackgroundFileName(file)) continue;
+            NSString *key = @(yz_themecoreplus_scaleFromFileName(file)).stringValue;
+            if (!map[key]) map[key] = [dirPath stringByAppendingPathComponent:file];
+        }
     }
     return map;
 }
@@ -309,6 +387,20 @@ static NSDictionary *yz_themecoreplus_themeInfoPlistAtPath(NSString *themePath) 
     for (NSString *file in [manager contentsOfDirectoryAtPath:iconsDir error:nil]) {
         if ([file.pathExtension.lowercaseString isEqualToString:@"png"]) count++;
     }
+    // IconBundles/：一个 bundle 只算一次（-large 与 @2x 同属一个图标）。
+    NSMutableSet<NSString *> *iconBundlesIDs = [NSMutableSet set];
+    NSString *iconBundlesDir = [themePath stringByAppendingPathComponent:@"IconBundles"];
+    for (NSString *file in [manager contentsOfDirectoryAtPath:iconBundlesDir error:nil]) {
+        if (![file.pathExtension.lowercaseString isEqualToString:@"png"]) continue;
+        NSString *base = [file stringByDeletingPathExtension];
+        if ([base hasSuffix:@"~iphone"]) base = [base substringToIndex:base.length - 7];
+        if ([base hasSuffix:@"-large"]) base = [base substringToIndex:base.length - 6];
+        NSRange at = [base rangeOfString:@"@" options:NSBackwardsSearch];
+        if (at.location != NSNotFound) base = [base substringToIndex:at.location];
+        if (base.length) [iconBundlesIDs addObject:base.lowercaseString];
+    }
+    count += iconBundlesIDs.count;
+
     NSString *bundlesDir = [themePath stringByAppendingPathComponent:@"Bundles"];
     for (NSString *bundleID in [manager contentsOfDirectoryAtPath:bundlesDir error:nil]) {
         NSString *bundleDir = [bundlesDir stringByAppendingPathComponent:bundleID];
@@ -323,6 +415,10 @@ static NSDictionary *yz_themecoreplus_themeInfoPlistAtPath(NSString *themePath) 
         }
     }
     return count;
+}
+
++ (NSUInteger)yz_themecoreplus_countBadgesInThemePath:(NSString *)themePath {
+    return [self yz_themecoreplus_badgeMapForThemePath:themePath].count;
 }
 
 + (NSArray<NSDictionary *> *)yz_themecoreplus_scanThemes {
@@ -346,6 +442,7 @@ static NSDictionary *yz_themecoreplus_themeInfoPlistAtPath(NSString *themePath) 
                 @"name": name,
                 @"path": path,
                 @"iconCount": @([self yz_themecoreplus_countIconsInThemePath:path]),
+                @"badgeCount": @([self yz_themecoreplus_countBadgesInThemePath:path]),
             }];
         }
     }

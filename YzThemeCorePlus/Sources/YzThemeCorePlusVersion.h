@@ -6,5 +6,5 @@
 //   == 工作流 env.VERSION（tag 名由它推导）
 // 三处不一致就不编、不发（2026-10-30 那次只改一处，把新包发进了旧 tag 的 Release）。
 #ifndef YZ_THEMECOREPLUS_VERSION
-#define YZ_THEMECOREPLUS_VERSION "5.2.0"
+#define YZ_THEMECOREPLUS_VERSION "5.3.0"
 #endif

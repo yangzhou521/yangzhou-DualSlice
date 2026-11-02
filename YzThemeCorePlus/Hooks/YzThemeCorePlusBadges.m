@@ -123,17 +123,46 @@ static id repl_textFont(id self, SEL _cmd, NSString *text, UIFont *font, BOOL hi
 static id repl_text(id self, SEL _cmd, NSString *text, BOOL highlighted) {
     return yz_themecoreplus_textImage(text, nil, highlighted) ?: orig_text(self, _cmd, text, highlighted);
 }
+// 取底板视图：KVC 键在别的版本上可能不存在，取不到就返回 nil（绝不在 SpringBoard 里抛异常）。
+static UIView *yz_themecoreplus_badgeBackgroundView(id self) {
+    @try {
+        id view = [self valueForKey:@"_backgroundView"];
+        return [view isKindOfClass:[UIView class]] ? view : nil;
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
+static const NSInteger kYzBadgeBackgroundTag = 0x7A7A;
+
 static void repl_layoutSubviews(id self, SEL _cmd) {
     orig_layoutSubviews(self, _cmd);
     if (!yz_themecoreplus_badgeActive()) return;
     UIImage *bg = [[YzThemeCorePlusThemeStore yz_themecoreplus_shared]
         yz_themecoreplus_badgeBackgroundImageForScale:[UIScreen mainScreen].scale];
     if (!bg) return;
-    UIView *bgView = [self valueForKey:@"_backgroundView"];
+    UIView *bgView = yz_themecoreplus_badgeBackgroundView(self);
+    if (!bgView) return;
+    // iOS 16 的底板就是 backgroundColor 上的 systemRed（不走图片）：先清掉，否则主题底板下面
+    // 还压着一层红底（用户 2026-11-02 报的「角标不加载素材 / 双层」观感的根子）。
+    bgView.backgroundColor = [UIColor clearColor];
     if ([bgView isKindOfClass:[UIImageView class]]) {
-        [(UIImageView *)bgView setImage:bg];
-        [bgView setBackgroundColor:[UIColor clearColor]];
+        UIImageView *imageView = (UIImageView *)bgView;
+        imageView.image = bg;
+        imageView.contentMode = UIViewContentModeScaleToFill;
+        return;
     }
+    // 不是 UIImageView（版本之间类名不同）就自己塞一张；重复 layout 只换图，不重复添加。
+    UIImageView *imageView = [bgView viewWithTag:kYzBadgeBackgroundTag];
+    if (!imageView) {
+        imageView = [[UIImageView alloc] initWithFrame:bgView.bounds];
+        imageView.tag = kYzBadgeBackgroundTag;
+        imageView.contentMode = UIViewContentModeScaleToFill;
+        imageView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [bgView addSubview:imageView];
+    }
+    imageView.image = bg;
+    imageView.frame = bgView.bounds;
 }
 
 __attribute__((constructor))

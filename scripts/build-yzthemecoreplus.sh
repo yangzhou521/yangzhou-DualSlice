@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# YzThemeCorePlus —— 交付版 ThemeCore+ 5.2.0（Theos 工程）移植进本仓库后的构建脚本。
+# YzThemeCorePlus —— 交付版 ThemeCore+ 5.3.0（Theos 工程）移植进本仓库后的构建脚本。
 #
 # 形状照抄本仓库 scripts/build-themecoreplus.sh（那份在 CI 上跑通过）：clang 直编，不用 Theos
 # 的构建规则，只跑在 CI 的 macOS runner 上。开发机是 iPhone10,1（A11），没有可用工具链，
@@ -28,7 +28,7 @@ set -eu
 PRODUCT=YzThemeCorePlus
 PREFS_BUNDLE=YzThemeCorePlusPrefs
 PACKAGE_ID=com.yangzhou.themecoreplus
-VERSION=5.2.0
+VERSION=5.3.0
 NAME_ZH="ThemeCore+"
 AUTHOR=yangzhou
 DESCRIPTION="轻量化桌面图标与通知角标主题插件：第三方图标替换 + 桌面通知角标主题化，兼容 ThemeCore/Anemone 主题格式。作者 yangzhou。"

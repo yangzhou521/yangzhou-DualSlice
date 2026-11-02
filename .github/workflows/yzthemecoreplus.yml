@@ -1,4 +1,4 @@
-# YzThemeCorePlus —— 交付版 ThemeCore+ 5.2.0 的双切片（arm64 + arm64e）deb 云编译与发布。
+# YzThemeCorePlus —— 交付版 ThemeCore+ 5.3.0 的双切片（arm64 + arm64e）deb 云编译与发布。
 #
 # 为什么必须是云编译：开发机是 iPhone10,1（A11 / iOS 16.7.16 / roothide），A11 缺 FEAT_LRCPC，
 # 装不了任何 Command Line Tools，本机编不出任何东西。macOS runner 上 clang 直编 arm64 + arm64e
@@ -52,7 +52,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   SDKROOT: ${{ github.workspace }}/theos/sdks/iPhoneOS16.5.sdk
   APELIN_PACKAGE_DIR: packages
-  VERSION: 5.2.0
+  VERSION: 5.3.0
 
 jobs:
   build:
@@ -177,7 +177,7 @@ jobs:
           tag_name: yzthemecoreplus-v${{ env.VERSION }}${{ inputs.kind == 'rootless' && '-rootless' || '' }}
           name: YzThemeCorePlus (ThemeCore+) v${{ env.VERSION }}${{ inputs.kind == 'rootless' && ' (rootless)' || '' }}
           body: |
-            交付版 **ThemeCore+ 5.2.0**（作者 yangzhou）移植进本仓库后的云编译产物 —— **纯 ObjC 直编**
+            交付版 **ThemeCore+ 5.3.0**（作者 yangzhou）移植进本仓库后的云编译产物 —— **纯 ObjC 直编**
             （clang arm64 + arm64e 双切片 + lipo + ldid + dpkg-deb），不走 Theos 构建规则。
 
             这是什么：轻量化桌面图标 + 通知角标（Badge）主题化插件，rootless / roothide 均可，

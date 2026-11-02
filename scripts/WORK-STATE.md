@@ -25,7 +25,18 @@
 - **卡谁**：等用户指示（装包/注销才需点头）。
 - **跨线对齐（2026-11-02 15:45）**：已给并线 `11ac7e15` 发对齐回执。边界：本线只碰 `ThemeCorePlus/Sources/ThemeCorePlusIcons.m`、`ThemeCorePlusStore.m` + 构建脚本/工作流；`Prefs/`、`ThemeCorePlusHooks.m`、YzThemeCorePlus 交付版文件不碰；共享文件 `scripts/ci-err.js` 的 sha 各自改回自己的，别互相覆盖。
 
-## 并行的第二件事：交付版 ThemeCore+ 5.2.0 移植（本线，2026-11-02 14:5x）
+## 并行的第二件事：交付版 ThemeCore+ 5.3.0（本线，2026-11-02 16:4x）
+
+- **目标**：修用户 16:10 报的三个 bug（①图标没生效 ②图标/角标面板只能二选一 ③角标行显示「(0 个图标)」不加载素材），**只编不装**。
+- **做了什么**：
+  - ① `YzThemeCorePlus/Hooks/YzThemeCorePlusIcons.m`：从一站扩到**四站**（`iconImageWithInfo:`、`unmaskedIconImageWithInfo:`、`iconImageWithImageInfo:`、`generateIconImageWithInfo:`），按「真正声明该选择器的那一层」挂（继承来的不挂，避免空原实现指针崩溃）；repl 里 `respondsToSelector:applicationBundleID` 守卫，非 App 图标放行。
+  - ② `Prefs/` + `Sources/`：图标与角标**各一个槽**（`IconTheme` / `BadgeTheme`，旧键 `ActiveTheme` 只做兜底），`Root.plist` 拆「图标主题」「角标主题」两行，计数按槽分别统计。
+  - ③ `Sources/YzThemeCorePlusThemeStore.m`：素材扫描补 **SnowBoard / IconBundles**（本机「液态玻璃」84 个图标全在这）、角标底板按 `Badges/` + `Bundles/com.apple.springboard/` 扫并认 ×3/×2/×1 档位。
+  - 另：`Hooks/YzThemeCorePlusBadges.m` 的 `layoutSubviews` 兜底 —— `_backgroundView` 不是 UIImageView 时清红底并塞 tagged 子 UIImageView（KVC 取值加 `@try`）。
+- **版本**：三处 + 面板 bundle 已同步 **5.3.0**（`Sources/YzThemeCorePlusVersion.h`、`scripts/build-yzthemecoreplus.sh`、工作流 `env.VERSION`、`Prefs/Info.plist`）。
+- **卡谁**：装机与身份（与自研线共用 `com.yangzhou.themecoreplus`）都要用户点头。等云编译绿后先下载 deb，再弹窗问装不装。
+
+## 更早：交付版 ThemeCore+ 5.2.0 移植（本线，2026-11-02 14:5x）
 
 - **目标**：把用户交付的 Theos 工程 **ThemeCore+ 5.2.0**（纯 ObjC，作者 yangzhou）移植进本仓库，
   用**云编译的 clang 直编**（不走 Theos 构建规则），**只编不装**（用户原话「直接编译就行」）。
