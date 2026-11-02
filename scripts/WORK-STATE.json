@@ -1,6 +1,6 @@
 {
   "task": "ThemeCorePlus 图标主题化全面覆盖 + 秒加载（并线：CountdownHUD 灵动岛对齐）",
-  "status": "running-3-both-ci-green-awaiting-user-go",
+  "status": "installed-1.0.39-panel-aligned",
   "updated": "2026-11-03T02:36+08:00",
   "step": "**两条工作流都已 success（2026-11-02 15:35 复核）**。① 主线 ThemeCorePlus 1.0.38：提交 `9990eef5`（TCPLiveIconImageCache 定义从 Icons.m 搬进共享源码 Store.m）+ `320d6e47`（探针 sha）push 后，工作流「Build ThemeCorePlus」（`.github/workflows/themecoreplus.yml`）run **41407144542** = completed/**success**，Release tag `themecoreplus-v1.0.38` 已发布，资产 `com.yangzhou.themecoreplus_1.0.38_iphoneos-arm64e.deb`，169748 字节，sha256 `a41c16a9bb74a61d72c5957c626d60c158d2b566c62a59e6e21c4d2f975de435`。② 并线交付版「ThemeCore+ 5.2.0」：提交 `fa7af10` 之后，工作流「Build YzThemeCorePlus」（`.github/workflows/yzthemecoreplus.yml`）run **41406267743** = completed/**success**（前两次 failure：41403329442 编译错误、41405575032 链接 QuartzCore/SBIconController，均已修）。**用户 15:31 明说：只编译、不装包，完成后停下** —— 所以本轮到「云编译绿」为止，两个 deb 都没下载、没装、没注销。",
   "chain": ["改码", "云编译", "读 check-run annotations", "（另定）下载 deb → 用户点头装机", "注销", "读诊断", "选路线"],
