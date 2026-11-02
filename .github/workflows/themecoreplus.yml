@@ -7,6 +7,11 @@
 # 版本是静态的：改版本时同时改 scripts/build-themecoreplus.sh 的 VERSION 与下面的 tag。
 # 可读的验证信息都写成 check-run 的 annotation（::notice/::error title=…）：job 日志要登录才能看，
 # 而公开仓库的 check-run annotations 匿名可读。
+#
+# 1.0.41 遇到过：macOS arm64 runner 容量紧张，排队等不到机器就整个 run 判 failure，
+# 注解原文「The job was not acquired by Runner of type hosted even after multiple attempts」
+# + 「Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times…」
+# ——这种情况不是编译错误，改一处相关文件再 push（或重跑）即可。
 
 name: Build ThemeCorePlus
 
