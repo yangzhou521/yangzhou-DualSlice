@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.6";
+static NSString *const CHVersion = @"1.6.7";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -624,6 +624,8 @@ static BOOL CHEnsureWindow(void) {
         gLabel.textAlignment = NSTextAlignmentCenter;
         gLabel.textColor = [UIColor systemGreenColor];
         gLabel.font = [UIFont monospacedDigitSystemFontOfSize:12.5 weight:UIFontWeightMedium];
+        gLabel.numberOfLines = 2; // v1.6.7：长文字两行显示，中间对齐，不再单行截断
+        gLabel.lineBreakMode = NSLineBreakByWordWrapping;
         gLabel.adjustsFontSizeToFitWidth = YES;
         gLabel.minimumScaleFactor = 0.55;
         gLabel.userInteractionEnabled = NO;

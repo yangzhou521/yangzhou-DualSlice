@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.6)
+    name: Release (countdownhud-v1.6.7)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,10 +133,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.6
-          name: CountdownHUD v1.6.6
+          tag_name: countdownhud-v1.6.7
+          name: CountdownHUD v1.6.7
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            v1.6.7：**胶囊长文字支持两行显示**。之前 gLabel 默认单行（numberOfLines=1）+
+            adjustsFontSizeToFitWidth 缩字号塞一行，长文字还是被截断（用户 10:54 反馈
+            「一行有时不全」）。现在 numberOfLines=2 + NSLineBreakByWordWrapping，短文字一行、
+            长文字两行，中间对齐，不再截断。
 
             v1.6.6：**修「长文字没跟长岛」**。v1.6.5 的逻辑（按文字宽选长短岛）方向对，但
             评分里短岛靠类名多拿 ~1.6 分（Aperture + Container），把长岛那点尺寸优势
@@ -259,4 +264,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.6/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.7/$(basename "$DEB")"
