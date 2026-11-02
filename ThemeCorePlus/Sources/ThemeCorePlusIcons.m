@@ -169,6 +169,18 @@ typedef TCPIconImageInfo TCPIconImageInfoShort;
 // 文件夹的图标缓存（同一条链，只是换成 folderIconImageCache）：文件夹收起状态的 mini 拼图
 // 存在这个对象里，主题换了它不会自己重算，要靠它重算一次。
 id TCPLiveFolderImageCache(void) {
+    // 1.0.41（修 1.0.39「注销后进安全模式」）：构造函数阶段一律不走这条路。
+    // 崩溃报告 SpringBoard-2026-11-03-040505.ips（注销后首次加载新 dylib）：
+    //   TCPInitialize（dyld 构造函数）→ TCPReload(NO) → TCPRefreshIconImages
+    //   → TCPFolderNotifyRecalc → TCPLiveFolderImageCache
+    //   → +[SBIconController sharedInstance] → -[SBUIController init]
+    //   → +[UIScreen mainScreen] → NSAssertionHandler → SIGABRT。
+    // 构造函数跑在 main() 之前，UIApplication / UIScreen 都还不存在，
+    // +[UIScreen mainScreen] 里那句断言必命中（与 1.0.35、1.0.36、0.9.21 同一个病根）。
+    // 1.0.36 只给 TCPRelayoutIcons 上了闸门，1.0.38 新写的这条
+    // 「控制器→管理器→folderIconImageCache」链漏在外面，现在这一层也上闸：
+    // 闸门没开返回 nil，调用方照旧记 nocache/notready，等 +2 秒开闸后的刷新拍再真拿。
+    if (!TCPStoreImageWorkReady()) return nil;
     static SEL managerGetter = NULL, folderCacheGetter = NULL;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -1916,6 +1928,14 @@ void TCPRefreshIconImages(void) {
         });
         return;
     }
+
+    // 1.0.41（修「注销后进安全模式」）：构造函数的启动轮会走到这里（TCPReload(NO) →
+    // sitesChanged → 本函数），而本函数下面第一件事就是 [UIApplication sharedApplication]、
+    // 再往下经 TCPFolderNotifyRecalc 拿 SBIconController 共享实例 —— 构造函数跑在 main()
+    // 之前，这两样都不存在（+[UIScreen mainScreen] 断言 → SIGABRT，崩溃报告
+    // SpringBoard-2026-11-03-040505.ips）。闸门没开一律返回：+2 秒开闸那一步
+    // （ThemeCorePlusMain.m 的 TCPStoreEnableImageWork 之后）与面板刷新请求照旧会刷。
+    if (!TCPStoreImageWorkReady()) return;
 
     Class baseClass = objc_getClass("SBIconImageView");
     if (baseClass == Nil) return;

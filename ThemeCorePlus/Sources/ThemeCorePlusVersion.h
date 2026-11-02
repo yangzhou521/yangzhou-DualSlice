@@ -17,10 +17,17 @@
 //
 #pragma once
 
-//  1.0.40（2026-11-03）：设置面板页脚去掉「越狱源」那一行与整条超链接（用户
+//  1.0.41（2026-11-03）：修「注销后进安全模式」。1.0.38 新写的
+//  「SBIconController→iconManager→folderIconImageCache」链在 dyld 构造函数阶段被
+//  TCPReload→TCPRefreshIconImages→TCPFolderNotifyRecalc 走到，
+//  +[SBIconController sharedInstance]→-[SBUIController init]→+[UIScreen mainScreen]
+//  →断言→SIGABRT（崩溃报告 SpringBoard-2026-11-03-040505.ips）。现在该链
+//  （TCPLiveFolderImageCache / TCPFolderNotifyRecalc / TCPRefreshIconImages）全部过
+//  TCPStoreImageWorkReady 闸门，构造函数阶段一律不碰 UIKit，+2 秒开闸后照旧刷新。
+//  1.0.40：设置面板页脚去掉「越狱源」那一行与整条超链接（用户
 //  「我没越狱源，点它没必要」），只留居中的「作者：yangzhou」。一级页/二级页同改，
 //  只动 Prefs/，引擎源码未改。1.0.39 = 面板照 ThemeCore 对齐（页脚、二级页标题+组头）。
-#define TCP_VERSION @"1.0.40"
+#define TCP_VERSION @"1.0.41"
 
 // 面板最下方那个「运行日志」入口的开关（用户 2026-10-30 15:27）：
 //   1 = 显示（开发/调试期，日志页要能随时翻、能分享）；

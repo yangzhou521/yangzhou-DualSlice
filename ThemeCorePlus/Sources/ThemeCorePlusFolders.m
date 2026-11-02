@@ -80,6 +80,9 @@ NSString *TCPFolderNotifyReport(void) {
 
 void TCPFolderNotifyRecalc(void) {
     if (![NSThread isMainThread]) return;
+    // 1.0.41：构造函数阶段不碰共享实例与 UIApplication（崩溃链见 ThemeCorePlusIcons.m
+    // 的 TCPLiveFolderImageCache 顶部注释）。闸门没开就记账退出，+2 秒后的刷新拍会重来。
+    if (!TCPStoreImageWorkReady()) { sFolderNotifyLast = @"notready"; return; }
     TCPThemeStore *store = [TCPThemeStore shared];
     if (!store.active || !store.iconsEnabled) { sFolderNotifyLast = @"inactive"; return; }
     Class cacheClass = NSClassFromString(@"SBFolderIconImageCache");
