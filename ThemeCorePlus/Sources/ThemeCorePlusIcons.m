@@ -1067,26 +1067,27 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
         }
         how = [NSString stringWithFormat:@"face+h%.0fx%.0f+m%.0fx%.0f", hw, hh, mw, mh];
     } else {
-        // 日历（1.0.43 起照 ThemeCore / SnowBoard 的做法：**底图用主题素材，文字自己画**）。
-        //
-        // 为什么换（用户 2026-11-03 12:17 点名）—— 本机 strings 取证：ThemeCore.dylib 与
-        // SnowBoardBase.dylib 里都带着 CalendarIconDateSettings / CalendarIconDaySettings /
-        // TextYoffset / FontWeight / IconBundles 同一组键，说明主题 Info.plist 这两节
-        // **本来就是给引擎自己用系统字体画文字的参数**。我们 1.0.7 起却拿它去抠系统图的墨：
-        // 永远对不齐，而且 1.0.32 的规则③专门把偏红像素判成「不是墨」，星期文字被整条丢掉。
-        // 现在：底图照旧画主题素材，星期/日期文字用系统字体按参数画上去。
-        // 主题没声明这两节时才退回老路（抠墨），免得别的主题反而变差。
+        // 日历（1.0.45）：**文字回给系统**（用户 2026-11-03 23:24「这个不对吧？！不应该是系统文字
+        // 自己加载的吗」+ 23:25「系统动态字体加载日历内的显示文字」）。
+        // 1.0.43 那版用系统字体自己排版（TCPCompositeCalendarText），位置、字形、字号都得自己凑，
+        // 实测整体偏下、和系统对不齐 —— 那不是正路。
+        // 正路：系统每天自己生成那张日历图（白底 + 红星期 + 黑日期），我们只把它当**文字来源**，
+        // 抠出文字层铺到主题底上：位置、字形、当天日期全归系统，我们一个像素都不排。
+        // 主题底偏暗时把近黑的墨转白、彩色字提亮，保证看得见。
+        // 只有系统图拿不到（systemImage=nil）才退回自绘。
         [themed drawInRect:rect];
-        NSDictionary *dateSettings = [store calendarDateSettings];
-        NSDictionary *daySettings = [store calendarDaySettings];
-        if (dateSettings != nil || daySettings != nil) {
-            how = TCPCompositeCalendarText(ctx, rect, themed, systemImage, dateSettings, daySettings);
+        if (systemImage != nil) {
+            TCPPixelStats s = TCPPixelStatsForImage(themed);
+            TCPCompositeCalendarInk(ctx, rect, systemImage, s.luminance < 0.5);
+            how = @"base+sysink";
         } else {
-            if (systemImage != nil) {
-                TCPPixelStats s = TCPPixelStatsForImage(themed);
-                TCPCompositeCalendarInk(ctx, rect, systemImage, s.luminance < 0.5);
+            NSDictionary *dateSettings = [store calendarDateSettings];
+            NSDictionary *daySettings = [store calendarDaySettings];
+            if (dateSettings != nil || daySettings != nil) {
+                how = TCPCompositeCalendarText(ctx, rect, themed, nil, dateSettings, daySettings);
+            } else {
+                how = @"base(nosys)";
             }
-            how = @"base+ink(nocfg)";
         }
     }
 
@@ -1133,170 +1134,92 @@ static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *syst
     CGContextDrawImage(tmp, CGRectMake(0, 0, (CGFloat)dw, (CGFloat)dh), cg);
     CGContextRelease(tmp);
 
-    // 1.0.32：**改成「近黑选数字」，不再用四角均值当背景。**
-    //
-    // 为什么换（AI 逆向 + 本机诊断对得上）：
-    // 原来用「四角像素平均」当背景色，但图标图带圆角遮罩 —— **四角是透明的（alpha≈0，RGB=0）**，
-    // 均值被拖成近黑。于是白底(255,255,255) 与"背景"差异拉满，**整张系统图（含白色底板）都被
-    // 判成墨**，盖住主题底图。诊断上表现为 inkdrop=0.00、cov=0.96（整图一个大连通块）。
-    //
-    // 新判据不依赖背景估计，直接按颜色选：
-    //   ① alpha < 16        → 不是墨（圆角透明区）
-    //   ② max(R,G,B) >= 140 → 不是墨（白底、灰阴影、浅色装饰）
-    //   ③ R - max(G,B) > 30 → 不是墨（红色星期文字，如 "MON"/"TUE"）
-    // 剩下三通道都低的，就是黑色的日期数字（含抗锯齿边）。
-    // 系统日历图结构（iOS 16.7）= 白底 + 红色星期文字 + 黑色日期数字；红条 iOS 7 起已去掉。
-    unsigned char *maskBuffer = calloc(dw * dh, 4);
-    if (maskBuffer == NULL) { free(buffer); return; }
-    unsigned char *rawAlpha = calloc(dw * dh, 1);      // 0~255 的原始墨强度
-    if (rawAlpha == NULL) { free(maskBuffer); free(buffer); return; }
+    // 1.0.45：**文字来源换成系统图里的文字层**（用户 2026-11-03 23:25「系统动态字体加载日历内的
+    // 显示文字」）。1.0.32 那版判据有三个洞：① 四角透明当背景（已修）；② 亮色一律当底 ——
+    // 主题底偏暗时系统那层灰抗锯齿边会被一起啃掉；③ **偏红一律当「不是墨」** —— 红色星期文字
+    // 被整条丢掉（这正是 1.0.43 干脆改成自己排版的导火索）。
+    // 现在不猜规则：先找**图里占比最大的那种颜色当底**（系统日历是白底，必然压倒性胜出），
+    // 与它明显不同的像素一律是墨（红字、黑字、抗锯齿边全留），颜色原样保留。
+    unsigned char bgR = 255, bgG = 255, bgB = 255;
+    {
+        unsigned int hist[16 * 16 * 16] = { 0 };      // 量化到 16 级，栈上 16KB，安全
+        size_t opaque = 0;
+        for (size_t i = 0; i < dw * dh; i++) {
+            unsigned char *p = buffer + i * 4;
+            if (p[3] < 16) continue;
+            opaque++;
+            hist[((p[0] >> 4) * 16 + (p[1] >> 4)) * 16 + (p[2] >> 4)]++;
+        }
+        if (opaque == 0) { free(buffer); return; }
+        size_t best = 0;
+        unsigned int bestCount = 0;
+        for (size_t b = 0; b < 16 * 16 * 16; b++) {
+            if (hist[b] > bestCount) { bestCount = hist[b]; best = b; }
+        }
+        bgR = (unsigned char)((((best >> 8) & 15) << 4) | 8);
+        bgG = (unsigned char)((((best >> 4) & 15) << 4) | 8);
+        bgB = (unsigned char)(((best & 15) << 4) | 8);
+    }
+
+    unsigned char *layer = calloc(dw * dh, 4);        // 彩墨层：文字原色 + alpha
+    if (layer == NULL) { free(buffer); return; }
+    size_t inkPixels = 0;
     for (size_t i = 0; i < dw * dh; i++) {
         unsigned char *p = buffer + i * 4;
-        unsigned char a = p[3];
-        if (a < 16) continue;                       // ① 透明 → 背景
+        if (p[3] < 16) continue;
+        int dr = abs((int)p[0] - (int)bgR);
+        int dg = abs((int)p[1] - (int)bgG);
+        int db = abs((int)p[2] - (int)bgB);
+        int dist = dr > dg ? (dr > db ? dr : db) : (dg > db ? dg : db);
+        if (dist < 48) continue;                      // 贴底色 → 是底，不是字
         unsigned char r = p[0], g = p[1], b = p[2];
-        unsigned char mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
-        if (mx >= 140) continue;                    // ② 亮色（白底/灰阴影）→ 不是墨
-        unsigned char gb = g > b ? g : b;
-        if ((int)r - (int)gb > 30) continue;        // ③ 偏红（星期文字）→ 不是墨
-        // 越黑越实：mx 越小越实，映射到 120~255 的幅度
-        rawAlpha[i] = (unsigned char)(mx < 100 ? 255 : 255 - (mx - 100) * 2);
+        if (darkBase) {
+            // 主题底偏暗：近黑的墨转白，彩色字（红星期）提亮到看得清，色相不动。
+            unsigned char mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+            if (mx < 140) {
+                r = g = b = 255;
+            } else if (mx < 210) {
+                CGFloat f = 210.0 / (CGFloat)mx;
+                r = (unsigned char)MIN(255, (int)((CGFloat)r * f));
+                g = (unsigned char)MIN(255, (int)((CGFloat)g * f));
+                b = (unsigned char)MIN(255, (int)((CGFloat)b * f));
+            }
+        }
+        layer[i * 4 + 0] = r;
+        layer[i * 4 + 1] = g;
+        layer[i * 4 + 2] = b;
+        layer[i * 4 + 3] = 255;
+        inkPixels++;
     }
     free(buffer);
+    sCalendarInkDrop = 0.0;
 
-    // 腐蚀 1 像素（3×3 取最小）：粗笔画的字留下主干，细线（指针）整条消失。
-    unsigned char *eroded = calloc(dw * dh, 1);
-    if (eroded != NULL) {
-        for (size_t y = 0; y < dh; y++) {
-            for (size_t x = 0; x < dw; x++) {
-                unsigned char m = rawAlpha[y * dw + x];
-                for (int dy = -1; dy <= 1 && m > 0; dy++) {
-                    long yy = (long)y + dy;
-                    if (yy < 0 || yy >= (long)dh) { m = 0; break; }
-                    for (int dx = -1; dx <= 1; dx++) {
-                        long xx = (long)x + dx;
-                        if (xx < 0 || xx >= (long)dw) { m = 0; break; }
-                        unsigned char v = rawAlpha[yy * dw + xx];
-                        if (v < m) m = v;
-                    }
-                }
-                eroded[y * dw + x] = m;
+    // 一个字都没找到 → 保持主题底（宁可没有字，也绝不盖上一层底色）。
+    if (inkPixels > 0) {
+        CGColorSpaceRef inkSpace = CGColorSpaceCreateDeviceRGB();
+        CGContextRef inkCtx = CGBitmapContextCreate(layer, dw, dh, 8, dw * 4, inkSpace,
+                                                   (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+        CGColorSpaceRelease(inkSpace);
+        if (inkCtx != NULL) {
+            CGImageRef inkImage = CGBitmapContextCreateImage(inkCtx);
+            CGContextRelease(inkCtx);
+            if (inkImage != NULL) {
+                CGContextSaveGState(ctx);
+                CGContextSetInterpolationQuality(ctx, kCGInterpolationHigh);
+                CGContextDrawImage(ctx, rect, inkImage);   // 放大到图标尺寸，位置就是系统的位置
+                CGContextRestoreGState(ctx);
+                CGImageRelease(inkImage);
             }
         }
     }
-
-    // 连通区域筛：4 连通从粗主干长回原始墨区域，面积太小的整块丢掉（指针常是独立的小块）。
-    BOOL *keep = NULL;
-    size_t *stack = NULL;
-    if (eroded != NULL) {
-        keep = calloc(dw * dh, 1);
-        unsigned char *visited = calloc(dw * dh, 1);
-        stack = calloc(dw * dh, sizeof(size_t));
-        if (keep != NULL && visited != NULL && stack != NULL) {
-            size_t minArea = MAX((size_t)6, (dw * dh) / 900);   // ≈0.11% 的面积，数字笔画远大于它
-            for (size_t i = 0; i < dw * dh; i++) {
-                if (visited[i] || rawAlpha[i] == 0) continue;
-                size_t top = 0, area = 0;
-                BOOL hasCore = NO;
-                stack[top++] = i;
-                visited[i] = 1;
-                while (top > 0) {
-                    size_t cur = stack[--top];
-                    area++;
-                    if (eroded != NULL && eroded[cur] > 0) hasCore = YES;
-                    size_t cx = cur % dw, cy = cur / dw;
-                    size_t nb[4] = { cur - 1, cur + 1,
-                                     (cy > 0 ? cur - dw : cur), (cy + 1 < dh ? cur + dw : cur) };
-                    for (int k = 0; k < 4; k++) {
-                        size_t n = nb[k];
-                        if (k == 0 && cx == 0) continue;
-                        if (k == 1 && cx + 1 >= dw) continue;
-                        if (visited[n] || rawAlpha[n] == 0) continue;
-                        visited[n] = 1;
-                        stack[top++] = n;
-                    }
-                }
-                if (hasCore && area >= minArea) {
-                    // 回填：整块保留
-                    top = 0;
-                    stack[top++] = i;
-                    keep[i] = 1;
-                    while (top > 0) {
-                        size_t cur = stack[--top];
-                        size_t cx = cur % dw, cy = cur / dw;
-                        size_t nb[4] = { cur - 1, cur + 1,
-                                         (cy > 0 ? cur - dw : cur), (cy + 1 < dh ? cur + dw : cur) };
-                        for (int k = 0; k < 4; k++) {
-                            size_t n = nb[k];
-                            if (k == 0 && cx == 0) continue;
-                            if (k == 1 && cx + 1 >= dw) continue;
-                            if (keep[n] || rawAlpha[n] == 0) continue;
-                            keep[n] = 1;
-                            stack[top++] = n;
-                        }
-                    }
-                }
-            }
-            free(visited);
-        } else {
-            free(visited);
-            free(keep);
-            keep = NULL;
-        }
-        free(stack);
-    }
-
-    size_t keptPixels = 0;
-    for (size_t i = 0; i < dw * dh; i++) {
-        unsigned char v = rawAlpha[i];
-        if (keep != NULL && v > 0 && !keep[i]) v = 0;   // 没通过形状筛选的（指针、装饰线）不画
-        if (v > 0) keptPixels++;
-        maskBuffer[i * 4 + 0] = v;
-        maskBuffer[i * 4 + 1] = v;
-        maskBuffer[i * 4 + 2] = v;
-        maskBuffer[i * 4 + 3] = 255;
-    }
-    // 1.0.30 取证：筛掉了多少墨（诊断日历那段的 ink: 后缀会带上 inkdrop=）。
-    double dropped = 0.0;
-    if (keep != NULL) {
-        size_t raw = 0;
-        for (size_t i = 0; i < dw * dh; i++) if (rawAlpha[i] > 0) raw++;
-        if (raw > 0) dropped = 1.0 - (double)keptPixels / (double)raw;
-        // 一个字都没留下 → 说明这版系统图的字也没通过筛选，退回旧行为（宁可多墨，不可空白）
-        if (keptPixels < MAX((size_t)4, (dw * dh) / 4000)) {
-            for (size_t i = 0; i < dw * dh; i++) {
-                unsigned char v = rawAlpha[i];
-                maskBuffer[i * 4 + 0] = v;
-                maskBuffer[i * 4 + 1] = v;
-                maskBuffer[i * 4 + 2] = v;
-            }
-            dropped = -1.0;
-        }
-    }
-    free(eroded);
-    free(keep);
-    free(rawAlpha);
-    sCalendarInkDrop = dropped;
-
-    CGColorSpaceRef maskSpace = CGColorSpaceCreateDeviceRGB();
-    // buffer 是 RGBA 排布（每像素 4 字节），bytesPerRow 必须是 dw*4。
-    // kCGImageAlphaNoneSkipLast：ClipToMask 用**亮度**当遮罩强度，最后一个字节被忽略。
-    CGContextRef maskCtx = CGBitmapContextCreate(maskBuffer, dw, dh, 8, dw * 4, maskSpace,
-                                                  (CGBitmapInfo)kCGImageAlphaNoneSkipLast);
-    CGColorSpaceRelease(maskSpace);
-    if (maskCtx == NULL) { free(maskBuffer); return; }
-    CGImageRef maskImage = CGBitmapContextCreateImage(maskCtx);
-    CGContextRelease(maskCtx);
-    if (maskImage != NULL) {
-        CGContextSaveGState(ctx);
-        CGContextClipToMask(ctx, rect, maskImage);
-        CGContextSetFillColorWithColor(ctx, (darkBase ? [UIColor whiteColor] : [UIColor blackColor]).CGColor);
-        CGContextFillRect(ctx, rect);
-        CGContextRestoreGState(ctx);
-        CGImageRelease(maskImage);
-    }
-    free(maskBuffer);
+    free(layer);
 }
+
+// ── 1.0.45：旧的「抠墨」实现（四角均值 / 近黑选数字 / 腐蚀 + 连通筛 / 亮度遮罩）整段删除，
+// 由上面的「系统文字层」取代。要看旧版请查 git 历史（v1.0.44 及以前）。
+
+
+
 
 // —— 时钟图标的视图层（0.9.17）——
 //

@@ -241,6 +241,33 @@ static UIImage *TCPBadgeOurImageInSubtree(UIView *root) {
 // 1.0.7 放宽：图在底板的子树里就算（本机就是「图在底板里面的子 image view」），
 // 不再要求 ourHost == bgView —— 那是 1.0.3 lift 永远跑不起来的原因（诊断 lift=0）。
 // 搬完必须保证「我们的图仍在树里」—— 拿不到图就一个字节都不动，绝不把角标弄成空白。
+// ── 1.0.45：覆盖层的几何一律**等比适配** ─────────────────────────────
+// 用户 2026-11-03 23:39：桌面微信的**两位数**角标，轮廓偶尔被放大、拉宽（非必现）。
+// 病根：overlay 的框有两条来源 —— 我们那张图的宿主（正常），以及系统底板 bg.frame（兜底）。
+// 数字变化 / 系统重建角标子树的那一瞬间会走到兜底分支，而底板的框比角标本体大一圈，
+// 图照着铺就被拉宽；下一次布局又自己修回来 —— 所以是「偶发」，且只在双位数时明显。
+// 处置：给什么框都按图自己的宽高比在框内**等比放满、居中**，多出来的留白，图不可能再被拉宽。
+static CGRect TCPBadgeAspectFitRect(UIImage *image, CGRect box) {
+    if (image == nil || box.size.width <= 0 || box.size.height <= 0) return box;
+    CGSize size = image.size;
+    if (size.width <= 0 || size.height <= 0) return box;
+    CGFloat s = MIN(box.size.width / size.width, box.size.height / size.height);
+    if (!(s > 0)) return box;
+    CGFloat w = size.width * s, h = size.height * s;
+    return CGRectMake(box.origin.x + (box.size.width - w) / 2.0,
+                      box.origin.y + (box.size.height - h) / 2.0, w, h);
+}
+
+// 只读诊断（1.0.45）：最近一次覆盖层「框尺寸/图尺寸」，写进 ovl= 段。
+// 复现「被拉宽」时读它：框宽高比 ≠ 图宽高比 就是抓到了现场。
+static NSString *sBadgeOverlayGeom = nil;
+
+static void TCPBadgeNoteOverlayGeom(CGRect frame, UIImage *image) {
+    CGSize is = image != nil ? image.size : CGSizeZero;
+    sBadgeOverlayGeom = [NSString stringWithFormat:@"%.0fx%.0f/%.0fx%.0f",
+                         frame.size.width, frame.size.height, is.width, is.height];
+}
+
 static BOOL TCPBadgeLiftOurImage(UIView *view, UIView *host) {
     if (view == nil || host == nil || host == view) return NO;
     UIImage *image = TCPBadgeOurImageInSubtree(host);
@@ -266,13 +293,16 @@ static BOOL TCPBadgeLiftOurImage(UIView *view, UIView *host) {
         sBadgeLiftCount++;
     }
     overlay.image = image;
-    overlay.contentMode = ourHost.contentMode;
+    // 1.0.45：不沿用宿主的 contentMode（那可能是拉伸铺满），固定 AspectFit；
+    // 框也一律走等比适配，见 TCPBadgeAspectFitRect 上方注释。
+    overlay.contentMode = UIViewContentModeScaleAspectFit;
     // 位置：ourHost 换算到 view 的坐标系。拿不到就用 host 的 frame 兜底。
     CGRect frame = host.frame;
     if (ourHost != host && ourHost.superview != nil) {
         frame = [ourHost convertRect:ourHost.bounds toView:view];
     }
-    overlay.frame = frame;
+    overlay.frame = TCPBadgeAspectFitRect(image, frame);
+    TCPBadgeNoteOverlayGeom(overlay.frame, image);
     overlay.hidden = NO;
     if (overlay.superview == view && view.subviews.lastObject != overlay) [view bringSubviewToFront:overlay];
     host.hidden = YES;
@@ -307,11 +337,12 @@ static void TCPBadgeHideSystemBackground(UIView *view) {
                 for (UIView *sub in bg.subviews) {
                     if (TCPBadgeOurImageFromHost(sub) != nil) { ourHost = sub; break; }
                 }
+                CGRect box = bg.frame;
                 if (ourHost != nil && ourHost.superview != nil) {
-                    overlay.frame = [ourHost convertRect:ourHost.bounds toView:view];
-                } else {
-                    overlay.frame = bg.frame;
+                    box = [ourHost convertRect:ourHost.bounds toView:view];
                 }
+                overlay.frame = TCPBadgeAspectFitRect(overlay.image, box);
+                TCPBadgeNoteOverlayGeom(overlay.frame, overlay.image);
             }
             if (overlay.hidden) overlay.hidden = NO;
             if (view.subviews.lastObject != overlay) [view bringSubviewToFront:overlay];
@@ -568,7 +599,7 @@ BOOL TCPBadgeBackgroundServed(void) {
 NSString *TCPBadgeProbeReport(void) {
     return [NSString stringWithFormat:
             @"%@;bg{look=%ld,hit=%ld};tup{look=%ld,hit=%ld};txt{look=%ld,hit=%ld};gate=%@;"
-            @"sys{look=%ld,hid=%ld,wait=%ld,skip=%ld,host=%ld,lift=%ld,tree=%@,bg=%@,our=%@};v{lay=%ld,cfg=%ld,mv=%ld,lo=%ld}",
+            @"sys{look=%ld,hid=%ld,wait=%ld,skip=%ld,host=%ld,lift=%ld,tree=%@,bg=%@,our=%@,ovl=%@};v{lay=%ld,cfg=%ld,mv=%ld,lo=%ld}",
             sBadgeProbe ?: @"badge=-",
             (long)sBadgeBackLook, (long)sBadgeBackHit,
             (long)sBadgeTupleLook, (long)sBadgeTupleHit,
@@ -577,6 +608,7 @@ NSString *TCPBadgeProbeReport(void) {
             (long)sBadgeSysLook, (long)sBadgeSysHidden, (long)sBadgeSysWait,
             (long)sBadgeSysSkip, (long)sBadgeHostClears, (long)sBadgeLiftCount,
             sBadgeSysTree ?: @"-", sBadgeSysBg ?: @"-", sBadgeSysHost ?: @"-",
+            sBadgeOverlayGeom ?: @"-",
             (long)sBadgeLayoutCalls, (long)sBadgeConfigCalls, (long)sBadgeMoveCalls,
             (long)sBadgeLayCalls];
 }
