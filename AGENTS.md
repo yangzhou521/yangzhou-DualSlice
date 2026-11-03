@@ -1361,7 +1361,8 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
 
 - 先跑 `scripts/safemode-check.sh`：退出码 **1（崩溃循环/疑似安全模式）或 3（插件没在跑）→ 打印 `SAFEMODE_DIRECT`，跳过弹窗**，
   调用方（agent）立刻 `irisin-cli install --yes --json <deb>`（root）+ `sbreload`，**不许再等弹窗**。
-- 其它 → 弹窗 `respring-guard.sh --ask 300 --install`，用户点「立即注销」才继续；`CANCELLED`/`TIMEOUT` 就停下。
+- 其它 → 默认弹窗 `respring-guard.sh --ask 300 --install`，用户点「立即注销」才继续；`CANCELLED`/`TIMEOUT` 就停下。
+  加 `--auto` 可跳过弹窗直接返回 `CONFIRMED`（供需要自动装包的流程用）。
 
 **为什么**：安全模式下 tweak 全不注入、CountdownHUD 也死，弹窗**根本显示不出来**；旧做法「发弹窗一直等」
 会永远等不到，包也装不上（2026-11-01 15:5x 在安全模式里空等了 4 分钟，用户两次催问）。
