@@ -651,13 +651,17 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     }
     id cache = TCPLiveIconImageCache();
     if (cache == nil) { self.purgeName = @"nocache"; return; }
-    // 1.0.44（2026-11-03）：方法名全错了 —— 本机反射探针
-    // /var/mobile/Library/Preferences/TCPCacheProbe.txt 坐实 SBHIconImageCache 的 47 个方法里，
-    // 零参清缓存只有 **purgeAllCachedImages**（另一个 purgeCachedImagesForIcons: 要传图标集合，不在这里用）。
-    // 1.0.38~1.0.43 试的 purgeCache/purgeAllCaches/purgeCaches/clearCache/removeAllObjects
-    // 一个都不存在 → 诊断恒为 purge=nosel0，『清系统图标缓存』这一步装多少版都没真跑过。
-    for (NSString *name in @[ @"purgeAllCachedImages",
-                              @"purgeCache", @"purgeAllCaches", @"purgeCaches",
+    // 【Bug 4】1.0.44 反射探针坐实 SBHIconImageCache 的零参清缓存只有 purgeAllCachedImages
+    // 把它置顶为第一步尝试；若存在则直接返回，其余 fallback 保持原循环顺序
+    SEL selAllImages = NSSelectorFromString(@"purgeAllCachedImages");
+    if ([cache respondsToSelector:selAllImages]) {
+        ((void (*)(id, SEL))objc_msgSend)(cache, selAllImages);
+        self.purgeName = @"purgeAllCachedImages";
+        self.purgeCount = self.purgeCount + 1;
+        return;
+    }
+    // 1.0.38~1.0.43 及其他 fallback（按探针优先级排序）
+    for (NSString *name in @[ @"purgeCache", @"purgeAllCaches", @"purgeCaches",
                               @"clearCache", @"removeAllObjects" ]) {
         SEL sel = NSSelectorFromString(name);
         if ([cache respondsToSelector:sel]) {

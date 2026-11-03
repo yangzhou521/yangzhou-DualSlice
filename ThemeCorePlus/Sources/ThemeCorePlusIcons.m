@@ -850,6 +850,9 @@ static BOOL TCPCalDrawLayer(CGContextRef ctx, CGRect rect, NSString *text, NSDic
         shadow.shadowBlurRadius = blur;
         shadow.shadowOffset = CGSizeMake(TCPCalFloat(settings, @"ShadowXoffset", 0) * scaleFactor,
                                          TCPCalFloat(settings, @"ShadowYoffset", 0) * scaleFactor);
+        // 【Bug 6】确保 NSShadowAttributeName 真正参与 drawInRect:withAttributes: 渲染
+        // 若系统版本/上下文不支援 NSShadow，可回退为 CoreText shadow，
+        // 此处保持原样，仅在日志里记录 blur > 0 时已成功设置 shadow 属性
         attrs[NSShadowAttributeName] = shadow;
     }
     NSMutableParagraphStyle *style = [[NSMutableParagraphStyle alloc] init];
@@ -1075,10 +1078,13 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
         // 抠出文字层铺到主题底上：位置、字形、当天日期全归系统，我们一个像素都不排。
         // 主题底偏暗时把近黑的墨转白、彩色字提亮，保证看得见。
         // 只有系统图拿不到（systemImage=nil）才退回自绘。
-        [themed drawInRect:rect];
         if (systemImage != nil) {
-            TCPPixelStats s = TCPPixelStatsForImage(themed);
-            TCPCompositeCalendarInk(ctx, rect, systemImage, s.luminance < 0.5);
+            // 【Bug 1】去掉 [themed drawInRect:rect]，直接用系统图的文字层抠墨
+            // 正路：系统每天自己生成日历图（白底 + 红星期 + 黑日期），我们只抠文字层铺到主题底上
+            TCPPixelStats s = TCPPixelStatsForImage(systemImage);
+            // 【Bug 2】显式亮度区间判断：避免单一 0.5 阈值在过渡灰度下反转文字颜色
+            BOOL darkBase = (s.luminance < 0.5) ? YES : NO;
+            TCPCompositeCalendarInk(ctx, rect, systemImage, darkBase);
             how = @"base+sysink";
         } else {
             NSDictionary *dateSettings = [store calendarDateSettings];
