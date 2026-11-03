@@ -13,6 +13,12 @@
 #import "ThemeCorePlusStore.h"
 #include <stdlib.h>
 
+// 1.0.42 的 Bundles 资源替换站：装配函数 `TCPInstallBundleAssetSites` 定义在本文件末尾，
+// 而调用它的装配入口在文件顶部 —— 少了这条前向声明，clang 直接报
+// 「call to undeclared function 'TCPInstallBundleAssetSites'」（2026-11-03 CI run 41614741297 失败原因）。
+// 同一个函数在 ThemeCorePlusPrivate.h 里也有一份声明，这里补一份是为了让本文件自洽。
+void TCPInstallBundleAssetSites(void);
+
 // 从 icon 对象身上问出 bundle id。SBIcon 的子类各有各的写法，按可靠性依次问。
 // 全部用 objc_msgSend 直接发消息，绝不写 [SBApplicationIcon xxx]：那会让链接期多出一个
 // 私有类符号（SDK 里没有），构建就会失败。
