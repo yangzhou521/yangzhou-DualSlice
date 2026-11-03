@@ -331,6 +331,18 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSString *> *> *namedMap;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *globalFileMap;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSString *> *> *bundleFileMap;
+// 1.0.42：Bundles/<bundleid>/ 里**任意文件名**的图 —— 按「bundle + 图片名」替换那个 bundle 自己的资源。
+// 用户点名：iOS「设置」里每一行左边的小图标来自 com.apple.preferences-ui-framework，
+// 主题给的 General@3x.png / WiFi@3x.png… 就该在设置里顶掉系统同名图。
+// bundleAssetMap 键 = "<bundleid小写>|<图片名小写>"，值 = { 倍率键: 路径 }。
+// bundleAssetNameMap 键 = "<图片名小写>"，值 = [bundleAssetMap 的键…]，用来判断这个名字是不是全局唯一
+//（设置那个 framework 的 bundle id 与主题目录名不一定对得上，唯一名兜底就是为它准备的）。
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSString *> *> *bundleAssetMap;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray<NSString *> *> *bundleAssetNameMap;
+// 1.0.42：主题 Info.plist 的日历图标文字 DIY 配置（CalendarIconDateSettings / CalendarIconDaySettings）。
+// 用户点名：日历底图是素材（IconBundles/com.apple.mobilecal-large.png），文字按素材参数用系统字体画。
+@property (nonatomic, copy) NSDictionary *calendarDateSettings;
+@property (nonatomic, copy) NSDictionary *calendarDaySettings;
 @property (nonatomic, copy) NSString *maskPath;
 @property (nonatomic) CGFloat maskCoverage;    // 遮罩 alpha 覆盖占比（重载时量）
 @property (nonatomic) BOOL maskSkipped;        // 覆盖太低被跳过（玻璃圈那类，裁完图标就空白）
@@ -366,6 +378,9 @@ static UIImage *TCPRenderIcon(UIImage *icon, UIImage *base, UIImage *mask, UIIma
 
 // 计数（诊断用）
 @property (nonatomic) NSUInteger iconLookups, iconHits, badgeLookups, badgeHits, fileLookups, fileHits;
+// 1.0.42：Bundles 资源替换命中次数（设置里的小图标走这条，诊断里看 hit 涨没涨）。
+@property (atomic) NSUInteger bundleAssetHits;
+@property (atomic, copy) NSString *bundleAssetLastHit;
 
 // 采样用的私有方法（定义在查询实现里，这里先声明，免得编译器报 instance method not found）。
 - (void)noteMiss:(NSString *)sample;
@@ -460,6 +475,8 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     NSMutableDictionary *named = [NSMutableDictionary dictionary];
     NSMutableDictionary *globalFiles = [NSMutableDictionary dictionary];
     NSMutableDictionary *bundleFiles = [NSMutableDictionary dictionary];
+    NSMutableDictionary *bundleAssets = [NSMutableDictionary dictionary];       // 1.0.42：Bundles 资源替换
+    NSMutableDictionary *bundleAssetNames = [NSMutableDictionary dictionary];   // 1.0.42：同上，名字 → 键列表
     __block NSString *maskPath = nil, *basePath = nil, *overlayPath = nil, *folderPath = nil;
     // 0.9.30：IB-MaskIcons 取**叠加链里任何一层**声明的 true（任意一层说「素材已自带圆角」就算数，
     // 与 SnowBoard/IconBundles 读 Info.plist 的语义一致）。
@@ -489,18 +506,37 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
     // 多层叠加：扫描器是「先到先得」的（见 indexDirectory / scanIconDirectory 里的 if (!entry[key])），
     // 所以**从最后一层往前扫**：靠后的主题先落表、也就覆盖掉了靠前的。单个主题内部的行为
     //（同名素材按文件名序取第一个）与只支持单主题时一字不差。
+    // 1.0.42：日历图标文字 DIY 配置（Info.plist 的 CalendarIcon*Settings）走**同一套顺序**，
+    // 靠后的主题先说、说过就不再被盖（与素材叠加语义一致）。
+    __block NSDictionary *calDate = nil, *calDay = nil;
     for (NSString *theme in [paths reverseObjectEnumerator]) {
         [self scanThemeAtPath:theme
                         icons:icons
                     namedMap:named
                   globalFiles:globalFiles
                   bundleFiles:bundleFiles
+                 bundleAssets:bundleAssets
+            bundleAssetNames:bundleAssetNames
                          mask:&maskPath
                          base:&basePath
                       overlay:&overlayPath
                        folder:&folderPath
                        values:values];
         if ([self themeAtPathDeclaresMaskedIcons:theme]) ibMask = YES;
+        if (calDate == nil || calDay == nil) {
+            NSDictionary *options = [NSDictionary dictionaryWithContentsOfFile:
+                                     [theme stringByAppendingPathComponent:@"Info.plist"]];
+            if ([options isKindOfClass:[NSDictionary class]]) {
+                if (calDate == nil) {
+                    id value = options[@"CalendarIconDateSettings"];
+                    if ([value isKindOfClass:[NSDictionary class]]) calDate = value;
+                }
+                if (calDay == nil) {
+                    id value = options[@"CalendarIconDaySettings"];
+                    if ([value isKindOfClass:[NSDictionary class]]) calDay = value;
+                }
+            }
+        }
     }
 
     @synchronized (self) {
@@ -508,6 +544,8 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         self.namedMap = named;
         self.globalFileMap = globalFiles;
         self.bundleFileMap = bundleFiles;
+        self.bundleAssetMap = bundleAssets;
+        self.bundleAssetNameMap = bundleAssetNames;
         self.maskPath = maskPath;
         self.basePath = basePath;
         self.overlayPath = overlayPath;
@@ -547,6 +585,11 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
             self.maskSkipped = YES;
         }
         self.badgeSettings = [self badgeSettingsFromValues:values];
+        // 1.0.43：日历文字参数必须真的存下来 —— 只声明属性不赋值，读到的永远是 nil，
+        // 引擎就会一直走「抠系统图墨」那条老路（用户报的「日历只有数字没有星期」就是这么来的）。
+        // 无主题（paths 为空）时 calDate/calDay 是 nil，这里一并清掉，避免残留上一套主题的参数。
+        self.calendarDateSettings = calDate;
+        self.calendarDaySettings = calDay;
         self.cornerMaskOn = TCPBoolValue(values, TCPKeyIconCornerMask, NO);
     }
 
@@ -797,6 +840,8 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
                namedMap:(NSMutableDictionary *)named
              globalFiles:(NSMutableDictionary *)globalFiles
              bundleFiles:(NSMutableDictionary *)bundleFiles
+            bundleAssets:(NSMutableDictionary *)bundleAssets
+       bundleAssetNames:(NSMutableDictionary *)bundleAssetNames
                     mask:(NSString **)maskPath
                     base:(NSString **)basePath
                  overlay:(NSString **)overlayPath
@@ -840,6 +885,12 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
                    bundleKey:bundleKey
                  bundleFiles:bundleFiles];
         [self scanBundleIconDirectory:sub bundleID:entry into:icons];
+        // 1.0.42：同一个目录里**除 icon* 之外**的图，按「bundle + 图片名」记账，
+        // 供运行时的 Bundles 资源替换用（设置里的小图标就是这条路）。
+        [self scanBundleResourceDirectory:sub
+                                 bundleID:entry
+                                  intoMap:bundleAssets
+                                  nameMap:bundleAssetNames];
     }
 
     // 6) 作者素材：配置里的相对路径 → 素材规范名 → 内置候选相对路径。
@@ -934,6 +985,43 @@ static NSString *TCPStringValue(NSDictionary *values, NSString *key) {
         }
         NSString *key = TCPScaleKey(scale, large);
         if (!entry[key]) entry[key] = [dir stringByAppendingPathComponent:file];
+    }
+}
+
+// 1.0.42：Bundles/<bundleid>/ 里**任意文件名**的图记账（不只 icon*）。
+// 用途：主题给 General@3x.png / WiFi@3x.png 这类图，运行时在对应 bundle 里顶掉系统同名图 ——
+// 就是把「iOS 设置」每一行左边的小图标换成主题素材。
+- (void)scanBundleResourceDirectory:(NSString *)dir
+                           bundleID:(NSString *)bundleID
+                            intoMap:(NSMutableDictionary *)assetMap
+                            nameMap:(NSMutableDictionary *)nameMap {
+    if (assetMap == nil || ![bundleID containsString:@"."]) return;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *bid = bundleID.lowercaseString;
+    for (NSString *file in [[fm contentsOfDirectoryAtPath:dir error:NULL] sortedArrayUsingSelector:@selector(compare:)]) {
+        if (!TCPIsImageFile(file)) continue;
+        NSString *path = [dir stringByAppendingPathComponent:file];
+        BOOL isDir = NO;
+        if ([fm fileExistsAtPath:path isDirectory:&isDir] && isDir) continue;
+        NSInteger scale = 0;
+        NSString *stem = TCPStripScaleSuffix([file stringByDeletingPathExtension], &scale).lowercaseString;
+        if (stem.length < 2) continue;
+        NSString *key = [bid stringByAppendingFormat:@"|%@", stem];
+        NSMutableDictionary *entry = assetMap[key];
+        if (!entry) {
+            entry = [NSMutableDictionary dictionary];
+            assetMap[key] = entry;
+        }
+        NSString *scaleKey = TCPPlainScaleKey(scale);
+        if (!entry[scaleKey]) entry[scaleKey] = path;
+        if (nameMap) {
+            NSMutableArray *keys = nameMap[stem];
+            if (!keys) {
+                keys = [NSMutableArray array];
+                nameMap[stem] = keys;
+            }
+            if (![keys containsObject:key]) [keys addObject:key];
+        }
     }
 }
 
@@ -1363,6 +1451,56 @@ static NSInteger TCPMaterialKindOfFile(NSString *file) {
         if (!self.active || !(self.featureFlags & TCPFeatureFolders) || self.folderPath.length == 0) return nil;
     }
     return [self cachedImageAtPath:self.folderPath size:CGSizeZero];
+}
+
+#pragma mark 查询：Bundles 资源替换（1.0.42，设置里的小图标）
+
+// 倍率取值顺序：点名倍率 → 3 → 2 → 1 → 0。
+static NSString *TCPBundleAssetPathInEntry(NSDictionary *entry, CGFloat scale) {
+    if (entry.count == 0) return nil;
+    NSInteger want = TCPScaleFromScaleFactor(scale);
+    for (NSNumber *n in @[ @(want), @3, @2, @1, @0 ]) {
+        NSString *path = entry[TCPPlainScaleKey((NSInteger)n.integerValue)];
+        if (path.length > 0) return path;
+    }
+    return nil;
+}
+
+// bundleID + 图片名精确命中主题的 Bundles/<bundleID>/<图片名>。
+- (NSString *)bundleAssetPathForBundleID:(NSString *)bundleID name:(NSString *)name scale:(CGFloat)scale {
+    if (bundleID.length == 0 || name.length == 0) return nil;
+    NSDictionary *map = self.bundleAssetMap;
+    if (map.count == 0) return nil;
+    NSString *key = [bundleID.lowercaseString stringByAppendingFormat:@"|%@", name.lowercaseString];
+    return TCPBundleAssetPathInEntry(map[key], scale);
+}
+
+// 名字兜底：这个名字在所有主题的 Bundles 里**只出现一次**才用 ——
+// 设置那个 framework 报出来的 bundle id 与主题目录名不一定对得上，就靠它。
+// 只唯一才换，是为了不误伤别的 App 的同名图。
+- (NSString *)bundleAssetPathForUniqueName:(NSString *)name scale:(CGFloat)scale {
+    if (name.length == 0) return nil;
+    NSArray<NSString *> *keys = self.bundleAssetNameMap[name.lowercaseString];
+    if (keys.count != 1) return nil;
+    return TCPBundleAssetPathInEntry(self.bundleAssetMap[keys.firstObject], scale);
+}
+
+// 所有可替换的图片名（小写）。挂点用它先做 O(1) 快速排除，没命中就直接走系统实现。
+- (NSSet<NSString *> *)bundleAssetNames {
+    NSDictionary *map = self.bundleAssetNameMap;
+    return map.count > 0 ? [NSSet setWithArray:map.allKeys] : [NSSet set];
+}
+
+// 兜底匹配只对「设置」相关的进程/框架开放：com.apple.Preferences / com.apple.preferences-ui-framework…
+- (BOOL)isPreferencesBundleID:(NSString *)bundleID {
+    if (bundleID.length == 0) return NO;
+    NSString *lower = bundleID.lowercaseString;
+    return [lower hasPrefix:@"com.apple.preferences"];
+}
+
+- (void)noteBundleAssetHit:(NSString *)sample {
+    self.bundleAssetHits = self.bundleAssetHits + 1;
+    if (sample.length > 0) self.bundleAssetLastHit = sample;
 }
 
 #pragma mark 查询：文件覆盖

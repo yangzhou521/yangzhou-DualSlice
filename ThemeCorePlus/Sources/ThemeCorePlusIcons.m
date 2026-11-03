@@ -127,6 +127,10 @@ void TCPInstallIconSites(void) {
     }
     // 1.0.30 的「按选择器名全进程扫一遍」已撤：1.0.30 实测全进程没有任何类声明这三个选择器
     // （诊断里三个 *IconImageCache 全是 nomethod、byname 无输出），空跑一轮白吃启动预算。
+
+    // 1.0.42：Bundles 资源替换（用户点名「设置里的系统小图标」）。这一站在设置进程里才是主角，
+    // 图标站对设置没意义，所以它必须单独装，不能藏在图标站的判断里。
+    TCPInstallBundleAssetSites();
 }
 
 #pragma mark - 即时生效：不注销也能换图
@@ -666,6 +670,329 @@ static void TCPCompositeCalendarInk(CGContextRef ctx, CGRect rect, UIImage *syst
 // 1.0.30：日历墨层筛掉多少（-1 = 一个字没留下已回退旧行为），写进 dyn last 的 inkdrop=。
 static double sCalendarInkDrop = 0.0;
 
+#pragma mark - 1.0.43 日历文字：主题参数 + 系统字体（照 ThemeCore / SnowBoard 的做法自己画）
+
+// 为什么改（用户 2026-11-03 12:17 点名「ThemeCore 原插件包只是不支持图标角标阴影等等，
+// 桌面图标为什么不直接用它的实现方式」）—— 本机 strings 取证：
+//   ThemeCore.dylib 与 SnowBoardBase.dylib 里都带着同一组键：CalendarIconDateSettings /
+//   CalendarIconDaySettings / TextYoffset / FontWeight / IconBundles。也就是说主题 Info.plist
+//   这两节**本来就是给引擎自己画文字用的参数**，不是给抠像素用的。
+//   我们 1.0.7 起走「抠系统图的墨」：代价是永远对不齐，而且 1.0.32 的规则③专门把偏红像素
+//   判成「不是墨」，星期文字被整条丢掉 —— 现场就是「日历上只有数字、没有星期」。
+// 现在：底图照旧画主题素材，文字用**系统字体**按参数画。跟 ThemeCore / SnowBoard 同路。
+//
+// 参数语义（与 ThemeCore 对齐）：
+//   FontSize   —— 以 60pt 图标盒子标定的点数，图标更大就等比放大（k = 高度/60）。
+//   FontWeight —— UltraLight…Black。FontName 给了先按名字找字体；找不到（本机主题写的
+//                 "SF-Compact" 在 iOS 上没有这个可用字体名）就退回系统字体 + 这个字重。
+//   TextColor / ShadowColor / ShadowBlurRadius / TextYoffset / TextXoffset / ShadowYoffset。
+// 位置锚点（无偏移时的基准，占图标高度的比例；要微调只改这三行）：
+static const CGFloat kTCPCalDateBaseY = 0.520;   // 日期数字中心
+static const CGFloat kTCPCalDayBaseY  = 0.260;   // 星期文字中心
+static const CGFloat kTCPCalBaseSize  = 60.0;    // 参数里的点数按 60pt 图标标定
+
+static CGFloat TCPCalFloat(NSDictionary *dict, NSString *key, CGFloat fallback) {
+    id value = dict[key];
+    if ([value isKindOfClass:[NSNumber class]]) return (CGFloat)[value doubleValue];
+    if ([value isKindOfClass:[NSString class]]) return (CGFloat)[(NSString *)value doubleValue];
+    return fallback;
+}
+
+static NSString *TCPCalString(NSDictionary *dict, NSString *key) {
+    id value = dict[key];
+    if ([value isKindOfClass:[NSString class]] && [(NSString *)value length] > 0) return value;
+    return nil;
+}
+
+static UIFontWeight TCPCalWeight(NSString *name) {
+    if (name.length == 0) return UIFontWeightRegular;
+    NSString *n = [name lowercaseString];
+    if ([n isEqualToString:@"ultralight"])   return UIFontWeightUltraLight;
+    if ([n isEqualToString:@"thin"])         return UIFontWeightThin;
+    if ([n isEqualToString:@"light"])        return UIFontWeightLight;
+    if ([n isEqualToString:@"medium"])       return UIFontWeightMedium;
+    if ([n isEqualToString:@"semibold"])     return UIFontWeightSemibold;
+    if ([n isEqualToString:@"bold"])         return UIFontWeightBold;
+    if ([n isEqualToString:@"heavy"])        return UIFontWeightHeavy;
+    if ([n isEqualToString:@"black"])        return UIFontWeightBlack;
+    return UIFontWeightRegular;
+}
+
+// "#RRGGBB" / "#AARRGGBB" / @[@(r),@(g),@(b)]（0~255 或 0~1）。认不出就用 fallback。
+static UIColor *TCPCalParseColor(id value, UIColor *fallback) {
+    CGFloat r = 0, g = 0, b = 0, a = 1;
+    BOOL ok = NO;
+    if ([value isKindOfClass:[NSString class]]) {
+        NSString *s = [(NSString *)value stringByTrimmingCharactersInSet:
+                       [NSCharacterSet whitespaceCharacterSet]];
+        if ([s hasPrefix:@"#"]) s = [s substringFromIndex:1];
+        if (s.length == 6 || s.length == 8) {
+            unsigned long long v = strtoull(s.UTF8String, NULL, 16);
+            if (s.length == 8) {
+                a = ((v >> 24) & 0xFF) / 255.0;
+                r = ((v >> 16) & 0xFF) / 255.0;
+            } else {
+                r = ((v >> 16) & 0xFF) / 255.0;
+            }
+            g = ((v >> 8) & 0xFF) / 255.0;
+            b = (v & 0xFF) / 255.0;
+            ok = YES;
+        }
+    } else if ([value isKindOfClass:[NSArray class]] && [(NSArray *)value count] >= 3) {
+        NSArray *arr = value;
+        BOOL unit = YES;   // 三个分量都 <= 1 就当作 0~1
+        for (NSUInteger i = 0; i < 3; i++) {
+            if (![arr[i] isKindOfClass:[NSNumber class]] || [arr[i] doubleValue] > 1.0) unit = NO;
+        }
+        CGFloat div = unit ? 1.0 : 255.0;
+        r = [arr[0] doubleValue] / div;
+        g = [arr[1] doubleValue] / div;
+        b = [arr[2] doubleValue] / div;
+        if (arr.count >= 4 && [arr[3] isKindOfClass:[NSNumber class]]) {
+            a = unit ? [arr[3] doubleValue] : [arr[3] doubleValue] / 255.0;
+        }
+        ok = YES;
+    }
+    if (!ok) return fallback;
+    return [UIColor colorWithRed:r green:g blue:b alpha:a];
+}
+
+static CGFloat TCPCalColorLuminance(UIColor *color) {
+    CGFloat r = 0, g = 0, b = 0, a = 1;
+    if (![color getRed:&r green:&g blue:&b alpha:&a]) return 0.0;
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+// 字色兜底（只在极端情况下改主题给的颜色，避免「白底白字看不见」）：
+// 底很亮而字也很亮 → 换黑；底很暗而字也很暗 → 换白。其余一律照主题来。
+static UIColor *TCPCalVisibleColor(UIColor *wanted, CGFloat baseLum, BOOL *adjusted) {
+    CGFloat lum = TCPCalColorLuminance(wanted);
+    if (baseLum >= 0.80 && lum >= 0.80) { if (adjusted) *adjusted = YES; return [UIColor blackColor]; }
+    if (baseLum <= 0.10 && lum <= 0.12) { if (adjusted) *adjusted = YES; return [UIColor whiteColor]; }
+    return wanted;
+}
+
+// FontName 优先；找不到（例如主题写的 "SF-Compact"）退回系统字体 + FontWeight。
+static UIFont *TCPCalFont(NSDictionary *settings, CGFloat size, BOOL *systemFallback) {
+    UIFontWeight weight = TCPCalWeight(TCPCalString(settings, @"FontWeight"));
+    NSString *name = TCPCalString(settings, @"FontName");
+    UIFont *font = nil;
+    if (name.length > 0) font = [UIFont fontWithName:name size:size];
+    if (font == nil) {
+        if (systemFallback) *systemFallback = (name.length > 0);
+        font = [UIFont systemFontOfSize:size weight:weight];
+    }
+    return font;
+}
+
+// 星期文字：系统同一套本地化（中文「周一」、英文「MON」…）。
+static NSString *TCPCalWeekdayText(void) {
+    static NSDateFormatter *fmt = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        fmt = [[NSDateFormatter alloc] init];
+        NSString *template = [NSDateFormatter dateFormatFromTemplate:@"EEE" options:0
+                                                             locale:[NSLocale currentLocale]];
+        fmt.dateFormat = template.length > 0 ? template : @"EEE";
+    });
+    @synchronized (fmt) {
+        return [fmt stringFromDate:[NSDate date]];
+    }
+}
+
+static NSString *TCPCalDayText(void) {
+    static NSDateFormatter *fmt = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        fmt = [[NSDateFormatter alloc] init];
+        fmt.dateFormat = @"d";
+    });
+    @synchronized (fmt) {
+        return [fmt stringFromDate:[NSDate date]];
+    }
+}
+
+// 画一层文字。box/字号/颜色/阴影全按这一节的参数来；没画成返回 NO。
+static BOOL TCPCalDrawLayer(CGContextRef ctx, CGRect rect, NSString *text, NSDictionary *settings,
+                            CGFloat baseY, CGFloat defaultSize, CGFloat scaleFactor,
+                            CGFloat baseLum, NSMutableArray<NSString *> *info) {
+    if (ctx == NULL || text.length == 0 || settings == nil) return NO;
+    CGFloat size = TCPCalFloat(settings, @"FontSize", defaultSize) * scaleFactor;
+    if (!(size > 1.0)) size = defaultSize * scaleFactor;
+    if (size > rect.size.height * 0.9) size = rect.size.height * 0.9;
+
+    BOOL systemFallback = NO;
+    UIFont *font = TCPCalFont(settings, size, &systemFallback);
+    if (font == nil) return NO;
+
+    BOOL adjusted = NO;
+    UIColor *color = TCPCalParseColor(settings[@"TextColor"], [UIColor blackColor]);
+    color = TCPCalVisibleColor(color, baseLum, &adjusted);
+
+    NSMutableDictionary *attrs = [NSMutableDictionary dictionary];
+    attrs[NSFontAttributeName] = font;
+    attrs[NSForegroundColorAttributeName] = color;
+
+    CGFloat blur = TCPCalFloat(settings, @"ShadowBlurRadius", 0) * scaleFactor;
+    if (blur > 0) {
+        NSShadow *shadow = [[NSShadow alloc] init];
+        shadow.shadowColor = TCPCalParseColor(settings[@"ShadowColor"],
+                                             [UIColor colorWithWhite:0.0 alpha:0.5]);
+        shadow.shadowBlurRadius = blur;
+        shadow.shadowOffset = CGSizeMake(TCPCalFloat(settings, @"ShadowXoffset", 0) * scaleFactor,
+                                         TCPCalFloat(settings, @"ShadowYoffset", 0) * scaleFactor);
+        attrs[NSShadowAttributeName] = shadow;
+    }
+    NSMutableParagraphStyle *style = [[NSMutableParagraphStyle alloc] init];
+    style.alignment = NSTextAlignmentCenter;
+    style.lineBreakMode = NSLineBreakByClipping;
+    attrs[NSParagraphStyleAttributeName] = style;
+
+    CGSize textSize = [text sizeWithAttributes:attrs];
+    if (textSize.width <= 0 || textSize.height <= 0) return NO;
+    CGFloat cx = CGRectGetMidX(rect) + TCPCalFloat(settings, @"TextXoffset", 0) * scaleFactor;
+    CGFloat cy = rect.size.height * baseY + TCPCalFloat(settings, @"TextYoffset", 0) * scaleFactor;
+    CGRect drawRect = CGRectMake(cx - textSize.width * 0.5, cy - textSize.height * 0.5,
+                                 textSize.width, textSize.height);
+    [text drawInRect:drawRect withAttributes:attrs];
+
+    [info addObject:[NSString stringWithFormat:@"%@@%.1f,y%.0f,w%.0f%@%@", text, size,
+                     drawRect.origin.y, textSize.width,
+                     systemFallback ? @",sf" : @"", adjusted ? @",auto" : @""]];
+    return YES;
+}
+
+// 从系统日历图里量出「星期」「日期」两块文字的中心（比例坐标 0~1，相对整图高度），
+// 顺便给出墨占比。**量的只是位置**：文字的颜色/字号/字体一律听主题参数、由系统字体自绘。
+//
+// 为什么要量：文字该摆在图标哪个高度是系统自己的版式，各 iOS 版本/机型/语言不一样，
+// 写死比例迟早对不齐（老路抠墨就是这么一路歪下来的）。
+// 判据不依赖「白底 + 黑字」这种假设：先直方图求不透明像素的主色 = 卡片底色，
+// 再把「与底色亮度差 > 0.25」的像素当墨，按行投影分成上下两簇（上 = 星期，下 = 日期）。
+// 亮色图标（白底黑字）与深色图标（黑底白字）都能量。
+// 量不出来（底色不占多数、墨太少、簇分不开）返回 NO，调用方用固定比例兜底。
+static BOOL TCPCalendarSystemTextBoxes(UIImage *image, CGFloat *weekdayCenterY,
+                                       CGFloat *dateCenterY, double *inkRatio) {
+    if (image == nil || image.CGImage == NULL) return NO;
+    CGImageRef cg = image.CGImage;
+    size_t sw = CGImageGetWidth(cg), sh = CGImageGetHeight(cg);
+    if (sw < 16 || sh < 16) return NO;
+    size_t dw = MIN(sw, (size_t)96), dh = MIN(sh, (size_t)96);
+    unsigned char *buf = calloc(dw * dh, 4);
+    if (buf == NULL) return NO;
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef tmp = CGBitmapContextCreate(buf, dw, dh, 8, dw * 4, space,
+                                             (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(space);
+    if (tmp == NULL) { free(buf); return NO; }
+    CGContextDrawImage(tmp, CGRectMake(0, 0, (CGFloat)dw, (CGFloat)dh), cg);
+    CGContextRelease(tmp);
+
+    // ① 卡片底色 = 不透明像素直方图里最多的一桶（4bit/通道），再把这桶像素平均一下拿准色。
+    unsigned short bins[4096] = {0};   // 8KB 栈上；计数上限 dw*dh≤9216 < 65535
+    size_t total = 0;
+    for (size_t i = 0; i < dw * dh; i++) {
+        if (buf[i * 4 + 3] < 16) continue;
+        size_t b = ((size_t)(buf[i * 4] >> 4) << 8) | ((size_t)(buf[i * 4 + 1] >> 4) << 4) |
+                   (size_t)(buf[i * 4 + 2] >> 4);
+        bins[b]++;
+        total++;
+    }
+    if (total < 64) { free(buf); return NO; }
+    size_t best = 0, bestN = 0;
+    for (size_t b = 0; b < 4096; b++) if (bins[b] > bestN) { bestN = bins[b]; best = b; }
+    if (bestN * 4 < total) { free(buf); return NO; }   // 底色不占多数：不是常规日历图
+    double sr = 0, sg = 0, sb = 0;
+    size_t sn = 0;
+    for (size_t i = 0; i < dw * dh; i++) {
+        if (buf[i * 4 + 3] < 16) continue;
+        size_t b = ((size_t)(buf[i * 4] >> 4) << 8) | ((size_t)(buf[i * 4 + 1] >> 4) << 4) |
+                   (size_t)(buf[i * 4 + 2] >> 4);
+        if (b != best) continue;
+        sr += buf[i * 4]; sg += buf[i * 4 + 1]; sb += buf[i * 4 + 2];
+        sn++;
+    }
+    if (sn == 0) { free(buf); return NO; }
+    double bgLum = (0.299 * (sr / sn) + 0.587 * (sg / sn) + 0.114 * (sb / sn)) / 255.0;
+
+    // ② 行投影：每行「与底色亮度差 > 0.25」的像素数就是这一行的墨。
+    unsigned char *rowInk = calloc(dh, 1);
+    if (rowInk == NULL) { free(buf); return NO; }
+    size_t inkTotal = 0, first = dh, last = 0;
+    for (size_t y = 0; y < dh; y++) {
+        size_t n = 0;
+        for (size_t x = 0; x < dw; x++) {
+            size_t i = y * dw + x;
+            if (buf[i * 4 + 3] < 16) continue;
+            double lum = (0.299 * buf[i * 4] + 0.587 * buf[i * 4 + 1] + 0.114 * buf[i * 4 + 2]) / 255.0;
+            if (fabs(lum - bgLum) > 0.25) n++;
+        }
+        rowInk[y] = (unsigned char)MIN(n, (size_t)255);
+        inkTotal += n;
+        if (n > 0) { if (y < first) first = y; last = y; }
+    }
+    free(buf);
+    if (first >= last || inkTotal < (size_t)(dw * dh) / 200) { free(rowInk); return NO; }
+
+    // ③ 两簇之间最大的那段空白就是分界；它必须落在中间，否则当成整块图形（退回固定比例）。
+    size_t gapStart = 0, gapLen = 0, curStart = 0, curLen = 0;
+    for (size_t y = first; y <= last; y++) {
+        if (rowInk[y] == 0) {
+            if (curLen == 0) curStart = y;
+            curLen++;
+            if (curLen > gapLen) { gapLen = curLen; gapStart = curStart; }
+        } else {
+            curLen = 0;
+        }
+    }
+    size_t span = last - first;
+    size_t split = first + span / 2;
+    if (gapLen >= 2 && gapStart > first + span / 6 && gapStart + gapLen < last - span / 6) {
+        split = gapStart + gapLen / 2;
+    }
+
+    size_t topSum = 0, topN = 0, botSum = 0, botN = 0;
+    for (size_t y = first; y <= last; y++) {
+        if (rowInk[y] == 0) continue;
+        if (y < split) { topSum += y; topN++; } else { botSum += y; botN++; }
+    }
+    free(rowInk);
+    if (topN == 0 || botN == 0) return NO;
+
+    CGFloat dayY = (CGFloat)(((double)topSum / (double)topN + 0.5) / (double)dh);
+    CGFloat dateY = (CGFloat)(((double)botSum / (double)botN + 0.5) / (double)dh);
+    // 合理性：上簇在上、下簇在下、两簇拉开一点距离、都在图内。任一条不满足就当没量到。
+    if (!(dayY > 0.04 && dateY < 0.96 && dateY - dayY > 0.10)) return NO;
+    if (weekdayCenterY) *weekdayCenterY = dayY;
+    if (dateCenterY) *dateCenterY = dateY;
+    if (inkRatio) *inkRatio = (double)inkTotal / (double)(dw * dh);
+    return YES;
+}
+
+// 日历合成：主题底图 + 自己画的星期/日期文字。返回写进 dyn last 的描述串。
+static NSString *TCPCompositeCalendarText(CGContextRef ctx, CGRect rect, UIImage *base,
+                                          UIImage *systemImage,
+                                          NSDictionary *dateSettings, NSDictionary *daySettings) {
+    if (ctx == NULL || rect.size.height <= 0) return @"base+text(none)";
+    CGFloat k = rect.size.height / kTCPCalBaseSize;
+    CGFloat baseLum = base != nil ? TCPPixelStatsForImage(base).luminance : 0.5;
+
+    CGFloat dayY = kTCPCalDayBaseY, dateY = kTCPCalDateBaseY;
+    double inkRatio = 0.0;
+    BOOL measured = TCPCalendarSystemTextBoxes(systemImage, &dayY, &dateY, &inkRatio);
+
+    NSMutableArray<NSString *> *info = [NSMutableArray array];
+    BOOL day = TCPCalDrawLayer(ctx, rect, TCPCalWeekdayText(), daySettings,
+                               dayY, 9.5, k, baseLum, info);
+    BOOL date = TCPCalDrawLayer(ctx, rect, TCPCalDayText(), dateSettings,
+                                dateY, 30.0, k, baseLum, info);
+    if (!day && !date) return measured ? @"base+text(none,box)" : @"base+text(none)";
+    return [NSString stringWithFormat:@"base+text(%@,%@,%.2f/%.2f,ink=%.2f)",
+            [info componentsJoinedByString:@","],
+            measured ? @"sys" : @"fix", dayY, dateY, inkRatio];
+}
+
+
 UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *systemImage) {
     if (icon == nil || info.size.width <= 0 || info.size.height <= 0) return nil;
     NSString *bundleID = TCPIconBundleIdentifier(icon);
@@ -731,16 +1058,27 @@ UIImage *TCPCompositeDynamicIcon(id icon, TCPIconImageInfo info, UIImage *system
         }
         how = [NSString stringWithFormat:@"face+h%.0fx%.0f+m%.0fx%.0f", hw, hh, mw, mh];
     } else {
-        // 日历 —— 画主题底图，再把系统日期的黑色数字墨层叠上去。
-        // 1.0.33 曾只画底图（以为系统会自己叠日期），实测系统不往合成图上叠 → 日历没文字 = bug（用户报）。
-        // 这里补回 TCPCompositeCalendarInk：把系统日历图里的日期数字（墨）提取出来，按底图明暗选黑/白画上。
-        // 画的是日历图标固有的日期数字，不是桌面图标下方那一排文字（那仍归系统/字体）。
+        // 日历（1.0.43 起照 ThemeCore / SnowBoard 的做法：**底图用主题素材，文字自己画**）。
+        //
+        // 为什么换（用户 2026-11-03 12:17 点名）—— 本机 strings 取证：ThemeCore.dylib 与
+        // SnowBoardBase.dylib 里都带着 CalendarIconDateSettings / CalendarIconDaySettings /
+        // TextYoffset / FontWeight / IconBundles 同一组键，说明主题 Info.plist 这两节
+        // **本来就是给引擎自己用系统字体画文字的参数**。我们 1.0.7 起却拿它去抠系统图的墨：
+        // 永远对不齐，而且 1.0.32 的规则③专门把偏红像素判成「不是墨」，星期文字被整条丢掉。
+        // 现在：底图照旧画主题素材，星期/日期文字用系统字体按参数画上去。
+        // 主题没声明这两节时才退回老路（抠墨），免得别的主题反而变差。
         [themed drawInRect:rect];
-        if (systemImage != nil) {
-            TCPPixelStats s = TCPPixelStatsForImage(themed);
-            TCPCompositeCalendarInk(ctx, rect, systemImage, s.luminance < 0.5);
+        NSDictionary *dateSettings = [store calendarDateSettings];
+        NSDictionary *daySettings = [store calendarDaySettings];
+        if (dateSettings != nil || daySettings != nil) {
+            how = TCPCompositeCalendarText(ctx, rect, themed, systemImage, dateSettings, daySettings);
+        } else {
+            if (systemImage != nil) {
+                TCPPixelStats s = TCPPixelStatsForImage(themed);
+                TCPCompositeCalendarInk(ctx, rect, systemImage, s.luminance < 0.5);
+            }
+            how = @"base+ink(nocfg)";
         }
-        how = @"base+ink";
     }
 
     UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
@@ -2148,4 +2486,118 @@ void TCPInstallDisplaySites(void) {
     if (installed > 0) {
         os_log(TCPLogHandle(), "TCPS_ICON_DISPLAY_SITES +%lu", (unsigned long)installed);
     }
+}
+
+#pragma mark - 1.0.42：Bundles 资源替换（iOS「设置」里的小图标）
+
+// 主题里的 Bundles/<bundleid>/<图片名>[@2x|@3x].png 直接顶掉那个 bundle 里的同名图。
+// 用户点名的用法：iOS「设置」每一行左边的小图标（通用 / 显示与亮度 / Wi-Fi / 蓝牙…）
+// 来自 com.apple.preferences-ui-framework，主题给了同名图就该在设置里显示出来。
+//
+// 挂点：+[UIImage imageNamed:]（走 mainBundle）与
+//       +[UIImage imageNamed:inBundle:compatibleWithTraitCollection:]（调用方自己传 framework 的 bundle）。
+// 设置走的就是这两条。它们也是全进程最热的图片入口，所以**先**用名字集合 O(1) 排除，
+// 名字没在主题里出现过就直接走原实现 —— 绝大多数调用只多一次 NSSet 查询。
+//
+// 铁律（1.4.0 那次进安全模式的教训）：这里只在「主线程 + UIApplication 已经存在」时读一次
+// 屏幕倍率并缓存；构造函数阶段一律用 2，绝不碰 UIScreen。
+
+static NSSet<NSString *> *sBundleAssetNames = nil;
+static NSUInteger sBundleAssetNamesGeneration = NSUIntegerMax;
+static NSInteger sBundleAssetHitTotal = 0;
+
+static UIImage *(*sBundleAssetImageNamedOrig)(id, SEL, NSString *) = NULL;
+static UIImage *(*sBundleAssetImageNamedInBundleOrig)(id, SEL, NSString *, NSBundle *, UITraitCollection *) = NULL;
+
+static NSSet<NSString *> *TCPBundleAssetNames(void) {
+    TCPThemeStore *store = [TCPThemeStore shared];
+    NSUInteger generation = store.generation;
+    if (sBundleAssetNames == nil || sBundleAssetNamesGeneration != generation) {
+        sBundleAssetNames = [store bundleAssetNames];
+        sBundleAssetNamesGeneration = generation;
+    }
+    return sBundleAssetNames;
+}
+
+static CGFloat TCPBundleAssetScale(void) {
+    static CGFloat cached = 0;
+    if (cached > 0) return cached;
+    if (![NSThread isMainThread]) return 2.0;
+    Class appClass = objc_getClass("UIApplication");
+    if (appClass == Nil) return 2.0;
+    BOOL ready = NO;
+    @try {
+        id app = ((id (*)(id, SEL))objc_msgSend)(appClass, NSSelectorFromString(@"sharedApplication"));
+        ready = (app != nil);
+    } @catch (__unused NSException *exception) {
+        ready = NO;
+    }
+    if (!ready) return 2.0;
+    @try {
+        cached = [UIScreen mainScreen].scale;
+    } @catch (__unused NSException *exception) {
+        cached = 0;
+    }
+    return cached > 0 ? cached : 2.0;
+}
+
+// 命中就返回主题那张图（imageWithContentsOfFile: 会按文件名里的 @2x/@3x 定 scale）。
+static UIImage *TCPBundleAssetReplacement(NSString *name, NSBundle *bundle) {
+    if (name.length == 0) return nil;
+    TCPThemeStore *store = [TCPThemeStore shared];
+    if (!store.active) return nil;
+    if (![TCPBundleAssetNames() containsObject:name.lowercaseString]) return nil;
+
+    NSString *bundleID = nil;
+    @try {
+        bundleID = bundle.bundleIdentifier;
+    } @catch (__unused NSException *exception) {
+        bundleID = nil;
+    }
+    if (bundleID.length == 0) {
+        bundleID = [[NSBundle mainBundle] bundleIdentifier];
+    }
+    CGFloat scale = TCPBundleAssetScale();
+    NSString *path = [store bundleAssetPathForBundleID:bundleID name:name scale:scale];
+    if (path.length == 0 && [store isPreferencesBundleID:bundleID]) {
+        // bundle id 与主题目录名对不上时的兜底：这个名字在主题里只出现一次就用它。
+        path = [store bundleAssetPathForUniqueName:name scale:scale];
+    }
+    if (path.length == 0) return nil;
+
+    UIImage *image = [UIImage imageWithContentsOfFile:path];
+    if (image == nil) return nil;
+    sBundleAssetHitTotal++;
+    [store noteBundleAssetHit:[NSString stringWithFormat:@"%@:%@", bundleID ?: @"-", name]];
+    return image;
+}
+
+static UIImage *TCPBundleAssetImageNamedHook(id self, SEL _cmd, NSString *name) {
+    UIImage *replacement = TCPBundleAssetReplacement(name, nil);
+    if (replacement != nil) return replacement;
+    return sBundleAssetImageNamedOrig ? sBundleAssetImageNamedOrig(self, _cmd, name) : nil;
+}
+
+static UIImage *TCPBundleAssetImageNamedInBundleHook(id self, SEL _cmd, NSString *name,
+                                                     NSBundle *bundle, UITraitCollection *traits) {
+    UIImage *replacement = TCPBundleAssetReplacement(name, bundle);
+    if (replacement != nil) return replacement;
+    return sBundleAssetImageNamedInBundleOrig
+        ? sBundleAssetImageNamedInBundleOrig(self, _cmd, name, bundle, traits)
+        : nil;
+}
+
+void TCPInstallBundleAssetSites(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Class imageClass = [UIImage class];
+        MSHookMessageEx(object_getClass(imageClass), @selector(imageNamed:),
+                        (IMP)TCPBundleAssetImageNamedHook, (IMP *)&sBundleAssetImageNamedOrig);
+        MSHookMessageEx(object_getClass(imageClass),
+                        @selector(imageNamed:inBundle:compatibleWithTraitCollection:),
+                        (IMP)TCPBundleAssetImageNamedInBundleHook,
+                        (IMP *)&sBundleAssetImageNamedInBundleOrig);
+        os_log(TCPLogHandle(), "TCPS_BUNDLE_ASSETS names=%lu",
+               (unsigned long)TCPBundleAssetNames().count);
+    });
 }

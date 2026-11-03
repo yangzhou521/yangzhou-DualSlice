@@ -13,6 +13,7 @@
 
 // 各站点模块的入口；装配顺序由 ThemeCorePlusMain.m 的构造函数决定。
 void TCPInstallIconSites(void);     // ThemeCorePlusIcons.m
+void TCPInstallBundleAssetSites(void);  // ThemeCorePlusIcons.m（1.0.42：Bundles 资源替换 = 设置里的小图标）
 void TCPInstallDisplaySites(void);  // ThemeCorePlusIcons.m（SBIconImageView 显示层）
 void TCPInstallBadgeSites(void);    // ThemeCorePlusBadges.m
 void TCPInstallFolderSites(void);   // ThemeCorePlusFolders.m

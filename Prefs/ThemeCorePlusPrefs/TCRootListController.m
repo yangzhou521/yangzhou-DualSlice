@@ -67,26 +67,13 @@ enum {
 - (NSArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
 @end
 
-#pragma mark - 页脚：只写作者（1.0.40 起不再有「越狱源」链接）
+#pragma mark - 页脚（1.0.42：二级页不再显示作者）
 //
-// 用户 2026-11-03：「我没越狱源，点它没必要」→ 页脚不再有可点的那一段，于是
-// PSFooterHyperlinkView / footerHyperlinkRange / footerHyperlinkAction 全部不用，
-// 「点开仓库」那条路径（原 TCPOpenProjectRepository()）一并删除。
-
-// 页脚文字：一级页由 Root.plist 给同一份字面，二级页在代码里生成同样的组单元。
-static NSString *TCPPanelFooterText(void) {
-    return @"作者：yangzhou";
-}
-
-// 代码生成的组单元要做页脚：一级页由 Root.plist 给同一份字面（Preferences 只认字面键名）。
-// 1.0.40 起只有纯文字 + 居中，不再有 footerCellClass / footerHyperlink* 那几把键。
-static PSSpecifier *TCPPanelFooterSpecifier(id target) {
-    (void)target;
-    PSSpecifier *footer = [PSSpecifier groupSpecifierWithName:@""];
-    [footer setProperty:TCPPanelFooterText() forKey:@"footerText"];
-    [footer setProperty:@1 forKey:@"footerAlignment"];
-    return footer;
-}
+// 用户 2026-11-03 06:00：「作者：yangzhou 不要在第二级界面显示了，删掉它」——
+// 二级页（选择主题）底部的「作者：yangzhou」组单元与生成它的两个静态函数一并删除。
+// 一级页那个页脚仍在 Prefs/ThemeCorePlusPrefs/Root.plist 里承载（用户没让删一级页）。
+// 「越狱源」超链接早在 1.0.40 就删了：PSFooterHyperlinkView / footerHyperlinkRange /
+// footerHyperlinkAction 全部不用，「点开仓库」那条路径（原 TCPOpenProjectRepository()）也不存在了。
 
 #pragma mark - 偏好里存着的叠加链（总开关关着时引擎不解析，面板要显示「存着什么」）
 
@@ -253,7 +240,7 @@ static NSArray<NSString *> *TCPStoredThemeChain(void) {
                     forKey:@"footerText"];
         [specs addObject:empty];
     }
-    [specs addObject:TCPPanelFooterSpecifier(self)];
+    // 1.0.42：二级页不再追加「作者：yangzhou」页脚（用户 2026-11-03 06:00）。
     return specs;
 }
 

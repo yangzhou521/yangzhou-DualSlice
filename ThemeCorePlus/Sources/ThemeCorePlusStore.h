@@ -80,6 +80,29 @@ void TCPStoreEnableImageWork(void);
 // bundleID 为空时只查全局表。
 - (NSString *)overridePathForBundleID:(NSString *)bundleID fileName:(NSString *)fileName;
 
+// —— 查询：Bundles 资源替换（1.0.42）——
+// 主题 Bundles/<bundleid>/<图片名>[@2x|@3x].png → 在那个 bundle 里顶掉系统同名图。
+// 用户点名的用法：iOS「设置」每一行左边的小图标来自 com.apple.preferences-ui-framework，
+// 主题给的 General@3x.png / WiFi@3x.png… 就靠这条换上去。
+- (NSString *)bundleAssetPathForBundleID:(NSString *)bundleID name:(NSString *)name scale:(CGFloat)scale;
+// 兜底：这个名字在所有主题的 Bundles 里只出现一次时用（bundle id 与主题目录名对不上时）。
+// 只在设置相关进程里用，见 -isPreferencesBundleID:。
+- (NSString *)bundleAssetPathForUniqueName:(NSString *)name scale:(CGFloat)scale;
+- (NSSet<NSString *> *)bundleAssetNames;      // 可替换图片名（小写），挂点用来 O(1) 排除
+- (BOOL)isPreferencesBundleID:(NSString *)bundleID;
+- (void)noteBundleAssetHit:(NSString *)sample;
+
+// —— 查询：主题 Info.plist 的日历图标文字 DIY 配置（1.0.42）——
+// 用户 2026-11-03 点名：「日历图标 com.apple.mobilecal-large.png 是空白底图，上星期 / 下日期
+// 的文字大小、位置、颜色这些让系统自己加载它」→ 素材在 Info.plist 里给了两节：
+//   CalendarIconDateSettings：日期数字（FontSize / FontWeight / TextColor / ShadowColor /
+//                             ShadowBlurRadius / TextYoffset）
+//   CalendarIconDaySettings ：星期文字（同上 + FontName，本机是 SF-Compact）
+// 引擎照这套参数用系统字体把文字画在主题底图上，不再抠系统图的像素当墨。
+// 多层叠加时与素材同一套顺序：靠后的主题先落表、也就说了算。没有主题声明时返回 nil（用默认值）。
+- (NSDictionary *)calendarDateSettings;
+- (NSDictionary *)calendarDaySettings;
+
 // —— 面板用：一个主题自己带了哪几类素材 ——
 // 键就是下面这四个常量，值都是 NSNumber 计数（件数，不是 App 个数；0 = 这类素材是空的）。
 // 只做浅扫：不建索引、不读图、不合成，也不缓存。
