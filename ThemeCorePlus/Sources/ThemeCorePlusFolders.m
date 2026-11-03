@@ -33,6 +33,11 @@ void TCPInstallFolderSites(void) {
     if (installed > 0) {
         os_log(TCPLogHandle(), "TCPS_FOLDER_SITES +%lu", (unsigned long)installed);
     }
+    // 【Bug 5 补丁】同步尝试安装 SBFolderIcon 的 mini-grid 入口（1.0.32 新增真正的 mini 图方法）
+    // iOS 16 真正出 mini 图的入口是 SBFolderIcon 的 -miniGridCellImageForIcon:，
+    // 之前的 SBFolderIconImageCache 站即使挂上了系统一次都不调；
+    // 此处顺带一试，装上后后续进程里的 TCPFolderNotifyRecalc 会通知系统重算 mini 图。
+    TCPInstallFolderMiniCellSite();
 }
 
 // 1.0.12：文件夹收起状态 mini 拼图「每一格图标图」。
@@ -61,6 +66,9 @@ void TCPInstallFolderGridCellSites(void) {
     if (mg > 0) {
         os_log(TCPLogHandle(), "TCPS_FOLDER_MINIGRID_SITES +%lu", (unsigned long)mg);
     }
+    // 【Bug 5 补丁】同步尝试安装 SBFolderIcon 的 mini-grid 入口（1.0.32 新增真正的 mini 图方法）
+    // 与 TCPInstallFolderSites 保持一致，确保不管系统跑哪条路径，mini-cell 站都被尝试挂上。
+    TCPInstallFolderMiniCellSite();
 }
 
 // 1.0.22：文件夹收起 mini 拼图不重新生成的修法。
