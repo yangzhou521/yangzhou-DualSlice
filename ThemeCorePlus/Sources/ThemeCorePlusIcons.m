@@ -224,7 +224,10 @@ static void TCPPurgeViewImageCache(id view) {
         sRefreshCacheMiss++;
         return;
     }
-    for (NSString *name in @[ @"purgeCache", @"purgeAllCaches", @"purgeCaches",
+    // 1.0.44：同 Store.m 的 purgeSystemIconCache —— 真正的零参方法叫 purgeAllCachedImages
+    // （本机反射探针 TCPCacheProbe.txt 坐实），旧名字一个都不存在，所以这条一直在空转。
+    for (NSString *name in @[ @"purgeAllCachedImages",
+                              @"purgeCache", @"purgeAllCaches", @"purgeCaches",
                               @"clearCache", @"removeAllObjects" ]) {
         SEL sel = NSSelectorFromString(name);
         if ([cache respondsToSelector:sel]) {
