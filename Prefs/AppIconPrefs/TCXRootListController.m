@@ -220,9 +220,14 @@ static NSString *TCXEffectiveThemeName(void) {
 }
 
 - (NSArray *)specifiers {
-    // 同根页：只懒加载一次，别在 reloadSpecifiers 里重建对象——
-    // 重建会让表格 cell 指向旧 specifier，开关点了不回弹。
-    if (_specifiers == nil) _specifiers = [self tcyBuildSpecifiers];
+    // 关键：Preferences 靠父类的 _specifiers 缓存去建表格行与绑定事件。
+    // 只返回自己算的数组、不交给 setSpecifiers:，结果就是「只画出 group 的说明文字、
+    // 下面一行主题都没有」（用户 2026-11-05 23:20 报的正是这个）。
+    if (_specifiers == nil) {
+        NSArray *built = [self tcyBuildSpecifiers];
+        [self setSpecifiers:built];   // 走父类入口，缓存与表格才一致
+        _specifiers = built;
+    }
     return _specifiers;
 }
 
@@ -253,9 +258,13 @@ static NSString *TCXEffectiveThemeName(void) {
 }
 
 - (NSArray *)specifiers {
-    // 只懒加载一次：Preferences 会把这份数组挂在父类缓存上，控件事件也靠它找 specifier。
-    // 反复重建会让表格里现有的 cell 指向旧 specifier，表现为「开关能画、点了不回弹」。
-    if (_specifiers == nil) _specifiers = [self tcyBuildSpecifiers];
+    // 同主题页：结果必须交给父类 setSpecifiers:，否则 Preferences 内部缓存在空，
+    // 表格只画出分组说明、开关一行都没有（表现就是「点了没反应」）。
+    if (_specifiers == nil) {
+        NSArray *built = [self tcyBuildSpecifiers];
+        if (built.count > 0) [self setSpecifiers:built];
+        _specifiers = built;
+    }
     return _specifiers;
 }
 
