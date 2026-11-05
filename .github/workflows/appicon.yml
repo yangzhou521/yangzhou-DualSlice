@@ -105,14 +105,21 @@ jobs:
             find ./packages -name "*.deb" -type f
           else
             # GitHub 每个 step 只留 10 条注解：报错压成一条多行注解。
-            ERRCOUNT=$(grep -cE "error:|fatal error|1 error generated\." /tmp/ai-build.log || true)
+            # grep 无匹配返回 1，在 pipefail + bash -e 下整步提前退出、注解写不出
+            # （run 42004354714 只剩「exit code 1」）。这里关掉 -e。
+            set +e
+            ERRCOUNT=$(grep -cE "error:|fatal error|1 error generated\." /tmp/ai-build.log)
             {
               grep -E "error:|fatal error|1 error generated\." /tmp/ai-build.log | head -n 25
               echo "--- tail of build log ---"
-              tail -n 10 /tmp/ai-build.log
+              tail -n 15 /tmp/ai-build.log
             } | awk '{ gsub(/%/,"%25"); gsub(/\r/,""); print }' > /tmp/ai-errs.txt
             BODY=$(awk 'BEGIN{ORS=""} NR>1{printf "%%0A"} {print}' /tmp/ai-errs.txt)
-            echo "::error title=build-appicon errlines=${ERRCOUNT}::${BODY}"
+            echo "::error title=build-appicon errlines=${ERRCOUNT:-0}::${BODY}"
+            # 尾部逐行单独发，防多行注解被截断
+            tail -n 8 /tmp/ai-build.log | while IFS= read -r line; do
+              echo "::warning title=build-tail::${line}"
+            done
             exit 1
           fi
 
