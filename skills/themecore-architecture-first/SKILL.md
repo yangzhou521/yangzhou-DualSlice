@@ -1,12 +1,13 @@
 ---
 name: themecore-architecture-first
-description: 做 ThemeCore 系（AppIcon 等）越狱主题插件时的第一性原则：架构与 ThemeCore 0.5.1 完全一致，不许自己天马行空加机制；含它的二进制实证清单（构造函数、dispatch、惰性枚举、过滤器、依赖、挂站类、生成入口）与被否掉的自我发明清单；怎么用 od+awk 从 dylib 抽类名选择器。
+description: 做 ThemeCore 系（AppIcon 等）越狱主题插件时的第一性原则：架构与 ThemeCore 0.5.1 完全一致，不许自己天马行空加机制；含它的二进制实证清单（构造函数、dispatch、惰性枚举、过滤器、依赖、挂站类、生成入口）、被否掉的自我发明清单、以及怎么用 od+awk 从 dylib 抽类名选择器。任何改码前先读。
 ---
 
 # 第一性原则：与 ThemeCore 0.5.1 架构完全一致
 
-用户 2026-11-06 00:03：「ThemeCore 它没有什么明显 bug 就完全抄它的！和它架构一致！这是第一性原则你不要打破！」
-「全部与 ThemeCore 一致，不要你自己天马行空乱写！」
+用户 2026-11-06 00:03 / 00:04：「ThemeCore 它没有什么明显 bug 就完全抄它的！和它架构一致！
+这是第一性原则你不要打破！」「全部与 ThemeCore 一致，不要你自己天马行空乱写！」
+「你优化补充维生修改总结一下并入以上相关内容！防止你老跑偏！」
 
 ## 判断规则（每次动手前先问）
 
@@ -35,8 +36,8 @@ TCIconServicesIsCurrentProcess()
 
 **dispatch 符号**（全部）：`dispatch_async`、`dispatch_queue_create`、
 `dispatch_queue_attr_make_with_qos_class`、`dispatch_get_global_queue`、
-`__dispatch_main_q`、`dispatch_once`、`dispatch_source_*`（内存压力）、
-`dispatch_resume`。**没有 `dispatch_after` / `dispatch_time`**。
+`__dispatch_main_q`、`dispatch_once`、`dispatch_source_*`（内存压力）、`dispatch_resume`。
+**没有 `dispatch_after` / `dispatch_time`**。
 
 **文件与图片**：
 - 目录枚举 `enumeratorAtPath:`（惰性），不用 `contentsOfDirectoryAtPath:`（一次性读全目录）
@@ -44,7 +45,7 @@ TCIconServicesIsCurrentProcess()
 
 **过滤器**（ThemeCore.plist，实测）：
 `Bundles: com.apple.UIKit` + `Mode: Any` + `Executables: iconservicesagent / ShareUI / sharingd`
-—— **没有 SpringBoard**，靠 `com.apple.UIKit` 这条进桌面。
+—— **没有 SpringBoard**，靠 `com.apple.UIKit` 这条进桌面。别自作聪明改成进程白名单。
 
 **依赖**：`Depends: mobilesubstrate (>= 0.9.5000), preferenceloader, firmware (>= 15.0)`
 + `Pre-Depends: rootless-compat (>= 0.9)`
@@ -55,7 +56,7 @@ TCIconServicesIsCurrentProcess()
 **主题根**：`/Library/ThemeCore`（也有 `_TCThemesDirectory`）；
 素材目录认 `AnemoneEffects` / `Effects` / `Iconomatic`。
 
-**挂站类**（含我们原来缺的）：`SBIcon` / `SBLeafIcon` / `SBApplicationIcon` /
+**挂站类**：`SBIcon` / `SBLeafIcon` / `SBApplicationIcon` /
 `SBHIconImageCache` / `SBFolderIconImageCache` / `SBFolderIconImageSharedCache` /
 `SBHCalendarApplicationIcon` / `SBCalendarApplicationIcon` /
 `SBHClockApplicationIconImageView` / `SBClockApplicationIconImageView` /
@@ -66,7 +67,7 @@ TCIconServicesIsCurrentProcess()
 `SBDisplayItem` / `SBHIconTableViewCell`
 
 **挂站选择器**：`iconImageWithInfo:` / `unmaskedIconImageWithInfo:` /
-`generateIconImageWithInfo:` / `genericIconImageWithInfo:` / `generateIconImage:`（无参，首选） /
+`generateIconImageWithInfo:` / `genericIconImageWithInfo:` / `generateIconImage:`（无参，**首选**） /
 `getUnmaskedIconImage:` / `realImageForIcon:` / `cachedImageForIcon:` / `imageForIcon:` /
 `appIconForBundleIdentifier:` / `iconForBundleIdentifier:` /
 `generateImageReturningRecordIdentifiers:` / `makeImageSetForMetrics:` /
@@ -82,7 +83,7 @@ TCIconServicesIsCurrentProcess()
 字段 `FontName` / `FontSize` / `FontWeight` / `TextColor` / `TextXoffset` / `TextYoffset`，
 日期格式 `EEEE`。字体权重用 `UIFontWeightRegular/Bold/Black/Heavy/Light/Medium`。
 
-## 怎么从 dylib 抽这些信息（本机 strings/otool 都不可用）
+## 怎么从 dylib 抽这些信息（本机 strings / otool 都不可用）
 
 ```sh
 F=<dylib路径>
@@ -92,7 +93,11 @@ od -c "$F" | awk '{for(i=2;i<=NF;i++){if($i ~ /^\\0/){if(s!=""){print s; s=""}el
 `dispatch`、`enumerator`、`CGImageSource`。
 
 ## 只有 ThemeCore 没有的功能才参考别人
-角标、阴影、文件夹、控制中心 ThemeCore 0.5.1 都没有。这些可以看第三方实现，
-但要写明依据。例：iOS 16 角标底板不是图（`_backgroundView` 是 systemRed + 圆角），
-底板走 `layoutSubviews`、文字走 `+_checkoutImageForText:font:highlighted:` ——
-这条来自第三方 ThemeCorePlus 在本机的实证，不是 ThemeCore。
+角标、阴影、文件夹、控制中心 ThemeCore 0.5.1 都没有。这些可以看第三方实现，但要写明依据。
+例：iOS 16 角标底板不是图（`_backgroundView` 是 systemRed + 圆角），底板走 `layoutSubviews`、
+文字走 `+_checkoutImageForText:font:highlighted:` —— 这条来自第三方 ThemeCorePlus 在本机的实证，
+不是 ThemeCore。
+
+## 沉淀时并入、不新建（用户 2026-11-06 00:04）
+同类内容一律**并入已有条目**：记忆进「硬规矩总则」那一条，技能补进本技能，
+AGENTS.md 并进「🔴 第一性原则」章节。不要新开重复条目。记忆满 64 条时先压缩过时记录腾位置。
