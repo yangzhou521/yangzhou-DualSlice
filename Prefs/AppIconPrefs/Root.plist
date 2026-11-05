@@ -8,7 +8,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>GENERAL</string>
+			<string>通用</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -17,36 +17,28 @@
 			<true/>
 			<key>defaults</key>
 			<string>com.yangzhou.appicon</string>
-			<key>get</key>
-			<string>readPreferenceValue:</string>
 			<key>key</key>
 			<string>Enabled</string>
 			<key>label</key>
-			<string>ENABLED</string>
-			<key>localizationTable</key>
-			<string>Root</string>
-			<key>set</key>
-			<string>setPreferenceValue:specifier:</string>
+			<string>启用插件</string>
+			<key>PostNotification</key>
+			<string>com.yangzhou.appicon.reload</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>THEME_SECTION</string>
+			<string>主题</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSLinkCell</string>
 			<key>detail</key>
 			<string>TCXThemeListController</string>
-			<key>id</key>
-			<string>TCX_SELECT_THEME</string>
 			<key>isController</key>
 			<true/>
 			<key>label</key>
-			<string>SELECT_THEME</string>
-			<key>localizationTable</key>
-			<string>Root</string>
+			<string>选择主题</string>
 		</dict>
 		<dict>
 			<key>action</key>
@@ -54,16 +46,14 @@
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>REFRESH_ICONS</string>
-			<key>localizationTable</key>
-			<string>Root</string>
+			<string>刷新图标</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerAlignment</key>
 			<integer>1</integer>
-			<key>label</key>
+			<key>footerText</key>
 			<string>作者：yangzhou</string>
 		</dict>
 	</array>
