@@ -167,6 +167,15 @@ lay{rst=N,sav=N,tick=N,force=N,site=<挂上的保存方法|none>,model=<none|hoo
 - 查 CI：`icli probe scripts/ci-status.js`（匿名 GitHub API，列出最近 3 次 run 的 status/conclusion/sha）；
   下载：`icli probe scripts/download-tcp-09xx.js` → 写到 `/var/mobile/Documents/`。
   **报 CI 状态前必须重查一次**（见技能 `verify-cloud-release`：早先读到 `in_progress` 可能几分钟后就完成了）。
+- **云编译必须 30 秒一次盯着（用户 2026-11-05 23:10 定「30秒检查一次云端编译」）**：
+  push 完就进入监控循环，每 30 秒跑一次 `ci-status.js`，看到 `completed` 才停；
+  一轮最多查 10 次（5 分钟），还没完就等回来再查一次，不要 1 分钟一查、更不要 push 完就不管。
+  一条命令：
+  ```sh
+  for i in $(seq 1 10); do R=$(icli probe scripts/ci-status.js 2>&1 | grep -o 'status=[a-z]* concl=[a-z]*' | head -1); echo "$(date +%H:%M:%S) $R"; case "$R" in *completed*) break;; esac; sleep 30; done
+  ```
+  为什么定死 30 秒：云编译一次 1~3 分钟，1 分钟一查会白等一大截，10 秒一查纯烧额度；
+  30 秒是「既不漏结果也不刷屏」的折中。看到 success 立刻下载 deb + 弹窗，别等下一轮。
 - **每次进 GitHub 必须汇报 Apelin 更新情况（用户 2026-11-02 00:02 原话「apelin更新情况我不问都不知道」）**：
   `icli probe scripts/ci-status.js` 的输出**末尾已经自动带 Apelin 版本比对**（云端最新 release vs 本机
   `Apelin.app/Info.plist` 的 CFBundleShortVersionString），状态 `up-to-date` / `update-available`。
@@ -518,8 +527,9 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   缺一项多一轮往返。
   ④ **调度台单点汇聚** —— 各线只向调度台报结论，调度台去重后一次性给统一计划，不逐条回执、各线不点对点
   串联、不寒暄、不链式确认（A 问 B、B 问 C）。
-  ⑤ **零轮询** —— 不等对方进度（它按事件制会报）；等云编译/装包用一次等待，不「再看一眼」反复查，
-  报状态前才重查一次。跨对话读带 `after_seq`。
+  ⑤ **盯云编译 30 秒一次，其余零轮询** —— 云编译是**唯一例外**：push 完必须每 30 秒查一次
+  `ci-status.js`（用户 2026-11-05 23:10 定），看到 `completed` 才停，见本节上面那条命令。
+  除此之外不等对方进度（它按事件制会报）、不「再看一眼」反复查；报状态前才重查一次。跨对话读带 `after_seq`。
   ⑥ **单线也省** —— `file_edit` 优于整份 `file_write`；长文件只读相关区间（`offset/limit`）；
   结论写进文件（AGENTS.md/docs）而不是靠对话记忆复述；能自己查的状态（诊断/CI/dpkg 版本）自己查完给结论。
   ⑦ **汇报一次到位** —— 一次回复写全结果、证据、未验证项、下一步，不在用户面前一问一答挤牙膏。
