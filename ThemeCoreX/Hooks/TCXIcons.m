@@ -125,6 +125,44 @@ static void TCXRegisterOriginal(Class cls, SEL selector, IMP original) {
 
 typedef UIImage *(*TCXInfoImp)(id, SEL, TCXIconImageInfo);
 
+// 前置声明：generateIconImage: 的 repl 用到后面定义的这两个。
+NSString *TCXBundleIDOfIcon(id icon);
+static UIImage *TCXThemedInfoImage(id icon, CGFloat scale, CGSize size);
+static id TCXThemeResult(id result, NSString *bundleID, CGFloat scale);
+
+// generateIconImage:（无参版本）—— ThemeCore 0.5.1 的首选生成入口。
+// iOS 16 上 iconImageWithInfo: 经常被图标缓存短路（直接返回缓存图、不进我们的站），
+// 而 generateIconImage: 是「强制重新生成」那条路，换主题后能真的把新图带出来。
+// 返回类型 UIImage，尺寸按图标的 iconImageInfo 取；取不到就用 60x60@3x。
+static id repl_GenerateIconImage(id self, SEL _cmd) {
+    Class hit = NULL;
+    id (*orig)(id, SEL) = (id (*)(id, SEL))TCXBeginOriginal(self, _cmd, &hit);
+    @try {
+        id result = orig ? orig(self, _cmd) : nil;
+        if (!TCXPrefBool(@"Enabled", YES)) return result;
+
+        NSString *bundleID = TCXBundleIDOfIcon(self);
+        if (!bundleID.length) return result;
+
+        CGSize size = CGSizeMake(60.0, 60.0);
+        CGFloat scale = 3.0;
+        @try {
+            if ([self respondsToSelector:@selector(iconImageInfo)]) {
+                TCXIconImageInfo info =
+                    ((TCXIconImageInfo (*)(id, SEL))objc_msgSend)(self, @selector(iconImageInfo));
+                if (info.size.width >= 8.0 && info.size.height >= 8.0) size = info.size;
+                if (info.scale > 0) scale = info.scale;
+            }
+        } @catch (NSException *e) {}
+
+        UIImage *themed = TCXThemedInfoImage(self, scale, size);
+        if (!themed) themed = TCXThemeResult(result, bundleID, scale);
+        return themed ?: result;
+    } @finally {
+        TCXEndOriginal(hit);
+    }
+}
+
 // 从图标对象上取 bundle id：三条都试，全失败就放行。
 NSString *TCXBundleIDOfIcon(id icon) {
     @try {
@@ -242,14 +280,6 @@ TCX_BUNDLE_REPL(IconForBundleIdentifier)
 
 static id repl_ImageForBundleIdentifierScale(id self, SEL _cmd, NSString *bundleID, CGFloat scale) {
     Class hit = NULL;
-    // 主题库还没预热好（后台队列里正在扫盘）→ 立刻返回原图，
-    // 绝不让桌面首帧为了取一张图去主线程扫 Library/Themes（那是黑屏超时的根因）。
-    if (!TCXStoreReady()) {
-        TCXBundleScaleImp o = (TCXBundleScaleImp)TCXBeginOriginal(self, _cmd, &hit);
-        id r = o ? o(self, _cmd, bundleID, scale) : nil;
-        TCXEndOriginal(hit);
-        return r;
-    }
     TCXBundleScaleImp orig = (TCXBundleScaleImp)TCXBeginOriginal(self, _cmd, &hit);
     @try {
         id result = orig ? orig(self, _cmd, bundleID, scale) : nil;
@@ -427,6 +457,19 @@ void TCXInstallIconHooks(void) {
         @"SBWidgetIcon",
         @"SBHLibraryPodCategoryIcon",
         @"SBHLibraryAdditionalItemsIndicatorIcon",
+        // —— 以下按 ThemeCore 0.5.1 的类清单补齐（二进制实证，它一共用这些类）——
+        // 桌面图标视图本体：图标最终是贴在 SBIconView 上的，这一层挂上才跟得上
+        // 系统的各种刷新路径（拖拽、翻页、文件夹开合）。
+        @"SBIconView",
+        // 列表 / 停靠栏 / 根文件夹：换主题后要让它们重新取图。
+        @"SBIconListView",
+        @"SBDockIconListView",
+        @"SBRootFolderView",
+        // 文件夹视图：文件夹内外的小图分别由这两个出。
+        @"SBFolderIconView",
+        @"SBFolderIconImageView",
+        // IconServices 的图框（ThemeCore 自己有这个类，用来在生图层替换）。
+        @"TCIconServicesImageBox",
     ];
 
     for (NSString *name in owners) {
@@ -439,6 +482,9 @@ void TCXInstallIconHooks(void) {
                         (IMP)&repl_UnmaskedIconImageWithInfo, @"unmaskedIconImageWithInfo:");
         TCXHookDeclared(cls, @selector(generateIconImageWithInfo:),
                         (IMP)&repl_GenerateIconImageWithInfo, @"generateIconImageWithInfo:");
+        // ThemeCore 0.5.1 的首选生成入口（无参），补上这一条。
+        TCXHookDeclared(cls, @selector(generateIconImage:),
+                        (IMP)&repl_GenerateIconImage, @"generateIconImage:");
         TCXHookDeclared(cls, @selector(genericIconImageWithInfo:),
                         (IMP)&repl_GenericIconImageWithInfo, @"genericIconImageWithInfo:");
 

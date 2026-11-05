@@ -68,10 +68,3 @@ void TCXCountBadgeLook(void);
 void TCXCountShadow(void);
 void TCXRecordError(NSString *error);
 void TCXWriteDiagnostics(BOOL force);
-
-// 主题库是否已经预热好（TCXMain 在后台队列里 [TCXStore shared] 之后置位）。
-// 取图 hook 必须先用它放行：未就绪时直接返回原图，
-// 否则主线程会为了第一张图标去扫 Library/Themes（Smartisan 2379 个文件）——
-// 那是「注销后黑屏、要再进一次桌面」的直接原因。
-BOOL TCXStoreReady(void);
-void TCXMarkStoreReady(void);
