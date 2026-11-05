@@ -455,6 +455,9 @@ void TCXInstallIconHooks(void) {
                         @"_applicationIconImageForBundleIdentifier:format:scale:");
     }
 
+    // 文件夹小图：不挂 SBFolderIconImageCache:gridCellImageOfSize:forIcon:iconImageInfo:。
+    // 那条第二参是结构体，IMP 签名写错会当场把桌面打崩；文件夹内的图标已由上面的
+    // SBFolderIcon / SBLeafIcon 生图链覆盖，够用。
     // 呈现层：只有真实存在 SBIconImageView 的进程（SpringBoard）才挂得上。
     Class imageView = TCXClass(@"SBIconImageView");
     TCXHookDeclared(imageView, @selector(setImage:),

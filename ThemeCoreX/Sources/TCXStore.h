@@ -20,6 +20,10 @@
 
 @property (atomic, readonly) NSString *themeName;
 @property (atomic, readonly) NSString *themePath;
+// 主题叠加层（ThemeCore 0.5.1 的 layers）：按顺序找，前一层没有的素材去后一层拿。
+// 你的主题往往是「一个给图标、一个给角标」，单选任一个都会缺图。
+@property (atomic, readonly) NSArray<NSString *> *themePaths;
+@property (atomic, readonly) NSUInteger layerCount;
 @property (atomic, readonly) NSUInteger generation;
 // 该主题里 IconBundles/Icons/icons 下有多个图标文件（面板与诊断用）。
 @property (atomic, readonly) NSUInteger iconCount;

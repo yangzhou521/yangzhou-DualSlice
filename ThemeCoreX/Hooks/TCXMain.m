@@ -61,10 +61,11 @@ void TCXRecordError(NSString *error) { if (error.length) sLastError = error; }
 void TCXWriteDiagnostics(BOOL force) {
     TCXStore *store = [TCXStore shared];
     NSString *text = [NSString stringWithFormat:
-        @"v=%s;proc=%@;role=%@;hooked=%lu;sites=%@;theme=%@;icon=%lu;hit=%lu;bdg=%lu;shd=%lu;last=%@;err=%@",
+        @"v=%s;proc=%@;role=%@;hooked=%lu;sites=%@;theme=%@;layers=%lu;icon=%lu;hit=%lu;bdg=%lu;shd=%lu;last=%@;err=%@",
         TCX_VERSION, @(getprogname() ?: "?"), sRole,
         (unsigned long)sSites.count, TCXSiteList(),
         store.themeName ?: @"none",
+        (unsigned long)[store layerCount],
         (unsigned long)sIconLook, (unsigned long)sIconHit,
         (unsigned long)sBadgeLook, (unsigned long)sShadowApplied,
         sLastBundle ?: @"-", sLastError ?: @"-"];

@@ -10,6 +10,7 @@
     NSCache<NSString *, UIImage *> *_imageCache;
     NSString *_themeName;
     NSString *_themePath;
+    NSArray<NSString *> *_themePaths;
     NSDictionary *_themeInfo;
     UIImage *_shadowImage;
     NSUInteger _generation;
@@ -40,6 +41,8 @@
 
 - (NSString *)themeName { return _themeName; }
 - (NSString *)themePath { return _themePath; }
+- (NSArray<NSString *> *)themePaths { return _themePaths; }
+- (NSUInteger)layerCount { return _themePaths.count; }
 - (NSDictionary *)themeInfo { return _themeInfo; }
 - (NSUInteger)generation { return _generation; }
 - (NSUInteger)iconCount { return _iconCount; }
@@ -78,6 +81,7 @@ static NSUInteger TCXCountIcons(NSString *themePath) {
 - (void)reload {
     _themeName = nil;
     _themePath = nil;
+    _themePaths = nil;
     _themeInfo = nil;
     _shadowImage = nil;
     _iconCount = 0;
@@ -132,6 +136,24 @@ static NSUInteger TCXCountIcons(NSString *themePath) {
         NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:
                               [picked stringByAppendingPathComponent:@"Info.plist"]];
         _themeInfo = [info isKindOfClass:[NSDictionary class]] ? info : nil;
+
+        // —— 叠加层（ThemeCore 0.5.1 的 layers）——
+        // 用户主题常常是「一个目录放图标、另一个目录放角标/蒙板」，单选任一个都缺图
+        // （ThemeCore 诊断里就是 theme=角标：透明玻璃 + 液态玻璃.theme、layers=2）。
+        // 规则：选中的放第一层，其余候选按图标数量从多到少跟在后面；查找时逐层往下走。
+        NSMutableArray<NSString *> *layers = [NSMutableArray arrayWithObject:picked];
+        NSArray<NSString *> *rest = [candidates sortedArrayUsingComparator:
+            ^NSComparisonResult(NSString *a, NSString *b) {
+                NSUInteger ca = TCXCountIcons(a), cb = TCXCountIcons(b);
+                if (ca != cb) return ca > cb ? NSOrderedAscending : NSOrderedDescending;
+                return [a compare:b];
+            }];
+        for (NSString *path in rest) {
+            if (![path isEqualToString:picked]) [layers addObject:path];
+        }
+        _themePaths = layers;
+    } else {
+        _themePaths = @[];
     }
     _generation++;
 }
@@ -168,7 +190,7 @@ static NSArray<NSString *> *TCXIconFileNames(NSString *bundleID, CGFloat scale) 
 }
 
 - (NSString *)iconPathForBundleID:(NSString *)bundleID scale:(CGFloat)scale {
-    if (bundleID.length == 0 || _themePath.length == 0) return nil;
+    if (bundleID.length == 0 || _themePaths.count == 0) return nil;
 
     NSString *key = [NSString stringWithFormat:@"%@|%.1f", bundleID, scale];
     id cached = _iconPathCache[key];
@@ -178,25 +200,32 @@ static NSArray<NSString *> *TCXIconFileNames(NSString *bundleID, CGFloat scale) 
     NSArray<NSString *> *names = TCXIconFileNames(bundleID, scale);
     NSString *found = nil;
 
-    for (NSString *sub in @[@"IconBundles", @"Icons", @"icons"]) {
-        NSString *dir = [_themePath stringByAppendingPathComponent:sub];
-        for (NSString *name in names) {
-            NSString *path = [dir stringByAppendingPathComponent:name];
-            if ([fm fileExistsAtPath:path]) { found = path; break; }
+    // 逐层查找：前一层没有这张图，就去下一层拿（叠加层语义同 ThemeCore 0.5.1）。
+    for (NSString *layer in _themePaths) {
+        for (NSString *sub in @[@"IconBundles", @"Icons", @"icons"]) {
+            NSString *dir = [layer stringByAppendingPathComponent:sub];
+            for (NSString *name in names) {
+                NSString *path = [dir stringByAppendingPathComponent:name];
+                if ([fm fileExistsAtPath:path]) { found = path; break; }
+            }
+            if (found) break;
         }
         if (found) break;
     }
 
-    // 主题把图标放在 Bundles/<bundle id>/ 的也有：只在前面都没命中时兜底。
+    // 主题把图标放在 Bundles/<bundle id>/ 的也有：只在前面都没命中时兜底，同样逐层。
     if (!found) {
-        NSString *dir = [_themePath stringByAppendingPathComponent:
-                         [NSString stringWithFormat:@"Bundles/%@", bundleID]];
-        for (NSString *base in @[@"Icon", bundleID]) {
-            for (NSString *suffix in TCXSuffixes(scale)) {
-                for (NSString *tail in @[@"-large", @""]) {
-                    NSString *path = [dir stringByAppendingPathComponent:
-                                      [base stringByAppendingFormat:@"%@%@.png", suffix, tail]];
-                    if ([fm fileExistsAtPath:path]) { found = path; break; }
+        for (NSString *layer in _themePaths) {
+            NSString *dir = [layer stringByAppendingPathComponent:
+                             [NSString stringWithFormat:@"Bundles/%@", bundleID]];
+            for (NSString *base in @[@"Icon", bundleID]) {
+                for (NSString *suffix in TCXSuffixes(scale)) {
+                    for (NSString *tail in @[@"-large", @""]) {
+                        NSString *path = [dir stringByAppendingPathComponent:
+                                          [base stringByAppendingFormat:@"%@%@.png", suffix, tail]];
+                        if ([fm fileExistsAtPath:path]) { found = path; break; }
+                    }
+                    if (found) break;
                 }
                 if (found) break;
             }
@@ -331,21 +360,24 @@ static NSArray<NSString *> *TCXResourceFileNames(NSString *name, CGFloat scale) 
 - (NSString *)resourcePathForName:(NSString *)name
                          bundleID:(NSString *)bundleID
                             scale:(CGFloat)scale {
-    if (name.length == 0 || _themePath.length == 0) return nil;
+    if (name.length == 0 || _themePaths.count == 0) return nil;
 
     NSString *key = [NSString stringWithFormat:@"res|%@|%@|%.1f|%lu",
                      bundleID ?: @"", name, scale, (unsigned long)_generation];
     id cached = [_iconPathCache objectForKey:key];
     if (cached) return (cached == (id)[NSNull null]) ? nil : cached;
 
+    // 逐层展开成目录列表：每一层内部还是「该 bundle 目录 → springboard → IconBundles → 主题根」。
     NSMutableArray<NSString *> *dirs = [NSMutableArray array];
-    if (bundleID.length) {
-        [dirs addObject:[_themePath stringByAppendingPathComponent:
-                         [NSString stringWithFormat:@"Bundles/%@", bundleID]]];
+    for (NSString *layer in _themePaths) {
+        if (bundleID.length) {
+            [dirs addObject:[layer stringByAppendingPathComponent:
+                             [NSString stringWithFormat:@"Bundles/%@", bundleID]]];
+        }
+        [dirs addObject:[layer stringByAppendingPathComponent:@"Bundles/com.apple.springboard"]];
+        [dirs addObject:[layer stringByAppendingPathComponent:@"IconBundles"]];
+        [dirs addObject:layer];
     }
-    [dirs addObject:[_themePath stringByAppendingPathComponent:@"Bundles/com.apple.springboard"]];
-    [dirs addObject:[_themePath stringByAppendingPathComponent:@"IconBundles"]];
-    [dirs addObject:_themePath];
 
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *found = nil;
@@ -395,10 +427,14 @@ static NSArray<NSString *> *TCXShadowDirectories(NSString *themePath) {
 
 - (UIImage *)shadowImage {
     if (_shadowImage) return _shadowImage;
-    if (_themePath.length == 0) return nil;
+    if (_themePaths.count == 0) return nil;
 
     NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *dir in TCXShadowDirectories(_themePath)) {
+    NSMutableArray<NSString *> *allDirs = [NSMutableArray array];
+    for (NSString *layer in _themePaths) {
+        [allDirs addObjectsFromArray:TCXShadowDirectories(layer)];
+    }
+    for (NSString *dir in allDirs) {
         BOOL isDir = NO;
         if (![fm fileExistsAtPath:dir isDirectory:&isDir] || !isDir) continue;
 
