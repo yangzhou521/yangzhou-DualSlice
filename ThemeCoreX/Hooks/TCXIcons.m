@@ -242,6 +242,14 @@ TCX_BUNDLE_REPL(IconForBundleIdentifier)
 
 static id repl_ImageForBundleIdentifierScale(id self, SEL _cmd, NSString *bundleID, CGFloat scale) {
     Class hit = NULL;
+    // 主题库还没预热好（后台队列里正在扫盘）→ 立刻返回原图，
+    // 绝不让桌面首帧为了取一张图去主线程扫 Library/Themes（那是黑屏超时的根因）。
+    if (!TCXStoreReady()) {
+        TCXBundleScaleImp o = (TCXBundleScaleImp)TCXBeginOriginal(self, _cmd, &hit);
+        id r = o ? o(self, _cmd, bundleID, scale) : nil;
+        TCXEndOriginal(hit);
+        return r;
+    }
     TCXBundleScaleImp orig = (TCXBundleScaleImp)TCXBeginOriginal(self, _cmd, &hit);
     @try {
         id result = orig ? orig(self, _cmd, bundleID, scale) : nil;

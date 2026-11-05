@@ -37,6 +37,12 @@ static NSUInteger sBadgeLook = 0;
 static NSUInteger sShadowApplied = 0;
 static NSString *sLastError = nil;
 
+// 主题库预热标记（见 TCXDiag.h 的说明）。用原子性不强的 BOOL 就够：
+// 只从 NO 变 YES 一次，读到的旧值最多让第一两张图标晚一拍换主题，不会错。
+static volatile BOOL sStoreReady = NO;
+BOOL TCXStoreReady(void) { return sStoreReady; }
+void TCXMarkStoreReady(void) { sStoreReady = YES; }
+
 NSString *TCXRole(void) { return sRole; }
 NSUInteger TCXHookCount(void) { return sSites.count; }
 
@@ -109,29 +115,63 @@ __attribute__((constructor)) static void TCXInitialize(void) {
 
         BOOL isSpringBoard = [sRole isEqualToString:@"springboard"];
 
-        // 挂站与诊断全部推迟到主队列：构造函数阶段一个文件都不碰、一个站都不挂。
-        dispatch_async(dispatch_get_main_queue(), ^{
-            @try {
-                // 生图层在**每个**被注入的进程里都挂 —— ThemeCore 0.5.1 就是这个模型：
-                // 过滤器命中 com.apple.UIKit，凡是链接 UIKit 的进程都进得来，
-                // IconServices 的生图对象在各进程里都存在，换的是 UIImage，类型不变。
-                TCXInstallIconHooks();
+        // ★ 挂站放在**自己的后台串行队列**里做，不是主队列（对齐 ThemeCore 0.5.1）：
+        // ThemeCore 的符号表里有 dispatch_queue_create + dispatch_queue_attr_make_with_qos_class
+        // + dispatch_get_global_queue，说明它把重活放在低优先级后台队列，
+        // 主队列只在必须碰 UI 时才用。
+        //
+        // 为什么不放主队列（这是「注销后黑屏、要再进一次桌面」的关键）：
+        // dyld 构造函数之后主队列马上就要跑 SpringBoard 的启动任务、画桌面首帧。
+        // 我们把 27 个站的 class_copyMethodList + MSHookMessageEx 全丢进主队列，
+        // 等于和桌面首帧抢同一个队列 —— 首帧迟迟出不来，watchdog 判超时就杀进程重启。
+        // 改成 UTILITY 优先级的后台串行队列后，挂站在桌面的空隙里慢慢做完，
+        // 既不阻塞首帧，又能保证按顺序挂（串行，不会两个模块同时改类结构）。
+        static dispatch_queue_t sInstallQueue;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            dispatch_queue_attr_t attr =
+                dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0);
+            sInstallQueue = dispatch_queue_create("com.yangzhou.appicon.install", attr);
+        });
 
-                if (isSpringBoard) {
-                    // 呈现层专属：只有 SpringBoard 里才有 SBIconView / SBIconBadgeView / 时钟视图。
-                    // 阴影 / 角标 / 时钟 / 日历 / 圆角遮罩这些功能由用户定为**常开**，
-                    // 面板不再提供开关（2026-11-05 22:52），所以这里直接全挂，不读偏好。
-                    TCXInstallShadowHooks();
-                    TCXInstallBadgeHooks();
-                    TCXInstallClockHooks();
-                    // 控制中心模块图标（Bundles/com.apple.control-center.*）
-                    TCXInstallBundleImageHooks();
-                    TCXInstallFolderHooks();
+        // 再等 0.6 秒才开始挂站：给 SpringBoard 一点时间把启动任务跑完、画出首帧。
+        // 这一步是「注销后黑屏」的第二道保险 —— 挂站本身不重，但它会在类结构上做修改，
+        // 启动最忙的那一瞬间避开放手最稳。（SpringBoard 里等 0.6 秒，其它进程立刻挂。）
+        int64_t delayNs = isSpringBoard ? (int64_t)(0.6 * NSEC_PER_SEC) : 0;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, delayNs), sInstallQueue, ^{
+            @autoreleasepool {
+                // ★ 先预热主题库：TCXStore 的 init 里会扫 Library/Themes（Smartisan 有 2379 个
+                // 图标文件），必须让它发生在**这个后台队列**里。
+                // 否则桌面首帧第一次调用取图 hook 时才触发 dispatch_once，
+                // 扫盘就直接跑在主线程上 —— 那是黑屏超时的另一半原因。
+                @try { (void)[TCXStore shared]; } @catch (NSException *e) {}
+                // 预热完成 → 打开取图闸门。之前主线程走的是「未就绪直接返回原图」。
+                TCXMarkStoreReady();
+
+                @try {
+                    // 生图层在**每个**被注入的进程里都挂 —— ThemeCore 0.5.1 就是这个模型：
+                    // 过滤器命中 com.apple.UIKit，凡是链接 UIKit 的进程都进得来，
+                    // IconServices 的生图对象在各进程里都存在，换的是 UIImage，类型不变。
+                    TCXInstallIconHooks();
+
+                    if (isSpringBoard) {
+                        // 呈现层专属：只有 SpringBoard 里才有 SBIconView / SBIconBadgeView / 时钟视图。
+                        // 阴影 / 角标 / 时钟 / 日历 / 圆角遮罩这些功能由用户定为**常开**，
+                        // 面板不再提供开关（2026-11-05 22:52），所以这里直接全挂，不读偏好。
+                        TCXInstallShadowHooks();
+                        TCXInstallBadgeHooks();
+                        TCXInstallClockHooks();
+                        // 控制中心模块图标（Bundles/com.apple.control-center.*）
+                        TCXInstallBundleImageHooks();
+                        TCXInstallFolderHooks();
+                    }
+                } @catch (NSException *exception) {
+                    TCXRecordError([NSString stringWithFormat:@"%@:%@", exception.name, exception.reason]);
                 }
-            } @catch (NSException *exception) {
-                TCXRecordError([NSString stringWithFormat:@"%@:%@", exception.name, exception.reason]);
+
+                // 诊断落盘：文件 IO，也在后台队列，绝不占主队列。
+                TCXWriteDiagnostics(YES);
             }
-            TCXWriteDiagnostics(YES);
         });
     }
 }

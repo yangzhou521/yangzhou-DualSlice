@@ -66,16 +66,35 @@ static BOOL TCXLooksLikeTheme(NSString *path) {
 }
 
 // 数一遍图标文件（面板与诊断要显示「N 个图标」，不数会让用户以为没加载）。
+// 主题里有没有图标文件。只数到第一个就停 —— 调用方只判「有没有」与排序，
+// 不需要精确总数。原来用 contentsOfDirectoryAtPath: 会把整个目录一次读进内存，
+// Smartisan.theme 有 2379 个文件，那是启动期最重的一次 IO。
+// ThemeCore 0.5.1 的符号表里用的是 enumeratorAtPath:（惰性枚举），这里对齐它。
 static NSUInteger TCXCountIcons(NSString *themePath) {
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSUInteger total = 0;
     for (NSString *sub in @[@"IconBundles", @"Icons", @"icons"]) {
         NSString *dir = [themePath stringByAppendingPathComponent:sub];
-        for (NSString *entry in [fm contentsOfDirectoryAtPath:dir error:NULL]) {
-            if ([[entry pathExtension].lowercaseString isEqualToString:@"png"]) total++;
+        NSDirectoryEnumerator *en = [fm enumeratorAtPath:dir];
+        if (!en) continue;
+        for (NSString *entry in en) {
+            if ([[entry pathExtension].lowercaseString isEqualToString:@"png"]) return 1;
         }
     }
-    return total;
+    return 0;
+}
+
+// 一次扫描内计数不许重复做：排序比较器会对同一个主题扫十几遍，
+// Smartisan.theme 有 2379 个图标文件，重复扫描是白耗启动时间。
+// 每次 reload 开头清空这张表。
+static NSMutableDictionary<NSString *, NSNumber *> *sIconCountCache = nil;
+static NSUInteger TCXCountIconsCached(NSString *themePath) {
+    if (!themePath.length) return 0;
+    if (!sIconCountCache) sIconCountCache = [NSMutableDictionary dictionary];
+    NSNumber *hit = sIconCountCache[themePath];
+    if (hit) return hit.unsignedIntegerValue;
+    NSUInteger n = TCXCountIcons(themePath);
+    sIconCountCache[themePath] = @(n);
+    return n;
 }
 
 - (void)reload {
@@ -83,6 +102,7 @@ static NSUInteger TCXCountIcons(NSString *themePath) {
     _themePath = nil;
     _themePaths = nil;
     _themeInfo = nil;
+    [sIconCountCache removeAllObjects];   // 主题目录可能变了，计数从头算
     _shadowImage = nil;
     _iconCount = 0;
     [_iconPathCache removeAllObjects];
@@ -124,7 +144,7 @@ static NSUInteger TCXCountIcons(NSString *themePath) {
         // 没指定主题时挑「真有图标」的第一个：角标/蒙板类目录里只有一两张素材，
         // 当默认主题会让桌面看起来什么都没换。都有图标时取排序第一（与面板同一规则）。
         for (NSString *path in candidates) {
-            if (TCXCountIcons(path) > 0) { picked = path; break; }
+            if (TCXCountIconsCached(path) > 0) { picked = path; break; }
         }
         if (!picked) picked = candidates.firstObject;
     }
@@ -132,7 +152,7 @@ static NSUInteger TCXCountIcons(NSString *themePath) {
     if (picked) {
         _themePath = picked;
         _themeName = [picked lastPathComponent];
-        _iconCount = TCXCountIcons(picked);
+        _iconCount = TCXCountIconsCached(picked);
         NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:
                               [picked stringByAppendingPathComponent:@"Info.plist"]];
         _themeInfo = [info isKindOfClass:[NSDictionary class]] ? info : nil;
@@ -144,7 +164,7 @@ static NSUInteger TCXCountIcons(NSString *themePath) {
         NSMutableArray<NSString *> *layers = [NSMutableArray arrayWithObject:picked];
         NSArray<NSString *> *rest = [candidates sortedArrayUsingComparator:
             ^NSComparisonResult(NSString *a, NSString *b) {
-                NSUInteger ca = TCXCountIcons(a), cb = TCXCountIcons(b);
+                NSUInteger ca = TCXCountIconsCached(a), cb = TCXCountIconsCached(b);
                 if (ca != cb) return ca > cb ? NSOrderedAscending : NSOrderedDescending;
                 return [a compare:b];
             }];
