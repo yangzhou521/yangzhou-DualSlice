@@ -83,7 +83,7 @@ for arch in $ARCHS; do
   # shellcheck disable=SC2086
   clang -dynamiclib -arch "$arch" -fvisibility=hidden $SHARED_FLAGS $FRAMEWORKS \
       $SUBSTRATE_LDFLAGS \
-      -install_name "@loader_path/.jbroot/Library/MobileSubstrate/DynamicLibraries/$PRODUCT.dylib" \
+      -install_name "@loader_path/.jbroot/usr/lib/TweakInject/$PRODUCT.dylib" \
       $SRCS \
       -o "$BUILD/thin/$arch/$PRODUCT.dylib"
 
@@ -114,7 +114,9 @@ done
 echo "build-appicon.sh: --- otool -L ---"
 otool -L "$DY"
 WANTED_SUBSTRATE="@loader_path/.jbroot/usr/lib/libsubstrate.dylib"
-SUBSTRATE_ENTRY=$(otool -L "$DY" | awk 'tolower($0) ~ /substrate/ {print $1; exit}')
+# 第一行是 dylib 自己的 install name（可能含 MobileSubstrate 字样），必须跳过，
+# 只在“依赖”里找 substrate；否则会去 -change 自己的 ID，-change 对 ID 无效 → 核对一直失败。
+SUBSTRATE_ENTRY=$(otool -L "$DY" | tail -n +2 | awk 'tolower($0) ~ /substrate/ {print $1; exit}')
 if [ -z "$SUBSTRATE_ENTRY" ]; then
   echo "build-appicon.sh: no substrate dependency at all" >&2
   exit 5
@@ -123,7 +125,7 @@ if [ "$SUBSTRATE_ENTRY" != "$WANTED_SUBSTRATE" ]; then
   echo "build-appicon.sh: rewriting $SUBSTRATE_ENTRY -> $WANTED_SUBSTRATE"
   install_name_tool -change "$SUBSTRATE_ENTRY" "$WANTED_SUBSTRATE" "$DY"
 fi
-SUBSTRATE_ENTRY=$(otool -L "$DY" | awk 'tolower($0) ~ /substrate/ {print $1; exit}')
+SUBSTRATE_ENTRY=$(otool -L "$DY" | tail -n +2 | awk 'tolower($0) ~ /substrate/ {print $1; exit}')
 if [ "$SUBSTRATE_ENTRY" != "$WANTED_SUBSTRATE" ]; then
   echo "build-appicon.sh: substrate entry is '$SUBSTRATE_ENTRY', wanted '$WANTED_SUBSTRATE'" >&2
   exit 6

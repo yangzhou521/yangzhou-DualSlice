@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.12";
+static NSString *const CHVersion = @"1.6.13";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -597,12 +597,14 @@ static void CHHandlePillTap(void) {
 
 static CGFloat CHPreferredFontSize(CGFloat height) {
     // v1.1.1：原先取高度的一半（125×37 的岛＝18.5pt），用户嫌大；压到 2/3 → 高度 ÷ 3。
-    CGFloat size = height / 3.0;
-    size = MAX(9.0, MIN(size, 16.0));
-    // v1.6.10：要分两行的长文字压到 **50%**（用户 21:47「字号缩为原来 50%」）——15.7 → 7.8。
+    // v1.6.13（用户 2026-11-05「字号缩下到之前百分之五十」）：基准再缩到一半 → 高度 ÷ 6，
+    //   长岛 47 → 7.8pt、短岛 37 → 6.2pt。原 clamp（9~16）会把 6.2 顶回 9，故同步降为 4.5~8。
+    CGFloat size = height / 6.0;
+    size = MAX(4.5, MIN(size, 8.0));
+    // v1.6.10：要分两行的长文字再压到 **50%**（用户 21:47「字号缩为原来 50%」）——15.7 → 7.8。
     // 短内容（倒计时、一两字提示）不受影响，其他元素一律不动。
     if (gLabel.text.length > CH_LONG_TEXT_LENGTH) {
-        size = MAX(6.0, size * 0.5);
+        size = MAX(5.0, size * 0.5);
     }
     return size;
 }

@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.12)
+    name: Release (countdownhud-v1.6.13)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,10 +133,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.12
-          name: CountdownHUD v1.6.12
+          tag_name: countdownhud-v1.6.13
+          name: CountdownHUD v1.6.13
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            v1.6.13：**胶囊字号整体缩到之前的 50%**（用户 2026-11-05 17:36「字号缩下到之前
+            百分之五十」）。`CHPreferredFontSize` 的基准从岛高 ÷ 3 改为岛高 ÷ 6（长岛 47 →
+            7.8pt、短岛 37 → 6.2pt），clamp 同步从 9~16 降为 4.5~8（否则 6.2 会被顶回 9，
+            白改）；长文字（>14 字）仍按 v1.6.10 的规则再压 50%。其它一律不动。
 
             v1.6.12：**灵动岛两态尺寸严格对齐 + 长文字智能自适应**（用户 2026-11-05 11:35
             「mini 胶囊『未展开』和『展开后』的尺寸、上下左右位置与原系统灵动岛保持一致」、
@@ -299,4 +304,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.12/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.13/$(basename "$DEB")"
