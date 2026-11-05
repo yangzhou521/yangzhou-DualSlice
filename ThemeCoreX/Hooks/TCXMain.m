@@ -101,10 +101,11 @@ __attribute__((constructor)) static void TCXInitialize(void) {
 
             if ([sRole isEqualToString:@"springboard"]) {
                 // 呈现层专属：只有 SpringBoard 里才有 SBIconView / SBIconBadgeView / 时钟视图。
-                // 四个开关缺省都是「开」（面板 default=true），关掉才不挂对应模块。
-                if (TCXPrefBool(@"ShadowEnabled", YES))   TCXInstallShadowHooks();
-                if (TCXPrefBool(@"BadgeEnabled", YES))    TCXInstallBadgeHooks();
-                if (TCXPrefBool(@"ClockEnabled", YES))    TCXInstallClockHooks();
+                // 阴影 / 角标 / 时钟 / 日历 / 圆角遮罩这些功能由用户定为**常开**，
+                // 面板不再提供开关（2026-11-05 22:52），所以这里直接全挂，不读偏好。
+                TCXInstallShadowHooks();
+                TCXInstallBadgeHooks();
+                TCXInstallClockHooks();
                 // 控制中心模块图标（Bundles/com.apple.control-center.*）
                 TCXInstallBundleImageHooks();
                 TCXInstallFolderHooks();

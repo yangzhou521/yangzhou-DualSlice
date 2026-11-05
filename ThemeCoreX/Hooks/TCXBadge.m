@@ -26,7 +26,7 @@ static id (*orig_bgClass)(id, SEL);
 static id TCXBadgeBackground(id self, SEL _cmd, id original) {
     if (!original) return nil;
     if (!TCXPrefBool(@"Enabled", YES)) return original;
-    if (!TCXPrefBool(@"BadgeEnabled", YES)) return original;
+    // 角标常开（面板已无开关），不再读 BadgeEnabled。
 
     TCXCountBadgeLook();
 

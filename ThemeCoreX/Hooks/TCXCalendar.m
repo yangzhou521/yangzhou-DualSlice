@@ -172,7 +172,7 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
     if (!image || !bundleID.length) return image;
     if (![bundleID isEqualToString:@"com.apple.mobilecal"]) return image;
     if (!TCXPrefBool(@"Enabled", YES)) return image;
-    if (!TCXPrefBool(@"CalendarEnabled", YES)) return image;
+    // 日历常开（面板已无开关），只受总开关控制。
     if (size.width < 8.0 || size.height < 8.0) return image;
 
     @try {

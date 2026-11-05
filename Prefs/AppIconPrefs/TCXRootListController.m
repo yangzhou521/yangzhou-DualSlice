@@ -220,17 +220,10 @@ static NSString *TCXEffectiveThemeName(void) {
 }
 
 - (NSArray *)specifiers {
+    // 同根页：只懒加载一次，别在 reloadSpecifiers 里重建对象——
+    // 重建会让表格 cell 指向旧 specifier，开关点了不回弹。
     if (_specifiers == nil) _specifiers = [self tcyBuildSpecifiers];
     return _specifiers;
-}
-
-- (void)reloadSpecifiers {
-    _specifiers = [self tcyBuildSpecifiers];
-    [super reloadSpecifiers];
-    if (_applyingSpecifiers) return;
-    _applyingSpecifiers = YES;
-    [self setSpecifiers:_specifiers];   // 段落缓存只在父类这个入口重建
-    _applyingSpecifiers = NO;
 }
 
 - (void)viewDidLoad {
@@ -260,22 +253,22 @@ static NSString *TCXEffectiveThemeName(void) {
 }
 
 - (NSArray *)specifiers {
+    // 只懒加载一次：Preferences 会把这份数组挂在父类缓存上，控件事件也靠它找 specifier。
+    // 反复重建会让表格里现有的 cell 指向旧 specifier，表现为「开关能画、点了不回弹」。
     if (_specifiers == nil) _specifiers = [self tcyBuildSpecifiers];
     return _specifiers;
 }
 
-- (void)reloadSpecifiers {
-    _specifiers = [self tcyBuildSpecifiers];
-    [super reloadSpecifiers];
-    if (_applyingSpecifiers) return;
-    _applyingSpecifiers = YES;
-    [self setSpecifiers:_specifiers];
-    _applyingSpecifiers = NO;
-}
-
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    if (self.isViewLoaded) [self reloadSpecifiers];
+    // 每次进来重读一次偏好值，但不重建 specifier 对象本身。
+    for (PSSpecifier *spec in self.specifiers) {
+        NSString *key = [spec propertyForKey:@"key"];
+        if (![key isKindOfClass:[NSString class]] || key.length == 0) continue;
+        id value = TCXReadPref(key);
+        if (value) [spec setProperty:value forKey:@"value"];
+    }
+    [self reloadSpecifiers];
 }
 
 // 「刷新图标」：广播 Darwin 通知，SpringBoard 里的插件收到后重读快照、清缓存、当场重新出图。

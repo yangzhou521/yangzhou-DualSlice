@@ -235,7 +235,7 @@ static UIImage *TCXRoundCorners(UIImage *image, CGSize size) {
     if (!path) return nil;
     if (size.width <= 0 || size.height <= 0) return nil;
 
-    BOOL keepMask = TCXPrefBool(@"IconCornerMask", YES);
+    BOOL keepMask = YES;   // 圆角遮罩常开（面板已无开关）
     NSString *key = [NSString stringWithFormat:@"%@|%.0fx%.0f|%d|%lu",
                      path, size.width, size.height, (int)keepMask, (unsigned long)_generation];
     UIImage *cached = [_imageCache objectForKey:key];

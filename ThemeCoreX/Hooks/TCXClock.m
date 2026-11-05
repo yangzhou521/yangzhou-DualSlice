@@ -135,7 +135,8 @@ static UIImage *(*orig_clockContents_SB)(id, SEL);
 
 static UIImage *TCXClockResolved(UIImage *original) {
     @try {
-        if (!TCXPrefBool(@"Enabled", YES) || !TCXPrefBool(@"ClockEnabled", YES)) return original;
+        // 时钟常开（面板已无开关），只受总开关控制。
+        if (!TCXPrefBool(@"Enabled", YES)) return original;
         CGSize canvas = original.size;
         CGFloat scale = original.scale;
         if (canvas.width < 8.0 || canvas.height < 8.0) return original;
