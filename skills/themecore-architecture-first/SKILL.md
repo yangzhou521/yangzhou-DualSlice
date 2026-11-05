@@ -1,0 +1,98 @@
+---
+name: themecore-architecture-first
+description: 做 ThemeCore 系（AppIcon 等）越狱主题插件时的第一性原则：架构与 ThemeCore 0.5.1 完全一致，不许自己天马行空加机制；含它的二进制实证清单（构造函数、dispatch、惰性枚举、过滤器、依赖、挂站类、生成入口）与被否掉的自我发明清单；怎么用 od+awk 从 dylib 抽类名选择器。
+---
+
+# 第一性原则：与 ThemeCore 0.5.1 架构完全一致
+
+用户 2026-11-06 00:03：「ThemeCore 它没有什么明显 bug 就完全抄它的！和它架构一致！这是第一性原则你不要打破！」
+「全部与 ThemeCore 一致，不要你自己天马行空乱写！」
+
+## 判断规则（每次动手前先问）
+
+**ThemeCore 0.5.1 是不是这么做的？**
+- 是 → 照抄，一个动作都别自己加。
+- 不是 → 先别加。先查它到底怎么做；查不到就先不动，**不许自己发明一个「保险」**。
+- 只有它完全没有的功能（角标、阴影、文件夹、控制中心），才允许参考别的实现，
+  并在代码注释里写明「ThemeCore 无此功能，依据 X」。
+
+## 已被这条否掉的「自我发明」（别加回来）
+
+| 我加的 | 为什么被否 |
+|---|---|
+| 0.6 秒延迟 `dispatch_after` | ThemeCore 的 dispatch 符号里**没有** `dispatch_after` / `dispatch_time` |
+| `TCXStoreReady` 预热闸门 | ThemeCore 没有 Ready 标记；线程安全靠 `dispatch_once` + `os_unfair_lock` |
+| 挂站丢主队列 | ThemeCore 用 `dispatch_async` + `dispatch_queue_attr_make_with_qos_class`（QOS_CLASS_UTILITY 串行队列） |
+
+## ThemeCore 0.5.1 的架构（二进制实证，照抄依据）
+
+**构造函数**只做两件事，前面套进程判断：
+```
+TCIconServicesIsCurrentProcess()
+  → TCIconServicesInstallHooks()   // 生图层
+  → TCIconShadowInstallHooks()     // 阴影层
+```
+
+**dispatch 符号**（全部）：`dispatch_async`、`dispatch_queue_create`、
+`dispatch_queue_attr_make_with_qos_class`、`dispatch_get_global_queue`、
+`__dispatch_main_q`、`dispatch_once`、`dispatch_source_*`（内存压力）、
+`dispatch_resume`。**没有 `dispatch_after` / `dispatch_time`**。
+
+**文件与图片**：
+- 目录枚举 `enumeratorAtPath:`（惰性），不用 `contentsOfDirectoryAtPath:`（一次性读全目录）
+- 图片解码 `CGImageSource` + `kCGImageSourceShouldCache`（惰性解码）
+
+**过滤器**（ThemeCore.plist，实测）：
+`Bundles: com.apple.UIKit` + `Mode: Any` + `Executables: iconservicesagent / ShareUI / sharingd`
+—— **没有 SpringBoard**，靠 `com.apple.UIKit` 这条进桌面。
+
+**依赖**：`Depends: mobilesubstrate (>= 0.9.5000), preferenceloader, firmware (>= 15.0)`
++ `Pre-Depends: rootless-compat (>= 0.9)`
+
+**偏好与通知**：域 `com.susudear.themecore`，键 `ActiveTheme` / `EnabledThemes`（复数），
+通知 `com.susudear.themecore.reload` 与 `com.susudear.themecore/reload`（两种都发）。
+
+**主题根**：`/Library/ThemeCore`（也有 `_TCThemesDirectory`）；
+素材目录认 `AnemoneEffects` / `Effects` / `Iconomatic`。
+
+**挂站类**（含我们原来缺的）：`SBIcon` / `SBLeafIcon` / `SBApplicationIcon` /
+`SBHIconImageCache` / `SBFolderIconImageCache` / `SBFolderIconImageSharedCache` /
+`SBHCalendarApplicationIcon` / `SBCalendarApplicationIcon` /
+`SBHClockApplicationIconImageView` / `SBClockApplicationIconImageView` /
+`SBWidgetIcon` / `SBHLibraryPodCategoryIcon` / `SBHLibraryAdditionalItemsIndicatorIcon` /
+`ISBundleIdentifierIcon` / `TCIconServicesImageBox` /
+`SBIconView` / `SBIconImageView` / `SBFolderIconView` / `SBFolderIconImageView` /
+`SBDockIconListView` / `SBIconListView` / `SBRootFolderView` / `SBIconController` /
+`SBDisplayItem` / `SBHIconTableViewCell`
+
+**挂站选择器**：`iconImageWithInfo:` / `unmaskedIconImageWithInfo:` /
+`generateIconImageWithInfo:` / `genericIconImageWithInfo:` / `generateIconImage:`（无参，首选） /
+`getUnmaskedIconImage:` / `realImageForIcon:` / `cachedImageForIcon:` / `imageForIcon:` /
+`appIconForBundleIdentifier:` / `iconForBundleIdentifier:` /
+`generateImageReturningRecordIdentifiers:` / `makeImageSetForMetrics:` /
+`imageSetForMetrics:` / `clearCachedImages` / `purgeCachedImages` /
+`enumerateDisplayedIconViewsUsingBlock:` / `contentsImage` /
+`setClockPaths:` / `setModern:` / `setHourMinuteDot:` / `setHours:` / `setMinutes:` / `setSeconds:`
+
+**时钟**：素材名 `ClockIconBackgroundSquare` / `ClockIconHourHand` / `ClockIconMinuteHand` /
+`ClockIconSecondHand` / `ClockIconBlackDot` / `ClockIconRedDot`；
+它把表盘与指针**拆成子视图分别替换**，指针仍由系统驱动（时间保持活的）。
+
+**日历**：`Info.plist` 的 `CalendarIconDateSettings` / `CalendarIconDaySettings`，
+字段 `FontName` / `FontSize` / `FontWeight` / `TextColor` / `TextXoffset` / `TextYoffset`，
+日期格式 `EEEE`。字体权重用 `UIFontWeightRegular/Bold/Black/Heavy/Light/Medium`。
+
+## 怎么从 dylib 抽这些信息（本机 strings/otool 都不可用）
+
+```sh
+F=<dylib路径>
+od -c "$F" | awk '{for(i=2;i<=NF;i++){if($i ~ /^\\0/){if(s!=""){print s; s=""}else{next}} else {c=$i; gsub(/^[0-9]+$/,"",c); s=s c}}}' | sort -u
+```
+再 `grep -aE` 过滤类名（`^SB` / `^IS` / `^TC`）、选择器（`^[a-z][A-Za-z0-9]*:$`）、
+`dispatch`、`enumerator`、`CGImageSource`。
+
+## 只有 ThemeCore 没有的功能才参考别人
+角标、阴影、文件夹、控制中心 ThemeCore 0.5.1 都没有。这些可以看第三方实现，
+但要写明依据。例：iOS 16 角标底板不是图（`_backgroundView` 是 systemRed + 圆角），
+底板走 `layoutSubviews`、文字走 `+_checkoutImageForText:font:highlighted:` ——
+这条来自第三方 ThemeCorePlus 在本机的实证，不是 ThemeCore。

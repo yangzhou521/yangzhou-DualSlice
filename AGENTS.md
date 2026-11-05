@@ -3,6 +3,33 @@
 🈲 对话语言强制中文（硬性规定）
 用户母语为中文。所有对话回复正文必须使用简体中文，思考/推理过程也必须全部中文（用户看得到思考，英文思考同样看不懂）。绝对禁止正文出现英文段落。仅允许代码块、命令、路径、版本号、报错原文等技术必需的英文。每次回复首句必须是中文结论。违规将触发规则纠正。此规则适用于任何对话、任何工程、任何模型（含外国模型），换模型不得失效。
 
+## 🔴 第一性原则：与 ThemeCore 0.5.1 架构完全一致（用户 2026-11-06 00:03 定）
+
+**ThemeCore 0.5.1 没有明显 bug → 完全抄它的架构，不许自己天马行空。**
+
+这是**第一性原则，不许打破**。任何改动之前先问一句：**ThemeCore 0.5.1 是不是这么做的？**
+- 是 → 照它的做法抄，一个动作都别自己加。
+- 不是 → 先别加。查它到底怎么做的（二进制实测：`od -c | awk` 抽类名/选择器/符号），
+  查不到就先不动，而不是自己发明一个「保险」。
+- 只有它完全没有的那块功能（角标、阴影、文件夹、控制中心），才允许参考别的实现，
+  且要写明「ThemeCore 无此功能，依据 X」。
+
+**已经被这条否掉的「我自己发明」清单（不要加回来）：**
+- ❌ 0.6 秒延迟（`dispatch_after`）—— ThemeCore 没有 `dispatch_after` / `dispatch_time`
+- ❌ `TCXStoreReady` 预热闸门 —— ThemeCore 没有 Ready 标记，线程安全靠 `dispatch_once` + `os_unfair_lock`
+- ❌ 把挂站丢到主队列 —— ThemeCore 用 `dispatch_async` + `QOS_CLASS_UTILITY` 串行队列
+
+**ThemeCore 的架构（二进制实证，照抄依据）：**
+- 构造函数只干两件事：`TCIconServicesIsCurrentProcess()` 判断 → `TCIconServicesInstallHooks()`（生图层）→ `TCIconShadowInstallHooks()`（阴影层）
+- dispatch 符号只有：`dispatch_async` / `dispatch_queue_create` / `dispatch_queue_attr_make_with_qos_class` / `__dispatch_main_q` / `dispatch_source_*`（内存压力）
+- 文件枚举用 `enumeratorAtPath:`（惰性），不用 `contentsOfDirectoryAtPath:`（一次性读全目录）
+- 图标解码用 `CGImageSource` + `kCGImageSourceShouldCache`（惰性解码）
+- 过滤器：`Bundles: com.apple.UIKit` + `Mode: Any` + `Executables: iconservicesagent/ShareUI/sharingd`（**没有 SpringBoard**）
+- 依赖：`mobilesubstrate, preferenceloader, firmware` + `Pre-Depends: rootless-compat`
+- 偏好域 `com.susudear.themecore`，键 `ActiveTheme` / `EnabledThemes`（复数），通知 `com.susudear.themecore.reload`
+- 挂站类 22 个（见 `ThemeCoreX/Hooks/TCXIcons.m` 的 owners 清单，已按它补齐）
+- 首选生成入口 `generateIconImage:`（无参），不是只有 `iconImageWithInfo:`
+
 ## 开工第 0 步 · 交接协议（新对话 / 复活 / 换人，都先做这一步）
 
 **在这个仓库里动手之前，第一件事是跑：**
