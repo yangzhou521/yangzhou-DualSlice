@@ -111,23 +111,27 @@ for want in $ARCHS; do
 done
 
 # ---- 依赖形状核对：substrate 必须是 .jbroot 相对路径 ----
+# ⚠️ otool -L 的第 1 行是文件本身（"build/.../AppIcon.dylib:"），第 2 行是**自己的
+# LC_ID_DYLIB**（install name，可能含 "MobileSubstrate" 字样）。只按 /substrate/ 抓第一行
+# 会抓到自己的 ID，而 install_name_tool -change 改不了 ID（只改依赖）→ 核对永远失败、
+# 以 exit 6 挂掉（run 42007994411 就是这样）。所以 NR==1 / NR==2 都跳过，只在依赖里找。
 echo "build-appicon.sh: --- otool -L ---"
 otool -L "$DY"
 WANTED_SUBSTRATE="@loader_path/.jbroot/usr/lib/libsubstrate.dylib"
-# 第一行是 dylib 自己的 install name（可能含 MobileSubstrate 字样），必须跳过，
-# 只在“依赖”里找 substrate；否则会去 -change 自己的 ID，-change 对 ID 无效 → 核对一直失败。
-SUBSTRATE_ENTRY=$(otool -L "$DY" | tail -n +2 | awk 'tolower($0) ~ /substrate/ {print $1; exit}')
+SUBSTRATE_AWK='NR==1 || NR==2 { next } { p=$1 } tolower(p) ~ /substrate/ { print p; exit }'
+SUBSTRATE_ENTRY=$(otool -L "$DY" | awk "$SUBSTRATE_AWK")
 if [ -z "$SUBSTRATE_ENTRY" ]; then
   echo "build-appicon.sh: no substrate dependency at all" >&2
   exit 5
 fi
 if [ "$SUBSTRATE_ENTRY" != "$WANTED_SUBSTRATE" ]; then
-  echo "build-appicon.sh: rewriting $SUBSTRATE_ENTRY -> $WANTED_SUBSTRATE"
+  echo "build-appicon.sh: rewriting $SUBSTRATE_ENTRY -> $WANTED_SUBSTRATE" >&2
   install_name_tool -change "$SUBSTRATE_ENTRY" "$WANTED_SUBSTRATE" "$DY"
 fi
-SUBSTRATE_ENTRY=$(otool -L "$DY" | tail -n +2 | awk 'tolower($0) ~ /substrate/ {print $1; exit}')
+SUBSTRATE_ENTRY=$(otool -L "$DY" | awk "$SUBSTRATE_AWK")
 if [ "$SUBSTRATE_ENTRY" != "$WANTED_SUBSTRATE" ]; then
   echo "build-appicon.sh: substrate entry is '$SUBSTRATE_ENTRY', wanted '$WANTED_SUBSTRATE'" >&2
+  otool -L "$DY" >&2
   exit 6
 fi
 
