@@ -114,6 +114,13 @@ __attribute__((constructor)) static void TCXInitialize(void) {
             TCXRecordError([NSString stringWithFormat:@"%@:%@", exception.name, exception.reason]);
         }
 
-        TCXWriteDiagnostics(YES);
+        // 诊断写入**绝不能在构造函数里同步做**：TCXWriteDiagnostics 会 [TCXStore shared]，
+        // 那要把主题库建起来、扫 Library/Themes、读每个主题的 Info.plist。
+        // 在 SpringBoard 的 dyld 构造函数阶段做这件事会卡住启动，
+        // 系统等不到桌面就绪就把进程杀掉 → 用户看到「注销后黑屏，再起一次才正常」。
+        // 所以推迟到主队列空闲时跑，启动期一个文件都不碰。
+        dispatch_async(dispatch_get_main_queue(), ^{
+            TCXWriteDiagnostics(YES);
+        });
     }
 }
