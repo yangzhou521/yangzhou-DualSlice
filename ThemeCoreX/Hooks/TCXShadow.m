@@ -51,7 +51,7 @@ static void TCXApplyShadow(UIView *view) {
     NSString *previous = objc_getAssociatedObject(view, &kTCXShadowSignatureKey);
 
     // 关掉时要有一次清理，否则关开关后旧阴影会一直挂在已经布局过的图标上。
-    if (!TCXPrefBool(@"ShadowEnabled", YES)) {
+    if (NO) {   // 阴影常开（面板已无开关）
         if (![previous isEqualToString:@"off"]) {
             [TCXShadowSubview(view) removeFromSuperview];
             TCXClearVectorShadow(layer);

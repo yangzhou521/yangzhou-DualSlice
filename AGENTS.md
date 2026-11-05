@@ -34,8 +34,8 @@ sh scripts/safemode-check.sh  # 约 80 秒，只读：判安全模式 / 版本�
   此时让用户知情只走两条：**对话正文** + `apelin_notification_send`（**真 iOS 系统通知，
   2026-11-02 02:14 安全模式下实测可用** —— Apelin 不在前台时会弹真系统横幅，不依赖 tweak 注入，
   与灵动岛胶囊、CountdownHUD 弹窗是三条互相独立的通道，安全模式下只有这条 + 正文能到）；
-  要装包就 `sh scripts/install-deb.sh <deb>`（它自己识别安全模式 → `SAFEMODE_DIRECT` → 直装 + `sbreload`）；
-  **注销本身就是退出安全模式、把胶囊与弹窗救回来的唯一办法**，所以安全模式下的第一优先动作是「装对版本 + 注销」。
+  要装包就 `sh scripts/install-deb.sh <deb>`（只放行装包，**不注销、不弹窗**；安全模式打印 `SAFEMODE_DIRECT` 同样只装不注销）；
+  装完再用 `sh scripts/post-install-respring.sh "<标签>"` 弹窗问用户要不要注销 —— **注销与否永远由用户在屏幕上决定**（用户 2026-11-05 22:57）。
   安全模式下装包通知：① 先下载完 deb；② `apelin_notification_send`（标题「装包待确认」，正文写清包名/版本/路径/字节）；
   ③ 正文也写一句；④ 等用户回复点头再 `install-deb.sh`。**不能弹窗就一直追问，也别干等胶囊**——用户只在系统横幅或对话里能看到。
 
@@ -1355,17 +1355,28 @@ SpringBoard 收到立刻重读快照并重排图标；shell 手写偏好不会�
   2. 弹窗装包 `sh scripts/respring-guard.sh --ask 60 --install /rootfs/var/mobile/Documents/apelin-vX.deb "装 Apelin vX"`。
 - 限制：agent 一轮一条消息、跑完即停，做不到真每小时定时；只能靠「每次醒/每次访问 GitHub 都查」近似覆盖。
 
-## 装包统一走 install-deb.sh（2026-11-01 16:00，血的教训）
+## 装包与注销彻底分家（用户 2026-11-05 22:57 定）
 
-**`sh scripts/install-deb.sh <deb> "<标签>"` 是唯一装包入口**，它自己判断环境：
+**用户原话：「你可以装包不注销的以后都这样 装包后直接给我弹窗 我来决定注销不注销！」**
 
-- 先跑 `scripts/safemode-check.sh`：退出码 **1（崩溃循环/疑似安全模式）或 3（插件没在跑）→ 打印 `SAFEMODE_DIRECT`，跳过弹窗**，
-  调用方（agent）立刻 `irisin-cli install --yes --json <deb>`（root）+ `sbreload`，**不许再等弹窗**。
-- 其它 → 默认弹窗 `respring-guard.sh --ask 300 --install`，用户点「立即注销」才继续；`CANCELLED`/`TIMEOUT` 就停下。
-  加 `--auto` 可跳过弹窗直接返回 `CONFIRMED`（供需要自动装包的流程用）。
+规矩改了：**装包不再捆绑注销**。以前一次弹窗把「装包」和「注销」捆死，用户想攒几条线一起注销就没得选。
+
+现在两步走：
+
+1. **装包**：`sh scripts/install-deb.sh <deb> "<标签>"`
+   - 正常环境 → 打印 `INSTALL_OK`，**只放行装包，不弹窗、不注销**；调用方立刻 `irisin-cli install --yes --json <deb>`（root）。
+   - 安全模式（`safemode-check.sh` 退出码 1 或 3）→ 打印 `SAFEMODE_DIRECT`，同样直装、**不注销**，装完靠正文 + `apelin_notification_send` 告知用户「注销是退出安全模式的唯一办法」。
+2. **装完再问**：`sh scripts/post-install-respring.sh "<标签>" 120`
+   - `REVIVE_CONFIRMED` → 用户点了「立即注销」，调用方做 5 秒倒计时 + `sbreload`；
+   - `NO_RESPRING` → 用户点了「稍后」或超时，**什么都不做，绝不自动注销**；
+   - `SAFEMODE_QUIET` → 弹窗显示不出来，只走正文 + 系统通知。
+
+**绝对禁止**：装完包自己 `sbreload`；拿「装包等于要注销」当理由催用户点头；安全模式下弹窗等不到就重复弹。
+用户可能正攒着几条线一起注销，擅自重启会打断别人。
 
 **为什么**：安全模式下 tweak 全不注入、CountdownHUD 也死，弹窗**根本显示不出来**；旧做法「发弹窗一直等」
 会永远等不到，包也装不上（2026-11-01 15:5x 在安全模式里空等了 4 分钟，用户两次催问）。
+
 
 ## 布局保存：三个拦路虎（1.0.28 打通，详见 docs/cases/themecoreplus-layout-save-fixed.md）
 

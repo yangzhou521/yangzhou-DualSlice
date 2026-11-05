@@ -17,6 +17,10 @@
 				注意：那个进程是系统级的，它崩了全系统图标都不显示，所以我们的代码在里面
 				**只允许只读 dump，绝对不许挂任何 hook**（见 ThemeCorePlusMain.m 里的
 				TCPRunIconServiceProbe 调用点，只在该进程跑 probe 然后什么都不做）。
+
+				1.0.46：曾经有人为了做迁移把 Bundles 整条改成了 com.apple.UIKit（等于撤掉
+				SpringBoard，还让所有加载 UIKit 的进程都注入本 dylib）。已改回：
+				SpringBoard + 设置面板 + 图标服务取证三者并存。真迁移完成前不许动这两条。
 			-->
 			<string>iconservicesagent</string>
 		</array>
