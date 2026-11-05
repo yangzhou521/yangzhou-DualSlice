@@ -132,6 +132,8 @@ void TCXClockInvalidate(void) {
 
 static UIImage *(*orig_clockContents_SBH)(id, SEL);
 static UIImage *(*orig_clockContents_SB)(id, SEL);
+static void (*orig_clockLayout_SBH)(id, SEL);
+static void (*orig_clockLayout_SB)(id, SEL);
 
 static UIImage *TCXClockResolved(UIImage *original) {
     @try {
@@ -173,9 +175,99 @@ static void TCXHookClockClass(NSString *name, IMP repl, IMP *slot) {
     }
 }
 
+#pragma mark - 呈现层：layoutSubviews 里贴表盘（iOS 16 真正生效的路径）
+
+// 为什么必须再挂这一条：iOS 16 的时钟图标（SBHClockApplicationIconImageView）**不靠
+// -contentsImage 出图**，它自己在 layoutSubviews 里摆表盘与三根指针子视图。
+// 只挂 contentsImage 永远不会被调用 —— 用户 2026-11-05 23:21 报「时钟不显示」就是这个。
+// ThemeCore 0.5.1 的实测证据同样是这一点：
+//   clockv{found=1,last=layers:subs=6|face=y|h=y|m=y|dot=ours}
+// 即它找到那个视图后，按子视图逐个替换成主题素材。
+//
+// 实现：layoutSubviews 之后，拿主题合成好的整张表盘图，贴成视图最底层的一张
+// UIImageView（只贴一次，靠关联对象防重复），并把系统自绘的表盘子视图隐藏。
+// 指针仍由系统子视图走 —— 时间保持活的，不牺牲「动态」。
+
+@interface TCXClockOverlayView : UIImageView
+@end
+@implementation TCXClockOverlayView
+@end
+
+static void *kTCXClockOverlayKey = &kTCXClockOverlayKey;
+
+static void TCXClockApplyOverlay(UIView *view) {
+    if (!view) return;
+    @try {
+        if (!TCXPrefBool(@"Enabled", YES)) return;
+
+        CGSize size = view.bounds.size;
+        if (size.width < 8.0 || size.height < 8.0) return;
+
+        // 合成整张表盘（表盘 + 三针，按当前时间），复用已有的 TCXClockImage。
+        CGFloat scale = view.window.screen.scale > 0 ? view.window.screen.scale : 2.0;
+        UIImage *face = TCXClockImage(size, scale);
+        if (!face) return;
+
+        TCXClockOverlayView *overlay = objc_getAssociatedObject(view, kTCXClockOverlayKey);
+        if (!overlay) {
+            overlay = [[TCXClockOverlayView alloc] initWithFrame:view.bounds];
+            overlay.userInteractionEnabled = NO;
+            overlay.contentMode = UIViewContentModeScaleAspectFit;
+            overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [view insertSubview:overlay atIndex:0];
+            objc_setAssociatedObject(view, kTCXClockOverlayKey, overlay,
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            TCXNoteSite(@"SBHClockApplicationIconImageView:layoutSubviews");
+        }
+        overlay.frame = view.bounds;
+        overlay.image = face;
+
+        // 系统自绘的那层表盘压到我们下面（指针留着，时间才是活的）。
+        for (UIView *sub in view.subviews) {
+            if (sub == overlay) continue;
+            // 系统表盘通常是个铺满整个视图的 UIImageView / CALayer 宿主。
+            if (CGRectGetWidth(sub.bounds) >= size.width * 0.8 &&
+                CGRectGetHeight(sub.bounds) >= size.height * 0.8 &&
+                [sub isKindOfClass:[UIImageView class]]) {
+                sub.hidden = YES;
+            }
+        }
+    } @catch (NSException *exception) {
+        TCXRecordError([NSString stringWithFormat:@"clock:%@", exception.reason]);
+    }
+}
+
+static void repl_clockLayout_SBH(id self, SEL _cmd) {
+    orig_clockLayout_SBH ? orig_clockLayout_SBH(self, _cmd) : (void)0;
+    TCXClockApplyOverlay((UIView *)self);
+}
+
+static void repl_clockLayout_SB(id self, SEL _cmd) {
+    orig_clockLayout_SB ? orig_clockLayout_SB(self, _cmd) : (void)0;
+    TCXClockApplyOverlay((UIView *)self);
+}
+
+static void TCXHookClockLayout(NSString *name, IMP repl, IMP *slot) {
+    Class cls = TCXClass(name);
+    if (!cls) return;
+    if (!TCXClassDeclaresSelector(cls, @selector(layoutSubviews))) return;
+    IMP original = NULL;
+    MSHookMessageEx(cls, @selector(layoutSubviews), repl, &original);
+    if (original) {
+        *slot = original;
+        TCXNoteSite([name stringByAppendingString:@":layoutSubviews"]);
+    }
+}
+
 void TCXInstallClockHooks(void) {
     TCXHookClockClass(@"SBHClockApplicationIconImageView",
                       (IMP)&repl_clockContents_SBH, (IMP *)&orig_clockContents_SBH);
     TCXHookClockClass(@"SBClockApplicationIconImageView",
                       (IMP)&repl_clockContents_SB, (IMP *)&orig_clockContents_SB);
+
+    // iOS 16 真正生效的那条（见上面注释）：呈现层贴表盘。
+    TCXHookClockLayout(@"SBHClockApplicationIconImageView",
+                       (IMP)&repl_clockLayout_SBH, (IMP *)&orig_clockLayout_SBH);
+    TCXHookClockLayout(@"SBClockApplicationIconImageView",
+                       (IMP)&repl_clockLayout_SB, (IMP *)&orig_clockLayout_SB);
 }

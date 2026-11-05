@@ -22,7 +22,7 @@ set -eu
 # ── 包身份：换版本时只改这里 ＋ ThemeCoreX/Sources/TCXVersion.h 的 TCX_VERSION ──
 PRODUCT=AppIcon
 PACKAGE_ID=com.yangzhou.appicon
-VERSION=0.0.9
+VERSION=0.0.10
 NAME=AppIcon
 AUTHOR=yangzhou
 DESCRIPTION="轻量化桌面图标主题插件，修改图标、图标角标及图标阴影如此轻松，覆盖绝大部分区域，时钟日历可动态图标。作者 yangzhou。"
@@ -172,11 +172,25 @@ mkdir -p "$STAGE/Library/PreferenceLoader/Preferences/AppIcon"
 cp Support/AppIconPreferenceLoader.plist \
    "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/Root.plist"
 plutil -lint "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/Root.plist"
-# 设置里那一行的图标：入口 plist 的 icon=AppIcon.png 相对**入口目录**与 Bundle 目录都能找，
-# 两处都放一份，避免不同 PreferenceLoader 版本找法不一致时又变成「只有文字没有图标」。
-cp Support/AppIcon.png Support/AppIcon@2x.png \
-   "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/"
-cp Support/AppIcon.png Support/AppIcon@2x.png "$PREFS_BUNDLE/"
+# 设置里那一行的图标：PreferenceLoader 按「点」取图，给 180×180 的 App 图标会显得巨大。
+# 设置行图标标准是 29pt → @1x 29 / @2x 58 / @3x 87。构建机是 macOS，直接用 sips 缩，
+# 源图留在 Support/AppIcon-180.png，产物落到 STAGE 里，不改仓库里的原图。
+ICON_SRC=Support/AppIcon-180.png
+if [ -f "$ICON_SRC" ] && command -v sips >/dev/null 2>&1; then
+  sips -z 29 29  "$ICON_SRC" --out "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/AppIcon.png"    >/dev/null
+  sips -z 58 58  "$ICON_SRC" --out "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/AppIcon@2x.png" >/dev/null
+  sips -z 87 87  "$ICON_SRC" --out "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/AppIcon@3x.png" >/dev/null
+  cp "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/AppIcon.png" \
+     "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/AppIcon@2x.png" \
+     "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/AppIcon@3x.png" "$PREFS_BUNDLE/"
+  echo "build-appicon.sh: settings icon scaled to 29/58/87"
+else
+  # 退路：没有 sips 就直接拷原图（图标会偏大，但不会缺）
+  cp Support/AppIcon.png Support/AppIcon@2x.png \
+     "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/"
+  cp Support/AppIcon.png Support/AppIcon@2x.png "$PREFS_BUNDLE/"
+  echo "build-appicon.sh: sips missing, used original icon size" >&2
+fi
 
 # postinst / postrm：与 ThemeCore 0.5.1 同形状（建 Themes 与 Preferences 目录、踢 sharingd）。
 cat > "$STAGE/DEBIAN/postinst" <<'POSTINST'

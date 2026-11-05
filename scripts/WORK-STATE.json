@@ -12,11 +12,21 @@
     "黑屏重进是否消失",
     "面板开关能否点动"
   ],
-  "next": "1) 下载 AppIcon v0.0.8 到 /var/mobile/Documents/；2) sh scripts/install-deb.sh 装（只装不注销）；3) sh scripts/post-install-respring.sh 弹窗问用户注销；4) 注销后 cat /rootfs/var/mobile/Library/AppIcon/diag.txt 核 layers 与计数。",
+  "next": "0.0.10 一批修四项：B13 选择主题点不进、B15 日历无星期日期、B16 时钟不显示、B19 设置图标过大。编译成功后下载装包，注销后按 buglog 逐项对账。",
+  "delivery_check_0_0_10": "本批要解决的 = buglog 里 status 非「已修」的全部：B13（已改，父类 setSpecifiers）、B15（已改，主题无声明时用默认样式画）、B16（已改，layoutSubviews 贴表盘）、B19（已改，构建时 sips 缩到 29/58/87）。待验证项 B18 控制中心不在本批改动内，仍靠用户目视。",
   "why": "用户长期在用 ThemeCore 0.5.1，要求架构与它一致（layers 叠加、挂载点、依赖、面板形状），同时保留我们新加的角标/阴影/文件夹/控制中心等功能。",
   "guard": "旧架构名不出现；ThemeCore 与本工程 Prefs/ThemeCorePlusPrefs 不改；Sunpboard 注入插件构造函数阶段不碰 UIKit、不同步建主题库；装包/注销需用户点头；jbroot 运行时探测不写死；一次只改一个变量并当场验证。",
   "buglog_rule": "用户 2026-11-05 23:15 定：以后每次注销后，用户第一时间报的 bug 和他说「修好了」的项，必须当场落进本文件 buglog 数组，一项一行，每条带 where/proof/status/fix，然后逐项对比、分析、改进。不许只回在对话里。",
   "buglog": [
+    {
+      "id": "B19",
+      "where": "设置 ▸ AppIcon 那一行",
+      "symptom": "插件图标太大",
+      "reported": "2026-11-05T23:28 用户原话「设置内插件图标太大了！这个还没解决」",
+      "proof": "AppIcon.png 与 AppIcon@2x.png 都是 180×180 的 App 图标直接拷来当设置行图标；PreferenceLoader 设置行图标应为 29×29（@2x 58、@3x 87）",
+      "status": "待修",
+      "fix": "把 Support/AppIcon.png 缩到 29×29、@2x 缩到 58×58、@3x 缩到 87×87 再打包；本机没有 sips，用 icli probe 里 UIImage+UIGraphics 缩放生成"
+    },
     {
       "id": "B16",
       "where": "桌面 ▸ 时钟图标",

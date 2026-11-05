@@ -180,7 +180,13 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
         [store reloadIfNeeded];
         NSDictionary *dateSettings = [store calendarDateSettings];
         NSDictionary *daySettings = [store calendarDaySettings];
-        if (!dateSettings && !daySettings) return image;   // 主题没声明 → 一动不如一静
+        // 主题没声明这两个键时**不能直接放弃**：实测本机三个主题（Smartisan /
+        // 液态玻璃 / 角标：透明玻璃）的 Info.plist 里都没有它们，于是原来这句
+        // return 让日历永远保持系统默认（用户 2026-11-05 23:21「日历没星期是日历等文字」）。
+        // 改成走默认样式自己画：字体用系统等宽、颜色取白/黑、居中。
+        BOOL fromTheme = (dateSettings != nil || daySettings != nil);
+        if (!dateSettings) dateSettings = @{};
+        if (!daySettings)  daySettings  = @{};
 
         NSCalendar *calendar = [NSCalendar currentCalendar];
         NSDate *now = [NSDate date];
@@ -220,7 +226,7 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
                                                 size.height * 0.24 + offset.y));
             }
             if (dateSettings) {
-                UIFont *font = TCXCalendarFont(dateSettings, size.width, 32.0);
+                UIFont *font = TCXCalendarFont(dateSettings, size.width, 24.0);
                 UIColor *color = TCXCalendarColor(dateSettings[@"TextColor"]) ?: [UIColor whiteColor];
                 NSShadow *shadow = TCXCalendarShadow(dateSettings, size.width);
                 CGPoint offset = TCXCalendarOffset(dateSettings, size.width);
