@@ -225,10 +225,7 @@ TCX_INFO_REPL(GenericIconImageWithInfo)
 #pragma mark - 组 B / C：bundle id 型
 
 typedef id (*TCXBundleImp)(id, SEL, NSString *);
-typedef id (*TCXBundleScaleImp)(id, SEL, NSString *, CGFloat);
 typedef id (*TCXIconImp)(id, SEL, id);
-typedef id (*TCXFormatImp)(id, SEL, NSString *, NSInteger);
-typedef id (*TCXFormatScaleImp)(id, SEL, NSString *, NSInteger, CGFloat);
 
 // 把原值换主题图。原值不是 UIImage（CGImageRef / ISImage / 包壳）就一个字都不动。
 static id TCXThemeResult(id result, NSString *bundleID, CGFloat scale) {
@@ -278,23 +275,6 @@ static id TCXThemeResult(id result, NSString *bundleID, CGFloat scale) {
 TCX_BUNDLE_REPL(AppIconForBundleIdentifier)
 TCX_BUNDLE_REPL(IconForBundleIdentifier)
 
-static id repl_ImageForBundleIdentifierScale(id self, SEL _cmd, NSString *bundleID, CGFloat scale) {
-    Class hit = NULL;
-    TCXBundleScaleImp orig = (TCXBundleScaleImp)TCXBeginOriginal(self, _cmd, &hit);
-    @try {
-        id result = orig ? orig(self, _cmd, bundleID, scale) : nil;
-        if (!TCXPrefBool(@"Enabled", YES)) return result;
-        if (![bundleID isKindOfClass:[NSString class]]) return result;
-        @try {
-            return TCXThemeResult(result, bundleID, scale > 0 ? scale : 2.0);
-        } @catch (NSException *exception) {
-            return result;
-        }
-    } @finally {
-        TCXEndOriginal(hit);
-    }
-}
-
 #define TCX_ICON_REPL(name) \
     static id repl_##name(id self, SEL _cmd, id icon) { \
         Class hit = NULL; \
@@ -316,41 +296,6 @@ static id repl_ImageForBundleIdentifierScale(id self, SEL _cmd, NSString *bundle
 
 TCX_ICON_REPL(CachedImageForIcon)
 TCX_ICON_REPL(ImageForIcon)
-
-static id repl_ApplicationIconImageForBundleIdentifierFormat(id self, SEL _cmd, NSString *bundleID, NSInteger format) {
-    Class hit = NULL;
-    TCXFormatImp orig = (TCXFormatImp)TCXBeginOriginal(self, _cmd, &hit);
-    @try {
-        id result = orig ? orig(self, _cmd, bundleID, format) : nil;
-        if (!TCXPrefBool(@"Enabled", YES)) return result;
-        if (![bundleID isKindOfClass:[NSString class]]) return result;
-        @try {
-            return TCXThemeResult(result, bundleID, 2.0);
-        } @catch (NSException *exception) {
-            return result;
-        }
-    } @finally {
-        TCXEndOriginal(hit);
-    }
-}
-
-static id repl_ApplicationIconImageForBundleIdentifierFormatScale(id self, SEL _cmd, NSString *bundleID,
-                                                                 NSInteger format, CGFloat scale) {
-    Class hit = NULL;
-    TCXFormatScaleImp orig = (TCXFormatScaleImp)TCXBeginOriginal(self, _cmd, &hit);
-    @try {
-        id result = orig ? orig(self, _cmd, bundleID, format, scale) : nil;
-        if (!TCXPrefBool(@"Enabled", YES)) return result;
-        if (![bundleID isKindOfClass:[NSString class]]) return result;
-        @try {
-            return TCXThemeResult(result, bundleID, scale > 0 ? scale : 2.0);
-        } @catch (NSException *exception) {
-            return result;
-        }
-    } @finally {
-        TCXEndOriginal(hit);
-    }
-}
 
 #pragma mark - 组 E：视图层（呈现层最后一道保险）
 
@@ -433,42 +378,37 @@ static void TCXReloadCallback(CFNotificationCenterRef center, void *observer,
 }
 
 void TCXInstallIconHooks(void) {
-    // 类清单与 ThemeCore 0.5.1 落在同一批：IconServices 的生图对象 + SpringBoard 的图标对象。
+    // 类清单严格对齐 ThemeCore 0.5.1 的图标生图层（二进制字符串表实证）。
+    // 角标 / 阴影 / 文件夹背景 / 控制中心 / 系统设置素材这些 ThemeCore 没有的新功能，
+    // 各走各的独立模块（TCXBadge / TCXShadow / TCXFolders / TCXBundleImages），不在这里挂。
     NSArray<NSString *> *owners = @[
+        // —— IconServices 生图对象（ThemeCore 有）——
         @"ISBundleIdentifierIcon",
-        @"ISIcon",
         @"ISGenerationRequest",
+        @"ISImageDescriptor",
+        // —— SpringBoard 图标对象（ThemeCore 有）——
         @"SBApplicationIcon",
-        @"SBLeafIcon",
-        @"SBIcon",
         @"SBHIconImageCache",
         @"SBFolderIconImageCache",
         @"SBFolderIconImageSharedCache",
         @"SBHCalendarApplicationIcon",
         @"SBCalendarApplicationIcon",
-        // 日历/时钟在 iOS 16 走 ImageProvider，不经过 SBIcon 那几条，
-        // 漏了它日历主题图就不生效（ThemeCore 0.5.1 实测挂了这两个站）。
-        @"SBCalendarIconImageProvider",
-        // 书签 / 占位 / 同播共享这几类图也各自出图，ThemeCore 一并有站。
-        @"SBHBookmarkIcon",
-        @"SBPlaceholderIcon",
-        @"SBInCallPresentationScreenSharingIcon",
-        @"SBFolderIcon",
         @"SBWidgetIcon",
         @"SBHLibraryPodCategoryIcon",
         @"SBHLibraryAdditionalItemsIndicatorIcon",
-        // —— 以下按 ThemeCore 0.5.1 的类清单补齐（二进制实证，它一共用这些类）——
-        // 桌面图标视图本体：图标最终是贴在 SBIconView 上的，这一层挂上才跟得上
-        // 系统的各种刷新路径（拖拽、翻页、文件夹开合）。
+        // —— 图标视图 / 列表 / 文件夹视图（ThemeCore 有）——
         @"SBIconView",
-        // 列表 / 停靠栏 / 根文件夹：换主题后要让它们重新取图。
+        @"SBIconImageView",
+        @"SBFolderIconView",
+        @"SBFolderIconImageView",
         @"SBIconListView",
         @"SBDockIconListView",
         @"SBRootFolderView",
-        // 文件夹视图：文件夹内外的小图分别由这两个出。
-        @"SBFolderIconView",
-        @"SBFolderIconImageView",
-        // IconServices 的图框（ThemeCore 自己有这个类，用来在生图层替换）。
+        @"SBIconController",
+        @"SBDisplayItem",
+        @"SBHIconTableViewCell",
+        @"SBFluidSwitcherSpaceTitleItem",
+        // IconServices 的图框（ThemeCore 自己的类）
         @"TCIconServicesImageBox",
     ];
 
@@ -492,21 +432,11 @@ void TCXInstallIconHooks(void) {
                         (IMP)&repl_AppIconForBundleIdentifier, @"appIconForBundleIdentifier:");
         TCXHookDeclared(cls, @selector(iconForBundleIdentifier:),
                         (IMP)&repl_IconForBundleIdentifier, @"iconForBundleIdentifier:");
-        TCXHookDeclared(cls, @selector(imageForBundleIdentifier:scale:),
-                        (IMP)&repl_ImageForBundleIdentifierScale,
-                        @"imageForBundleIdentifier:scale:");
 
         TCXHookDeclared(cls, @selector(cachedImageForIcon:),
                         (IMP)&repl_CachedImageForIcon, @"cachedImageForIcon:");
         TCXHookDeclared(cls, @selector(imageForIcon:),
                         (IMP)&repl_ImageForIcon, @"imageForIcon:");
-
-        TCXHookDeclared(cls, @selector(_applicationIconImageForBundleIdentifier:format:),
-                        (IMP)&repl_ApplicationIconImageForBundleIdentifierFormat,
-                        @"_applicationIconImageForBundleIdentifier:format:");
-        TCXHookDeclared(cls, @selector(_applicationIconImageForBundleIdentifier:format:scale:),
-                        (IMP)&repl_ApplicationIconImageForBundleIdentifierFormatScale,
-                        @"_applicationIconImageForBundleIdentifier:format:scale:");
     }
 
     // 文件夹小图：不挂 SBFolderIconImageCache:gridCellImageOfSize:forIcon:iconImageInfo:。
