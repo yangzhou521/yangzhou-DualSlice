@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.15";
+static NSString *const CHVersion = @"1.6.16";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -1208,9 +1208,12 @@ static BOOL CHHandleRequest(NSString *content) {
         if (label.length == 0) {
             label = @"完成";
         }
-        // 单行显示，太长会被缩到看不清：留前 32 个字。
-        if (label.length > 32) {
-            label = [[label substringToIndex:31] stringByAppendingString:@"…"];
+        // v1.6.16（用户 23:30「长岛没看到效果怎么样」+ 实测 label 结尾出现「…」）：
+        // 胶囊正文**不截断**。1.6.15 还留着「留前 32 个字」的老规矩（那是单行时代
+        // 怕字被缩到看不清才截的），现在排版层会自动多行 + 缩字号，截掉反而是丢内容。
+        // 只做上限保护：超过 120 字才截（防止一次写进几百字把岛撑爆）。
+        if (label.length > 120) {
+            label = [[label substringToIndex:119] stringByAppendingString:@"…"];
         }
     }
     // v1.5.0：标签以「?」开头＝**注销确认弹窗**（系统样式，任何界面都盖上来）。

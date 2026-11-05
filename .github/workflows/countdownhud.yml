@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.15)
+    name: Release (countdownhud-v1.6.16)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,17 +133,25 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.15
-          name: CountdownHUD v1.6.15
+          tag_name: countdownhud-v1.6.16
+          name: CountdownHUD v1.6.16
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
 
-            v1.6.14：**字号改回正常大小并自适应**（用户 2026-11-05 22:46「文字太小了」）。
+            v1.6.16：**胶囊正文不再截断**。1.6.15 的纯文案仍沿用单行时代的「留前 32 个字」，
+            实测一条 32 字以上的通知在岛上结尾变成「…」，后半截直接丢了。现在胶囊正文完整显示
+            （排版层本来就会自动多行 + 缩字号），只保留 120 字的防爆上限；弹窗（`?` / `#`）
+            仍按 48 字截断，因为那是单行对话框。
+
+            v1.6.15：**默认跟随系统紧凑态 + 字号回到岛高 ÷ 3**（用户 22:46「文字太小了」、
+            22:47「灵动岛大小没和系统灵动岛对齐」）。选型改为只有紧凑态两行确实装不下才升到
+            展开态 145×47；字号基准从 1.6.13 的「岛高 ÷ 6 再砍半」改回岛高 ÷ 3，下限提到 8pt。
+            吸附尺寸时按系统岛候选的中心回算原点，避免 ±1pt 错位。
             1.6.13 的「岛高 ÷ 6 再砍半」让短岛只有 6.2pt、长岛 7.8pt，实测一条 11 字文案
-            就被压成 7.8pt。现在 `CHPreferredFontSize` 基准回到岛高 ÷ 3（紧凑 125×37 →
+            就被压成 7.8pt。1.6.15 起 `CHPreferredFontSize` 基准是岛高 ÷ 3（紧凑 125×37 →
             12.3pt、展开 145×47 → 15.7pt），取消「>14 字再砍半」的一刀切；只有内容在容器里
-            真的放不下（超过 6 行或高过胶囊）才逐级缩小，下限从 5.0pt 提到 8.0pt，绝不低于
-            可读字号。多行文字块仍整体垂直居中，行数 1~6 自适应。
+            真的放不下（超过 6 行或高过胶囊）才逐级缩小，下限 8.0pt，绝不低于可读字号。
+            多行文字块仍整体垂直居中，行数 1~6 自适应。
 
             v1.6.13：**胶囊字号整体缩到之前的 50%**（用户 2026-11-05 17:36「字号缩下到之前
             百分之五十」）。`CHPreferredFontSize` 的基准从岛高 ÷ 3 改为岛高 ÷ 6（长岛 47 →
@@ -311,4 +319,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.15/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.16/$(basename "$DEB")"
