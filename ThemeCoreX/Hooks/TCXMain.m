@@ -74,6 +74,17 @@ void TCXWriteDiagnostics(BOOL force) {
 
 // 站挂了没被调用时，光靠 hook 内部计数看不出来；所以给各模块一个统一的落点，
 // 让 Main 定期（这里用「被问就写、节流 5 秒」的轻办法）把总数刷出去。
+//
+// ★ 架构对齐 ThemeCore 0.5.1（用户 2026-11-05 23:49 强调「优先和 ThemeCore 0.5.1 架构一致」）：
+// ThemeCore 把工作拆成 TCIconServicesInstallHooks（生图层）与 TCIconShadowInstallHooks（阴影层）
+// 两个阶段，构造函数里只做进程判断与配置读取，**挂站不放在 dyld 构造函数阶段**。
+//
+// 为什么这么重要（用户报「注销后黑屏、再起一次桌面才正常」的老 bug）：
+// 构造函数阶段是 SpringBoard 启动的关键窗口，系统在这个窗口里等桌面就绪。
+// 我们原来在这里同步挂 27 个站（每个都要 class_copyMethodList + MSHookMessageEx），
+// 桌面迟迟不 ready，系统就把进程杀掉重启 → 用户看到黑屏，第二次才正常。
+// 修法：构造函数只判断角色与开关（纯内存操作，微秒级），
+// 挂站与诊断全部 dispatch_async 到主队列 —— 启动期一个站都不挂、一次盘都不读。
 __attribute__((constructor)) static void TCXInitialize(void) {
     @autoreleasepool {
         const char *progname = getprogname();
@@ -90,37 +101,36 @@ __attribute__((constructor)) static void TCXInitialize(void) {
         // 用户关掉总开关：一个站都不挂，只留一行诊断（方便确认「是关着」而不是「坏了」）。
         if (!TCXPrefBool(@"Enabled", YES)) {
             sRole = [sRole stringByAppendingString:@":disabled"];
-            TCXWriteDiagnostics(YES);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                TCXWriteDiagnostics(YES);
+            });
             return;
         }
 
-        @try {
-            // 生图层在**每个**被注入的进程里都挂 —— ThemeCore 0.5.1 就是这个模型：
-            // 过滤器命中 com.apple.UIKit，凡是链接 UIKit 的进程都进得来，
-            // IconServices 的生图对象在各进程里都存在，换的是 UIImage，类型不变。
-            TCXInstallIconHooks();
+        BOOL isSpringBoard = [sRole isEqualToString:@"springboard"];
 
-            if ([sRole isEqualToString:@"springboard"]) {
-                // 呈现层专属：只有 SpringBoard 里才有 SBIconView / SBIconBadgeView / 时钟视图。
-                // 阴影 / 角标 / 时钟 / 日历 / 圆角遮罩这些功能由用户定为**常开**，
-                // 面板不再提供开关（2026-11-05 22:52），所以这里直接全挂，不读偏好。
-                TCXInstallShadowHooks();
-                TCXInstallBadgeHooks();
-                TCXInstallClockHooks();
-                // 控制中心模块图标（Bundles/com.apple.control-center.*）
-                TCXInstallBundleImageHooks();
-                TCXInstallFolderHooks();
-            }
-        } @catch (NSException *exception) {
-            TCXRecordError([NSString stringWithFormat:@"%@:%@", exception.name, exception.reason]);
-        }
-
-        // 诊断写入**绝不能在构造函数里同步做**：TCXWriteDiagnostics 会 [TCXStore shared]，
-        // 那要把主题库建起来、扫 Library/Themes、读每个主题的 Info.plist。
-        // 在 SpringBoard 的 dyld 构造函数阶段做这件事会卡住启动，
-        // 系统等不到桌面就绪就把进程杀掉 → 用户看到「注销后黑屏，再起一次才正常」。
-        // 所以推迟到主队列空闲时跑，启动期一个文件都不碰。
+        // 挂站与诊断全部推迟到主队列：构造函数阶段一个文件都不碰、一个站都不挂。
         dispatch_async(dispatch_get_main_queue(), ^{
+            @try {
+                // 生图层在**每个**被注入的进程里都挂 —— ThemeCore 0.5.1 就是这个模型：
+                // 过滤器命中 com.apple.UIKit，凡是链接 UIKit 的进程都进得来，
+                // IconServices 的生图对象在各进程里都存在，换的是 UIImage，类型不变。
+                TCXInstallIconHooks();
+
+                if (isSpringBoard) {
+                    // 呈现层专属：只有 SpringBoard 里才有 SBIconView / SBIconBadgeView / 时钟视图。
+                    // 阴影 / 角标 / 时钟 / 日历 / 圆角遮罩这些功能由用户定为**常开**，
+                    // 面板不再提供开关（2026-11-05 22:52），所以这里直接全挂，不读偏好。
+                    TCXInstallShadowHooks();
+                    TCXInstallBadgeHooks();
+                    TCXInstallClockHooks();
+                    // 控制中心模块图标（Bundles/com.apple.control-center.*）
+                    TCXInstallBundleImageHooks();
+                    TCXInstallFolderHooks();
+                }
+            } @catch (NSException *exception) {
+                TCXRecordError([NSString stringWithFormat:@"%@:%@", exception.name, exception.reason]);
+            }
             TCXWriteDiagnostics(YES);
         });
     }

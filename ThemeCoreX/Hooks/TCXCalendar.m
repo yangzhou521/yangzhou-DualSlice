@@ -148,6 +148,35 @@ static NSShadow *TCXCalendarShadow(NSDictionary *settings, CGFloat iconWidth) {
 
 #pragma mark - 绘制
 
+// 底图平均亮度：用来决定日历文字该用黑还是白。
+// 主题没给 TextColor 时必须靠它 —— 液态玻璃这类浅色底图画白字等于没画，
+// 用户 2026-11-05 23:21 报「日历没星期、是日历等文字」就是这个。
+static CGFloat TCXAverageLuminance(UIImage *image) {
+    if (!image) return 0.5;
+    CGImageRef cg = image.CGImage;
+    if (!cg) return 0.5;
+    size_t w = 8, h = 8;
+    uint8_t buf[8 * 8 * 4] = {0};
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(buf, w, h, 8, w * 4, cs,
+                                             kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(cs);
+    if (!ctx) return 0.5;
+    CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), cg);
+    CGContextRelease(ctx);
+
+    double sum = 0.0;
+    for (size_t i = 0; i < w * h; i++) {
+        double r = buf[i * 4 + 0] / 255.0;
+        double g = buf[i * 4 + 1] / 255.0;
+        double b = buf[i * 4 + 2] / 255.0;
+        double a = buf[i * 4 + 3] / 255.0;
+        if (a < 0.1) continue;                     // 透明像素不参与
+        sum += 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+    return (CGFloat)(sum / (double)(w * h));
+}
+
 // 画一行字：center 是这一行的中心点（已含 offset），垂直居中。
 static void TCXCalendarDrawText(NSString *text, UIFont *font, UIColor *color,
                                 NSShadow *shadow, CGPoint center) {
@@ -188,6 +217,11 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
         if (!dateSettings) dateSettings = @{};
         if (!daySettings)  daySettings  = @{};
 
+        // 主题没给 TextColor 时按底图亮度自动选：浅底用黑字、深底用白字。
+        // 硬编码白色会让浅色主题（液态玻璃）的星期日期完全看不见。
+        CGFloat lum = TCXAverageLuminance(image);
+        UIColor *autoColor = (lum < 0.5) ? [UIColor whiteColor] : [UIColor blackColor];
+
         NSCalendar *calendar = [NSCalendar currentCalendar];
         NSDate *now = [NSDate date];
         NSInteger day = [calendar component:NSCalendarUnitDay fromDate:now];
@@ -218,7 +252,7 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
             // 没有 offset 时的落点：星期在上、日期在下（与 iOS 日历图标同排版）。
             if (daySettings) {
                 UIFont *font = TCXCalendarFont(daySettings, size.width, 8.0);
-                UIColor *color = TCXCalendarColor(daySettings[@"TextColor"]) ?: [UIColor whiteColor];
+                UIColor *color = TCXCalendarColor(daySettings[@"TextColor"]) ?: autoColor;
                 NSShadow *shadow = TCXCalendarShadow(daySettings, size.width);
                 CGPoint offset = TCXCalendarOffset(daySettings, size.width);
                 TCXCalendarDrawText(weekday, font, color, shadow,
@@ -227,7 +261,7 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
             }
             if (dateSettings) {
                 UIFont *font = TCXCalendarFont(dateSettings, size.width, 24.0);
-                UIColor *color = TCXCalendarColor(dateSettings[@"TextColor"]) ?: [UIColor whiteColor];
+                UIColor *color = TCXCalendarColor(dateSettings[@"TextColor"]) ?: autoColor;
                 NSShadow *shadow = TCXCalendarShadow(dateSettings, size.width);
                 CGPoint offset = TCXCalendarOffset(dateSettings, size.width);
                 TCXCalendarDrawText([NSString stringWithFormat:@"%ld", (long)day], font, color, shadow,

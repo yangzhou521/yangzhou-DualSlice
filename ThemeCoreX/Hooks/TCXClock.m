@@ -250,7 +250,11 @@ static void repl_clockLayout_SB(id self, SEL _cmd) {
 static void TCXHookClockLayout(NSString *name, IMP repl, IMP *slot) {
     Class cls = TCXClass(name);
     if (!cls) return;
-    if (!TCXClassDeclaresSelector(cls, @selector(layoutSubviews))) return;
+    // 注意：layoutSubviews 是 UIView 的方法，子类**不自己声明**它。
+    // 用「类自己声明」那套判断（TCXClassDeclaresSelector）会永远返回 false，
+    // 于是这条永远挂不上 —— 用户 2026-11-05 23:21 报「时钟不显示」就是这个。
+    // 正确判断：类是否响应这个 selector（继承来的也算）。
+    if (![cls respondsToSelector:@selector(layoutSubviews)]) return;
     IMP original = NULL;
     MSHookMessageEx(cls, @selector(layoutSubviews), repl, &original);
     if (original) {

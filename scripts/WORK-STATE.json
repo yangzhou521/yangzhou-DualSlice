@@ -17,7 +17,35 @@
   "why": "用户长期在用 ThemeCore 0.5.1，要求架构与它一致（layers 叠加、挂载点、依赖、面板形状），同时保留我们新加的角标/阴影/文件夹/控制中心等功能。",
   "guard": "旧架构名不出现；ThemeCore 与本工程 Prefs/ThemeCorePlusPrefs 不改；Sunpboard 注入插件构造函数阶段不碰 UIKit、不同步建主题库；装包/注销需用户点头；jbroot 运行时探测不写死；一次只改一个变量并当场验证。",
   "buglog_rule": "用户 2026-11-05 23:15 定：以后每次注销后，用户第一时间报的 bug 和他说「修好了」的项，必须当场落进本文件 buglog 数组，一项一行，每条带 where/proof/status/fix，然后逐项对比、分析、改进。不许只回在对话里。",
+  "buglog_batch_0_0_11": "本批（0.0.11）要解决的 = B22 黑屏重启、B23 角标文字与图标、B15 日历文字颜色、B16 时钟挂载。参照物：ThemeCore 0.5.1 优先（架构与挂载时机），它没有的功能再借第三方 ThemeCorePlus 对 iOS 16 的实证。",
   "buglog": [
+    {
+      "id": "B22",
+      "where": "注销重启",
+      "symptom": "注销后黑屏，要再进一次桌面才正常",
+      "reported": "2026-11-05T23:49 用户原话「注销重启二次桌面这个要重点修复解决它」",
+      "proof": "SpringBoard 无崩溃报告 → 不是崩溃，是启动被 watchdog 判超时杀掉重启",
+      "status": "0.0.11 待验",
+      "fix": "构造函数原来同步挂 27 个站（每个 class_copyMethodList + MSHookMessageEx），卡住启动窗口。现在构造函数只判断角色与开关，挂站与诊断全部 dispatch_async 到主队列 —— 与 ThemeCore 0.5.1 把 TCIconServicesInstallHooks / TCIconShadowInstallHooks 分阶段的做法一致。"
+    },
+    {
+      "id": "B23",
+      "where": "桌面 ▸ 角标文字与图标",
+      "symptom": "角标上的文字与图标从来没正常加载过（diag bdg=0）",
+      "reported": "2026-11-05T23:49 用户原话「文字夹图标我们从来没实现正常加载」",
+      "proof": "diag.txt: bdg=0，sites 里没有任何 SBIconBadgeView 站",
+      "status": "0.0.11 待验",
+      "fix": "iOS 16 底板不是图：SBIconBadgeView 内部 _backgroundView 是 systemRed+圆角，原来挂的 _checkoutBackgroundImage 在 iOS 16 不存在。现在挂 layoutSubviews 塞主题图+清背景色；文字挂 +_checkoutImageForText:font:highlighted: 自绘并包成 SBHIconAccessoryCountedMapImageTuple；底板用 resizableImageWithCapInsets 保圆角；素材名 SBBadgeBG。"
+    },
+    {
+      "id": "B24",
+      "where": "桌面 ▸ 日历文字颜色",
+      "symptom": "主题没给 CalendarIconDateSettings 时，白色字画在浅色底图上 → 看不见，只剩「日历」两字",
+      "reported": "2026-11-05T23:21",
+      "proof": "三个主题的 Info.plist 都没有这两个键；液态玻璃是浅色底",
+      "status": "0.0.11 待验",
+      "fix": "新增底图平均亮度探测（8x8 采样），主题没给 TextColor 时浅底用黑字、深底用白字。"
+    },
     {
       "id": "B19",
       "where": "设置 ▸ AppIcon 那一行",
