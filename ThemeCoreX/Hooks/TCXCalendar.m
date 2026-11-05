@@ -236,9 +236,14 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
             sCalendarCache = [[NSCache alloc] init];
             sCalendarCache.countLimit = 16;
         }
-        NSString *key = [NSString stringWithFormat:@"cal|%@|%.0fx%.0f|%ld|%@|%lu",
+        // 缓存键里带上**配置内容本身**：用户随时改主题 Info.plist 的日历文字设置，
+        // 只靠 generation 不会变，旧图就会一直用下去（改了不生效）。
+        NSString *configKey = [NSString stringWithFormat:@"%@|%@",
+                               dateSettings.description ?: @"-",
+                               daySettings.description ?: @"-"];
+        NSString *key = [NSString stringWithFormat:@"cal|%@|%.0fx%.0f|%ld|%@|%@",
                          store.themeName ?: @"none", size.width, size.height,
-                         (long)day, weekday ?: @"", (unsigned long)store.generation];
+                         (long)day, weekday ?: @"", configKey];
         UIImage *cached = [sCalendarCache objectForKey:key];
         if (cached) return cached;
 

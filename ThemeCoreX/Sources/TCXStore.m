@@ -564,24 +564,18 @@ static NSArray<NSString *> *TCXShadowDirectories(NSString *themePath) {
 // 主题 Info.plist 里的日历文字设置。两个键都认，取不到给 nil。
 - (NSDictionary *)calendarSettingsForKey:(NSString *)key {
     // 走叠加层：从第一层往下找，第一个有这个键的层生效。
-    // 之前只读 _themeInfo（第一层），当前生效主题是「角标：透明玻璃」时它没有日历配置，
-    // 于是永远回落默认样式、主题给的位置与颜色全被忽略（用户 2026-11-06 01:50 报的）。
+    // 关键：**每次都读盘**，不用 _themeInfo 缓存 ——
+    // 用户会随时改主题的 Info.plist 来自定义日历文字（字号/位置/颜色），
+    // 用缓存就意味着改完不生效。读一个小 plist 的成本可以忽略。
     for (NSString *layer in _themePaths) {
-        NSDictionary *info = nil;
-        if ([layer isEqualToString:_themePath ?: @""]) {
-            info = _themeInfo;
-        } else {
-            id raw = [NSDictionary dictionaryWithContentsOfFile:
-                      [layer stringByAppendingPathComponent:@"Info.plist"]];
-            info = [raw isKindOfClass:[NSDictionary class]] ? raw : nil;
-        }
+        NSString *path = [layer stringByAppendingPathComponent:@"Info.plist"];
+        id raw = [NSDictionary dictionaryWithContentsOfFile:path];
+        NSDictionary *info = [raw isKindOfClass:[NSDictionary class]] ? raw : nil;
         if (!info) continue;
         id value = info[key];
         if ([value isKindOfClass:[NSDictionary class]]) return value;
     }
-    // 最后一层兜底：_themeInfo
-    id value = _themeInfo[key];
-    return [value isKindOfClass:[NSDictionary class]] ? value : nil;
+    return nil;
 }
 
 - (NSDictionary *)calendarDateSettings { return [self calendarSettingsForKey:@"CalendarIconDateSettings"]; }
