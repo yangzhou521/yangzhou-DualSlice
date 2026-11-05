@@ -18,6 +18,51 @@
   "buglog_rule": "用户 2026-11-05 23:15 定：以后每次注销后，用户第一时间报的 bug 和他说「修好了」的项，必须当场落进本文件 buglog 数组，一项一行，每条带 where/proof/status/fix，然后逐项对比、分析、改进。不许只回在对话里。",
   "buglog": [
     {
+      "id": "B16",
+      "where": "桌面 ▸ 时钟图标",
+      "symptom": "时钟不显示（无动态表盘）",
+      "reported": "2026-11-05T23:21 用户原话「时钟不显示」",
+      "proof": "待取证：diag 的 clock 计数、TCXClock.m 挂的站是否命中",
+      "status": "待修",
+      "fix": "待定位：TCXClock 走 SBHClockApplicationIconImageView；ThemeCore 实测 clockv{found=1,face=y,h=y,m=y}，要确认我们是否也找得到那个视图并替换表盘"
+    },
+    {
+      "id": "B15",
+      "where": "桌面 ▸ 日历图标",
+      "symptom": "日历没有星期/日期，直接显示「日历」等文字",
+      "reported": "2026-11-05T23:21",
+      "proof": "待取证：diag 的 cal 计数与 calendarDateSettings 是否读到",
+      "status": "待修",
+      "fix": "待定位：日历主题缺底图时落回系统默认文字；需确认 SBCalendarIconImageProvider 已挂上且主题底座可取"
+    },
+    {
+      "id": "B14",
+      "where": "桌面 ▸ 文件夹",
+      "symptom": "文件夹图标不显示（主题的文件夹背景图没生效）",
+      "reported": "2026-11-05T23:21",
+      "proof": "用户 2026-11-05T23:27 目视：文件夹内外 app 图标都加载了",
+      "status": "已修（0.0.8 装上后生效，用户确认）",
+      "fix": "layers 叠加 + 补挂载类；文件夹内外图标都出图"
+    },
+    {
+      "id": "B17",
+      "where": "桌面 ▸ 图标阴影",
+      "symptom": "图标阴影没生效",
+      "reported": "2026-11-05T23:27",
+      "proof": "用户 2026-11-05T23:27 目视：图标阴影已加载",
+      "status": "已修（0.0.8 装上后生效，用户确认）",
+      "fix": "阴影常开（开关已删），加载主题 iPhoneShadow 素材"
+    },
+    {
+      "id": "B18",
+      "where": "控制中心 ▸ 模块图标",
+      "symptom": "控制中心图标是否被主题化，未知",
+      "reported": "2026-11-05T23:27 用户原话「控制中心图标不知道加载没这个要继续验证」",
+      "proof": "待取证：拉下控制中心看模块图标；读 diag 中 bundle 命中记录是否含 com.apple.control-center.*",
+      "status": "待验证",
+      "fix": "TCXBundleImages 挂 Bundles/com.apple.control-center.* 的取图；需要实际下拉控制中心确认"
+    },
+    {
       "id": "B13",
       "where": "设置 ▸ AppIcon ▸ 选择主题",
       "symptom": "点进「选择主题」只看到一行说明文字「可用主题…同一时间只启用一个主题…」，下面没有任何主题行，无法选择。",
