@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.17";
+static NSString *const CHVersion = @"1.6.18";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -594,10 +594,17 @@ static void CHHandlePillTap(void) {
 //   ② 按容器宽度自动换行，**行数自适应 1~6 行**（不再限死两行）—— 文字越长、
 //      容器越窄，行数越多，直到能完整放下；
 //   ③ 文字水平居中；多行文字块整体垂直居中；
-//   ④ 左右各留 1 个字符宽（1ch；ch＝当前字号下 "0" 的前进宽度，同 CSS 的 ch 定义），
-//      可用文字宽度＝岛宽 − 左右各 1ch；
-//   ⑤ 还是放不下只缩字号（下限 5.0pt），**绝不裁切、绝不溢出**。
-#define CH_TEXT_PAD_CHARS 1.0
+// v1.6.18（用户 23:34 原话：「文字水平垂直居中，不溢出；左右各留 3 个当前文字字符宽度的
+//   padding（约 3ch）」）：
+//   ① 左右 padding 从 1ch 提到 **3ch**（ch ＝ 当前字号下 "0" 的前进宽度，同 CSS 定义，
+//      跟着字号一起变 —— 字号小了 padding 也跟着小，比例恒定）；
+//   ② 文字水平居中（左右 padding 对称）、多行整块垂直居中；
+//   ③ **绝不溢出**：可用宽度 = 容器宽 − 6ch，放不下就缩字号（下限 CH_TEXT_MIN_FONT），
+//      行数上限 CH_TEXT_MAX_LINES；若缩到下限仍然溢出，退回 1ch padding 再放一次，
+//      宁可少留白也不让文字出界。
+#define CH_TEXT_PAD_CHARS 3.0
+#define CH_TEXT_PAD_CHARS_FALLBACK 1.0
+#define CH_TEXT_MIN_AVAIL 24.0
 // v1.6.14：下限由 5.0 提到 8.0 —— 用户 22:46「文字太小了」，缩到 5pt 已经完全看不清；
 // 宁可多占一行/略微贴边，也不把字压到读不出来。
 #define CH_TEXT_MIN_FONT 8.0
@@ -651,31 +658,56 @@ static void CHLayoutLabelContent(void) {
     CGFloat size = CHPreferredFontSize(pillH);
     UIFont *font = [UIFont monospacedDigitSystemFontOfSize:size weight:UIFontWeightMedium];
     CGFloat ch = CHCharWidth(font);
-    CGFloat pad = CH_TEXT_PAD_CHARS * ch;
+    CGFloat padChars = CH_TEXT_PAD_CHARS;
+    CGFloat pad = padChars * ch;
     CGFloat avail = pillW - 2.0 * pad;
-    if (avail < 24.0) {
-        // 极窄岛兜底：给文字区留 24pt，padding 跟着让路；宁可 padding 小，也不裁字。
-        avail = MIN(pillW, 24.0);
+    if (avail < CH_TEXT_MIN_AVAIL) {
+        // 极窄容器兜底：3ch 把文字区挤没了 → 退回 1ch；还不够就让 padding 继续让路。
+        padChars = CH_TEXT_PAD_CHARS_FALLBACK;
+        pad = padChars * ch;
+        avail = pillW - 2.0 * pad;
+    }
+    if (avail < CH_TEXT_MIN_AVAIL) {
+        avail = MIN(pillW, CH_TEXT_MIN_AVAIL);
         pad = MAX(0.0, (pillW - avail) / 2.0);
     }
 
     CGFloat height = 0.0;
     NSUInteger lines = 0;
     CHMeasureText(text, font, avail, &height, &lines);
-    // 放不下（超两行或高过胶囊）→ 只缩字号，不裁切、不加行。
+    // 放不下（超高或超行数）→ 只缩字号，不裁切。v1.6.18：padding 跟着字号走，每轮重算。
     NSUInteger guard = 0;
     while (size > CH_TEXT_MIN_FONT && (lines > CH_TEXT_MAX_LINES || height > pillH)) {
         size = MAX(CH_TEXT_MIN_FONT, size * 0.92);
         font = [UIFont monospacedDigitSystemFontOfSize:size weight:UIFontWeightMedium];
         ch = CHCharWidth(font);
-        pad = CH_TEXT_PAD_CHARS * ch;
+        padChars = CH_TEXT_PAD_CHARS;
+        pad = padChars * ch;
         avail = pillW - 2.0 * pad;
-        if (avail < 24.0) {
-            avail = MIN(pillW, 24.0);
+        if (avail < CH_TEXT_MIN_AVAIL) {
+            padChars = CH_TEXT_PAD_CHARS_FALLBACK;
+            pad = padChars * ch;
+            avail = pillW - 2.0 * pad;
+        }
+        if (avail < CH_TEXT_MIN_AVAIL) {
+            avail = MIN(pillW, CH_TEXT_MIN_AVAIL);
             pad = MAX(0.0, (pillW - avail) / 2.0);
         }
         CHMeasureText(text, font, avail, &height, &lines);
         if (++guard > 40) break;
+    }
+    // v1.6.18：缩到下限仍溢出（超行数或高过容器）→ 退回 1ch padding 再放一次，
+    // 绝不溢出：宁可少留白，也不让文字跑出胶囊。
+    if ((height > pillH || lines > CH_TEXT_MAX_LINES) && padChars > CH_TEXT_PAD_CHARS_FALLBACK) {
+        padChars = CH_TEXT_PAD_CHARS_FALLBACK;
+        ch = CHCharWidth(font);
+        pad = padChars * ch;
+        avail = MAX(CH_TEXT_MIN_AVAIL, pillW - 2.0 * pad);
+        if (avail > pillW) {
+            avail = pillW;
+            pad = 0.0;
+        }
+        CHMeasureText(text, font, avail, &height, &lines);
     }
 
     gFontSize = size;

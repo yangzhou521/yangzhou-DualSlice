@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.17)
+    name: Release (countdownhud-v1.6.18)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,10 +133,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.17
-          name: CountdownHUD v1.6.17
+          tag_name: countdownhud-v1.6.18
+          name: CountdownHUD v1.6.18
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            v1.6.18：**左右 padding 改为 3ch**（用户 23:34「文字水平垂直居中，不溢出；左右各留
+            3 个当前文字字符宽度的 padding（约 3ch）」）。ch ＝ 当前字号下 "0" 的前进宽度，
+            跟着字号一起变，留白比例恒定；可用宽度 = 容器宽 − 6ch。文字水平居中、多行整块
+            垂直居中；放不下先缩字号，缩到 8pt 仍溢出才退回 1ch，保证绝不溢出。
 
             v1.6.17：**长岛也用系统容器 125×37 + 字号下调**（用户 23:31「长岛和系统灵动岛大小
             不一致 文字过大」）。1.6.16 还把长文案切到 145×47，但那个矩形在本机只是一只匿名
@@ -326,4 +331,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.17/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.18/$(basename "$DEB")"
