@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.11)
+    name: Release (countdownhud-v1.6.12)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,10 +133,24 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.11
-          name: CountdownHUD v1.6.11
+          tag_name: countdownhud-v1.6.12
+          name: CountdownHUD v1.6.12
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            v1.6.12：**灵动岛两态尺寸严格对齐 + 长文字智能自适应**（用户 2026-11-05 11:35
+            「mini 胶囊『未展开』和『展开后』的尺寸、上下左右位置与原系统灵动岛保持一致」、
+            12:02「文字过多过长根据容器宽度自动适配为 1 行或 2 行，或者 4,5,6 行，智能自适应
+            灵动岛大小」）。① 量到岛候选后**吸附到系统标准两态矩形**：未展开 125×37、
+            展开 145×47（取自本机 CountdownHUDIslandCandidates 实测
+            `UIView|125,18,125,37` 与 `UIView|115,17,145,47`），横向永远水平居中，
+            y 保持候选中心（跟 VisibleIsland / DynamicX 的 yPos 走）—— 尺寸、上下左右位置
+            与原系统灵动岛一致，不再随候选 ±1pt 抖动；② 长短岛打分从「越大越好」改为
+            「离标准两态越近越好」，短内容吸附 125×37、长内容吸附 145×47；③ 长文字行数
+            **从限死两行放开到 1~6 行智能自适应**：按容器宽度自动换行，文字越长、容器越窄
+            行数越多，放不下只缩字号（下限 5.0pt），绝不裁切、绝不溢出；④ 多行文字块
+            **整体垂直居中**（UILabel 多行是顶部对齐，现按量出的文字块高度把 y 放到
+            (胶囊高 − 文字高)/2），水平居中不变；⑤ 长文字字号仍＝基准 × 50%。
 
             v1.6.11：**两行文字排版重做**（用户 21:47 定排版、22:11 定 padding；1.6.10 的 5ch
             **作废勿装**）。① 两行长文字的字号＝基准字号 × 50%（15.7 → 7.8，
@@ -285,4 +299,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.11/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.12/$(basename "$DEB")"

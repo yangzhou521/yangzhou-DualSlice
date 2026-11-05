@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.11";
+static NSString *const CHVersion = @"1.6.12";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -88,6 +88,16 @@ static const CGFloat CHFallbackPillHeight = 44.0;
 static const CGFloat CHIdealIslandWidth = 126.0;
 static const CGFloat CHIdealIslandHeight = 37.0;
 static const CGFloat CHShortIslandInnerWidth = 101.0; // v1.6.5：短岛内宽，放得下=短岛，放不下=长岛
+
+// v1.6.12（用户 11:35「灵动岛 mini 胶囊『未展开』和『展开后』的尺寸、上下左右位置，
+//   与原系统灵动岛保持一致」）：系统灵动岛的两态标准矩形，取自本机运行中的岛视图实测
+//   （CountdownHUDIslandCandidates：紧凑 125×37 @ y=18、展开 145×47 @ y=17，两者都
+//   水平居中于 375 宽的屏）。量到候选后**吸附**到这两档 —— 未展开就是 125×37，
+//   展开就是 145×47，横向永远居中，不再随候选抖动。
+static const CGFloat CHIslandCompactWidth   = 125.0;
+static const CGFloat CHIslandCompactHeight  = 37.0;
+static const CGFloat CHIslandExpandedWidth  = 145.0;
+static const CGFloat CHIslandExpandedHeight = 47.0;
 
 static os_log_t CHLog(void) {
     static os_log_t log = NULL;
@@ -332,12 +342,13 @@ static double CHPillScore(NSString *cls, CGRect r, BOOL inApertureWindow) {
         score -= 0.8;
     }
     if (gWantLongIsland) {
-        // 长文字：偏好长岛 —— 宽+高越大越好。系数 0.2 让尺寸差（长岛比短岛宽 20pt
-        // 高 10pt → 30×0.2=6 分）压过短岛靠类名多拿的 ~1.6 分（Aperture+Container）。
-        score += (r.size.width + r.size.height) * 0.2;
+        // v1.6.12 长文字：偏好**展开态**标准矩形（145×47），离它越近分越高。
+        score -= (fabs(r.size.width - CHIslandExpandedWidth) +
+                  fabs(r.size.height - CHIslandExpandedHeight)) * 0.25;
     } else {
-        // 短文字：偏好短岛 —— 离 125x37 越近越好。
-        score -= (fabs(r.size.width - CHIdealIslandWidth) + fabs(r.size.height - CHIdealIslandHeight)) * 0.2;
+        // 短文字：偏好**紧凑态**标准矩形（125×37），离它越近分越高。
+        score -= (fabs(r.size.width - CHIslandCompactWidth) +
+                  fabs(r.size.height - CHIslandCompactHeight)) * 0.25;
     }
     return score;
 }
@@ -467,6 +478,19 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
         ? [NSString stringWithFormat:@"%@|lvl=%.0f", CHClassNameOf(bestWindow), bestWindow.windowLevel]
         : @"-";
 
+    // v1.6.12 吸附：量到的候选若落在系统两态之一附近（±16×±12），就**严格取标准矩形**
+    // —— 未展开 125×37、展开 145×47；横向永远居中，y 保持候选的中心（跟着
+    // VisibleIsland / DynamicX 的 yPos 走）。这样「未展开」「展开」的尺寸、上下左右位置
+    // 与原系统灵动岛完全一致，不再随候选的 ±1pt 抖动。
+    CGFloat wantW = gWantLongIsland ? CHIslandExpandedWidth : CHIslandCompactWidth;
+    CGFloat wantH = gWantLongIsland ? CHIslandExpandedHeight : CHIslandCompactHeight;
+    if (fabs(bestRect.size.width - wantW) <= 16.0 && fabs(bestRect.size.height - wantH) <= 12.0) {
+        bestRect.size.width = wantW;
+        bestRect.size.height = wantH;
+        bestRect.origin.x = round((gWindow.bounds.size.width - wantW) / 2.0);
+        bestRect.origin.y = round(CGRectGetMidY(bestRect) - wantH / 2.0);
+    }
+
     NSString *cls = bestClass.length > 48 ? [bestClass substringToIndex:48] : bestClass;
     gIslandSource = bestInAperture ? @"aperture" : @"classname";
     gIslandDetail = [NSString stringWithFormat:@"%@|%.0f,%.0f,%.0f,%.0f",
@@ -558,15 +582,18 @@ static void CHHandlePillTap(void) {
 // CHLayoutLabelContent（内部调 CHPreferredFontSize），一眼看得出只有一处排版。
 #define CH_LONG_TEXT_LENGTH 14
 
-// v1.6.11（用户 22:11 定的排版；1.6.10 的 5ch 与中途试过的 2ch 都作废）：
-//   ① 两行长文字的字号＝基准字号 × 50%（原来 15.7 → 7.8）；
-//   ② 文字水平 + 垂直居中；
-//   ③ 左右各留 1 个字符宽（1ch；ch＝当前字号下 "0" 的前进宽度，同 CSS 的 ch 定义），
+// v1.6.12（用户 12:02「文字过多过长根据容器宽度自动适配为 1 行或 2 行，或者 4,5,6 行，
+//   智能自适应灵动岛大小」；1.6.10 的 5ch 与中途试过的 2ch 都作废）：
+//   ① 长文字的字号＝基准字号 × 50%（原来 15.7 → 7.8，仍按 1.6.11 的规则）；
+//   ② 按容器宽度自动换行，**行数自适应 1~6 行**（不再限死两行）—— 文字越长、
+//      容器越窄，行数越多，直到能完整放下；
+//   ③ 文字水平居中；多行文字块整体垂直居中；
+//   ④ 左右各留 1 个字符宽（1ch；ch＝当前字号下 "0" 的前进宽度，同 CSS 的 ch 定义），
 //      可用文字宽度＝岛宽 − 左右各 1ch；
-//   ④ 空间不足只缩字号（下限 5.5pt），**绝不裁切、绝不溢出**，行数仍限两行。
+//   ⑤ 还是放不下只缩字号（下限 5.0pt），**绝不裁切、绝不溢出**。
 #define CH_TEXT_PAD_CHARS 1.0
-#define CH_TEXT_MIN_FONT 5.5
-#define CH_TEXT_MAX_LINES 2
+#define CH_TEXT_MIN_FONT 5.0
+#define CH_TEXT_MAX_LINES 6
 
 static CGFloat CHPreferredFontSize(CGFloat height) {
     // v1.1.1：原先取高度的一半（125×37 的岛＝18.5pt），用户嫌大；压到 2/3 → 高度 ÷ 3。
@@ -648,8 +675,11 @@ static void CHLayoutLabelContent(void) {
     gTextCh = ch;
     gTextLines = lines;
     gLabel.font = font;
-    // 居中：左右各让出 pad（对称 → 水平居中），高度给整条胶囊（UILabel 自己把文字块竖直居中）。
-    gLabel.frame = CGRectMake(pad, 0.0, avail, pillH);
+    // v1.6.12 垂直居中：UILabel 多行时文字块在 bounds 内是**顶部对齐**的，
+    // 给整条胶囊高度会把文字顶到上面。改成给文字块**自己的高度**（量出的 height），
+    // y 放在 (pillH - height) / 2 → 整块在胶囊里垂直居中；左右 pad 对称 → 水平居中。
+    CGFloat top = MAX(0.0, (pillH - height) / 2.0);
+    gLabel.frame = CGRectMake(pad, top, avail, MAX(height, 1.0));
 }
 
 // 把胶囊摆到给定矩形上：圆角取半高（岛的胶囊形），字号跟着高度走，宽了自动缩。
