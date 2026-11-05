@@ -4,13 +4,18 @@
 <dict>
 	<key>Filter</key>
 	<dict>
+		<key>Bundles</key>
+		<array>
+			<string>com.apple.UIKit</string>
+		</array>
 		<key>Executables</key>
 		<array>
-			<string>SpringBoard</string>
 			<string>iconservicesagent</string>
 			<string>ShareUI</string>
 			<string>sharingd</string>
 		</array>
+		<key>Mode</key>
+		<string>Any</string>
 	</dict>
 </dict>
 </plist>

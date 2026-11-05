@@ -22,7 +22,7 @@ set -eu
 # ── 包身份：换版本时只改这里 ＋ ThemeCoreX/Sources/TCXVersion.h 的 TCX_VERSION ──
 PRODUCT=AppIcon
 PACKAGE_ID=com.yangzhou.appicon
-VERSION=0.0.2
+VERSION=0.0.3
 NAME=AppIcon
 AUTHOR=yangzhou
 DESCRIPTION="轻量化桌面图标主题插件，修改图标、图标角标及图标阴影如此轻松，覆盖绝大部分区域，时钟日历可动态图标。作者 yangzhou。"
@@ -231,6 +231,9 @@ chmod 0755 "$STAGE/DEBIAN/postrm"
 # Installed-Size 按 theme 包同样算法给出（KB，向上取整）。
 INSTALLED_SIZE=$(du -sk "$STAGE" | awk '{print $1}')
 
+# Pre-Depends: rootless-compat —— roothide 上 dylib 的 .jbroot 相对依赖要它改写到实际引导根。
+# ThemeCore 0.5.1 同样声明了它；缺这条时插件能被 ellekit 看见却不保证依赖解析得动，
+# 表现就是「没闪退，但一个站都没挂上、一个素材都没加载」。
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: $PACKAGE_ID
 Section: Tweaks
@@ -239,6 +242,7 @@ Maintainer: $AUTHOR
 Architecture: $ARCH_TAG
 Version: $VERSION
 Depends: mobilesubstrate (>= 0.9.5000), firmware (>= $MIN_IOS)
+Pre-Depends: rootless-compat (>= 0.9)
 Description: $DESCRIPTION
 Name: $NAME
 Author: $AUTHOR
