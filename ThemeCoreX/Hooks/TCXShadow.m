@@ -78,17 +78,24 @@ static void TCXApplyShadow(UIView *view) {
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     if (bitmap) {
-        // ① 位图阴影：垫在图标内容下面，主题 PNG 自己带边距与外扩。
+        // ① 位图阴影：垫在图标内容下面。
+        // 主题的 iPhoneShadow 素材**自带外扩边距**（比图标本体大一圈），
+        // 之前用 ScaleToFill 把阴影图硬拉到图标大小，边距被压掉 → 阴影整体上移、
+        // 压到图标中间（用户 2026-11-06 01:50 报的）。
+        // 正确做法：保持原始宽高比、按比例放大到「图标 + 四周外扩」，再居中。
         UIImageView *shadowView = TCXShadowSubview(view);
         if (![shadowView isKindOfClass:[UIImageView class]]) {
             shadowView = [[UIImageView alloc] initWithFrame:bounds];
             shadowView.tag = kTCXShadowTag;
             shadowView.userInteractionEnabled = NO;
-            shadowView.contentMode = UIViewContentModeScaleToFill;
             shadowView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             [view insertSubview:shadowView atIndex:0];
         }
-        shadowView.frame = bounds;
+        shadowView.contentMode = UIViewContentModeScaleAspectFit;
+        // 外扩比例：素材宽高比与图标不同时，按较大的一边贴合，四周自然留出边距。
+        CGFloat side = MAX(bounds.size.width, bounds.size.height);
+        CGFloat grow = side * 0.18;          // 四周各外扩约 9%
+        shadowView.frame = CGRectInset(bounds, -grow, -grow);
         shadowView.image = bitmap;
         // 两条路不能同时出现，否则主题位图下面又叠一层矢量暗角。
         TCXClearVectorShadow(layer);

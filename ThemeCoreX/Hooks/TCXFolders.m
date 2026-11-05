@@ -53,9 +53,15 @@ static void replFolderBGLayout(UIView *self, SEL _cmd) {
     @try { TCXApplyBackground(self, @"ANEMFolderBG"); } @catch (NSException *e) {}
 }
 
+static void (*origFolderIconViewLayout)(id, SEL);
+static void (*origFolderIconImageViewLayout)(id, SEL);
+
 static void TCXHookLayout(NSString *className, IMP repl, IMP *slot, NSString *label) {
     Class cls = TCXClass(className);
     if (!cls) return;
+    // layoutSubviews 由 UIView 继承、类自己不声明，必须用 respondsToSelector 判断
+    // （这个坑在时钟模块踩过：用「类自己声明」判断永远 false，站永远挂不上）。
+    if (![cls respondsToSelector:@selector(layoutSubviews)]) return;
     MSHookMessageEx(cls, @selector(layoutSubviews), repl, slot);
     if (*slot) TCXNoteSite(label);
 }
@@ -66,4 +72,10 @@ void TCXInstallFolderHooks(void) {
                   (IMP *)&origIconBGLayout, @"folder:closed");
     TCXHookLayout(@"SBFolderBackgroundView", (IMP)&replFolderBGLayout,
                   (IMP *)&origFolderBGLayout, @"folder:open");
+    // 关闭态容器：SnowBoard 实测背景也在 SBFolderIconView / SBFolderIconImageView 上，
+    // 补挂这两处，保证「未打开时也显示文件夹素材」（用户 2026-11-06 01:50 报的）。
+    TCXHookLayout(@"SBFolderIconView", (IMP)&replIconBGLayout,
+                  (IMP *)&origFolderIconViewLayout, @"folder:iconview");
+    TCXHookLayout(@"SBFolderIconImageView", (IMP)&replIconBGLayout,
+                  (IMP *)&origFolderIconImageViewLayout, @"folder:iconimageview");
 }

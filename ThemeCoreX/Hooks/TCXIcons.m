@@ -363,15 +363,51 @@ static void TCXHookDeclared(Class cls, SEL selector, IMP replacement, NSString *
     }
 }
 
+// 换主题 / 改开关后的热重载。
+// 对照 SnowBoard 1.5.37 的实证（它不注销就能换图）：
+//   refreshAllHomescreenIconsClearingCaches: → clearCachedImages / clearCache /
+//   _rebuildIconCache → 再 _updateIconImageViewAnimated: 逐视图换图。
+// 关键就是**先清系统图标缓存再刷新**：只调 reloadIconImages 只是重画现有图，
+// 缓存里还是旧图，所以以前必须注销才生效。
+static void TCXClearSystemIconCaches(void) {
+    // SBHIconImageCache / SBFolderIconImageCache 都是单例式缓存类，
+    // 清缓存方法在实例上（SnowBoard 用的就是这两个名字）。
+    for (NSString *className in @[@"SBHIconImageCache", @"SBFolderIconImageCache",
+                                  @"SBFolderIconImageSharedCache"]) {
+        Class cls = TCXClass(className);
+        if (!cls) continue;
+        id target = nil;
+        if ([cls respondsToSelector:@selector(sharedInstance)]) {
+            target = ((id (*)(id, SEL))objc_msgSend)(cls, @selector(sharedInstance));
+        } else if ([cls respondsToSelector:@selector(sharedCache)]) {
+            target = ((id (*)(id, SEL))objc_msgSend)(cls, @selector(sharedCache));
+        } else {
+            target = cls;
+        }
+        for (NSString *selName in @[@"clearCachedImages", @"clearCache",
+                                    @"purgeCachedImages", @"_rebuildIconCache"]) {
+            SEL sel = NSSelectorFromString(selName);
+            if (![target respondsToSelector:sel]) continue;
+            @try { ((void (*)(id, SEL))objc_msgSend)(target, sel); } @catch (NSException *e) {}
+        }
+    }
+}
+
 static void TCXReloadCallback(CFNotificationCenterRef center, void *observer,
                               CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     @autoreleasepool {
+        // 1) 重扫主题（含 Bundles 通用索引）
         [[TCXStore shared] reload];
+        // 2) 先清系统图标缓存 —— 不注销能换图的关键（SnowBoard 的做法）
+        TCXClearSystemIconCaches();
+        // 3) 再让桌面重画图标
         Class controller = TCXClass(@"SBIconController");
         if (controller && [controller respondsToSelector:@selector(sharedInstance)]) {
             id instance = ((id (*)(id, SEL))objc_msgSend)(controller, @selector(sharedInstance));
-            if ([instance respondsToSelector:@selector(reloadIconImages)]) {
-                ((void (*)(id, SEL))objc_msgSend)(instance, @selector(reloadIconImages));
+            for (NSString *selName in @[@"reloadIconImages", @"refreshAllHomescreenIcons"]) {
+                SEL sel = NSSelectorFromString(selName);
+                if (![instance respondsToSelector:sel]) continue;
+                @try { ((void (*)(id, SEL))objc_msgSend)(instance, sel); } @catch (NSException *e) {}
             }
         }
     }

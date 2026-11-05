@@ -37,7 +37,6 @@ enum {
                                   detail:(Class)detail
                                     cell:(NSInteger)cell
                                     edit:(Class)edit;
-+ (instancetype)groupSpecifierWithName:(NSString *)name;
 - (void)setProperty:(id)value forKey:(NSString *)key;
 - (id)propertyForKey:(NSString *)key;
 @end
@@ -46,7 +45,6 @@ enum {
 - (NSArray *)specifiers;
 - (void)setSpecifiers:(NSArray *)specifiers;
 - (void)reloadSpecifiers;
-- (NSArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
 @end
 
 #pragma mark - 偏好（与插件读的是同一个文件 com.yangzhou.appicon.plist）
@@ -201,7 +199,15 @@ static NSString *TCXEffectiveThemeName(void) {
     [self tcyLoadThemes];
     NSMutableArray *specs = [NSMutableArray array];
 
-    PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"可用主题"];
+    // 分组也走 preferenceSpecifierNamed:（SnowBoard 面板实证存在这个方法），
+    // 不用没实证的 groupSpecifierWithName:。
+    PSSpecifier *group = [PSSpecifier preferenceSpecifierNamed:@"可用主题"
+                                                        target:self
+                                                           set:NULL
+                                                           get:NULL
+                                                        detail:nil
+                                                          cell:TCXPSGroupCell
+                                                          edit:nil];
     [group setProperty:@"同一时间只启用一个主题。想恢复系统原样，请回上一页关掉「启用插件」。"
                 forKey:@"footerText"];
     [specs addObject:group];
@@ -210,7 +216,13 @@ static NSString *TCXEffectiveThemeName(void) {
         [specs addObject:[self tcySwitchForPath:path]];
     }
     if (_dirs.count == 0) {
-        PSSpecifier *empty = [PSSpecifier groupSpecifierWithName:@""];
+        PSSpecifier *empty = [PSSpecifier preferenceSpecifierNamed:@""
+                                                            target:self
+                                                               set:NULL
+                                                               get:NULL
+                                                            detail:nil
+                                                              cell:TCXPSGroupCell
+                                                              edit:nil];
         [empty setProperty:[NSString stringWithFormat:@"没有找到主题：把主题目录放进 %@ 后重进本页。",
                             TCXThemesRoot()]
                     forKey:@"footerText"];
@@ -220,12 +232,10 @@ static NSString *TCXEffectiveThemeName(void) {
 }
 
 - (NSArray *)specifiers {
-    // 关键：Preferences 靠父类的 _specifiers 缓存去建表格行与绑定事件。
-    // 只返回自己算的数组、不交给 setSpecifiers:，结果就是「只画出 group 的说明文字、
-    // 下面一行主题都没有」（用户 2026-11-05 23:20 报的正是这个）。
+    // 结果必须交给父类 setSpecifiers:，否则 Preferences 内部缓存为空、表格不建行。
     if (_specifiers == nil) {
         NSArray *built = [self tcyBuildSpecifiers];
-        [self setSpecifiers:built];   // 走父类入口，缓存与表格才一致
+        [self setSpecifiers:built];
         _specifiers = built;
     }
     return _specifiers;
@@ -245,42 +255,18 @@ static NSString *TCXEffectiveThemeName(void) {
 
 #pragma mark - 根页（TCXRootListController）
 
+// 对照 SnowBoard 1.5.37 的面板实证：它的 SnowboardprefsRootListController
+// 是 PSListController 子类，**自己不实现 specifiers**，只靠 bundle 里的 Root.plist
+// 让父类自动加载 —— 所以面板永远有内容。
+// 我们之前覆写 specifiers 并调用一个不存在的方法 loadSpecifiersFromPlistName:target:
+// 拿回 nil，面板就整个空白。现在照 SnowBoard 的做法，不覆写。
 @interface TCXRootListController : PSListController
 @end
 
-@implementation TCXRootListController {
-    NSArray *_specifiers;
-    BOOL _applyingSpecifiers;
-}
+@implementation TCXRootListController
 
-- (NSArray *)tcyBuildSpecifiers {
-    return [self loadSpecifiersFromPlistName:@"Root" target:self];
-}
-
-- (NSArray *)specifiers {
-    // 同主题页：结果必须交给父类 setSpecifiers:，否则 Preferences 内部缓存在空，
-    // 表格只画出分组说明、开关一行都没有（表现就是「点了没反应」）。
-    if (_specifiers == nil) {
-        NSArray *built = [self tcyBuildSpecifiers];
-        if (built.count > 0) [self setSpecifiers:built];
-        _specifiers = built;
-    }
-    return _specifiers;
-}
-
-- (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
-    // 每次进来重读一次偏好值，但不重建 specifier 对象本身。
-    for (PSSpecifier *spec in self.specifiers) {
-        NSString *key = [spec propertyForKey:@"key"];
-        if (![key isKindOfClass:[NSString class]] || key.length == 0) continue;
-        id value = TCXReadPref(key);
-        if (value) [spec setProperty:value forKey:@"value"];
-    }
-    [self reloadSpecifiers];
-}
-
-// 「刷新图标」：广播 Darwin 通知，SpringBoard 里的插件收到后重读快照、清缓存、当场重新出图。
+// 「刷新图标」：广播 Darwin 通知，SpringBoard 里的插件收到后重读主题、清图标缓存、
+// 当场重新出图（SnowBoard 的免注销做法）。
 - (void)refreshIcons {
     TCXPostReload();
 }

@@ -194,6 +194,7 @@ static void TCXHookClockClass(NSString *name, IMP repl, IMP *slot) {
 @end
 
 static void *kTCXClockOverlayKey = &kTCXClockOverlayKey;
+static void *kTCXClockTimerKey = &kTCXClockTimerKey;
 
 static void TCXClockApplyOverlay(UIView *view) {
     if (!view) return;
@@ -222,15 +223,37 @@ static void TCXClockApplyOverlay(UIView *view) {
         overlay.frame = view.bounds;
         overlay.image = face;
 
-        // 系统自绘的那层表盘压到我们下面（指针留着，时间才是活的）。
+        // 系统指针全隐藏后，时间要靠我们每秒重画一次才走。
+        // （不加这个，隐藏系统指针后会变成「静止的时钟」。）
+        if (!objc_getAssociatedObject(view, kTCXClockTimerKey)) {
+            __weak UIView *weakView = view;
+            NSTimer *timer = [NSTimer timerWithTimeInterval:1.0 repeats:YES
+                                                   block:^(NSTimer *t) {
+                UIView *strongView = weakView;
+                if (!strongView) { [t invalidate]; return; }
+                TCXClockOverlayView *ov = objc_getAssociatedObject(strongView, kTCXClockOverlayKey);
+                if (!ov) { [t invalidate]; return; }
+                CGSize sz = strongView.bounds.size;
+                if (sz.width < 8.0) return;
+                CGFloat sc = strongView.window.screen.scale > 0 ? strongView.window.screen.scale : 2.0;
+                UIImage *img = TCXClockImage(sz, sc);
+                if (img) ov.image = img;
+            }];
+            [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+            objc_setAssociatedObject(view, kTCXClockTimerKey, timer,
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+
+        // 只让**我们**的指针生效：系统那套表盘 + 三根指针（CALayer 或子视图）全部隐藏。
+        // 之前只隐藏「铺满视图的 UIImageView」，系统的指针是 CALayer/小视图，没被隐藏，
+        // 于是出现两套指针叠在一起（用户 2026-11-06 01:50 报的）。
         for (UIView *sub in view.subviews) {
             if (sub == overlay) continue;
-            // 系统表盘通常是个铺满整个视图的 UIImageView / CALayer 宿主。
-            if (CGRectGetWidth(sub.bounds) >= size.width * 0.8 &&
-                CGRectGetHeight(sub.bounds) >= size.height * 0.8 &&
-                [sub isKindOfClass:[UIImageView class]]) {
-                sub.hidden = YES;
-            }
+            sub.hidden = YES;
+        }
+        // 指针也可能直接画在 view.layer 的子层上，一并藏掉（overlay 是 UIView，不受影响）。
+        for (CALayer *layer in view.layer.sublayers) {
+            if (!layer.hidden) layer.hidden = YES;
         }
     } @catch (NSException *exception) {
         TCXRecordError([NSString stringWithFormat:@"clock:%@", exception.reason]);

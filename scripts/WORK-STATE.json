@@ -1,137 +1,31 @@
 {
   "task": "AppIcon（com.yangzhou.appicon，源码 ThemeCoreX/，类前缀 TCX）：按 ThemeCore 0.5.1 架构重做的桌面美化插件",
-  "status": "0.0.14 待编译验证",
-  "updated": "2026-11-06T00:12+08:00",
-  "first_principle": "与 ThemeCore 0.5.1 架构完全一致，不许自己天马行空乱写（用户 2026-11-06 00:03 定，不许打破）。详见 AGENTS.md 首节与技能 themecore-architecture-first。",
+  "status": "0.0.16 已装，用户报 8 个问题待修",
+  "updated": "2026-11-06T02:22+08:00",
+  "first_principle": "与 ThemeCore 0.5.1 架构完全一致，不许自己天马行空乱写。ThemeCore 能实现的逐一对齐；它不能实现的（角标/阴影/文件夹/控制中心/系统设置素材/免注销自加载）才参考工程包（SnowBoard 1.5.37 已装在本机，是主要对照物）。",
+  "reference": "SnowBoard 1.5.37-Beta4-rootless 已装（Snowboard.disabled 状态）；工程包在 第三方ai分析生成文件/越狱美化主题插件/ 下的 com.spark.snowboard_repack.deb。用户点名要全面分析它「设置里开关/选主题立即生效、不用注销」的实现。",
 
-  "step": "0.0.14 已推送（commit e845d77）：删掉我自创的 0.6 秒延迟与 TCXStoreReady 闸门，补 SBIconView 等七个类、补 generateIconImage:、TCXCountIcons 改惰性枚举。本机现装 0.0.8。",
-  "chain": [
-    "等 0.0.14 云编译结果（30 秒一次）",
-    "下载 deb 到 /var/mobile/Documents/",
-    "装包（只装不注销）→ 弹窗问用户是否注销",
-    "注销后读 diag.txt 核对：hooked 数、bdg 是否 >0、layers",
-    "用户目视验收：图标 / 角标 / 阴影 / 时钟 / 日历 / 文件夹 / 控制中心",
-    "重点确认：注销后是否还要黑屏重进"
-  ],
-  "next": "1) `icli probe scripts/ci-status.js` 盯 0.0.14；2) success 后下载；3) `sh scripts/install-deb.sh` 装；4) `sh scripts/post-install-respring.sh` 弹窗问注销；5) 注销后 `cat /rootfs/var/mobile/Library/AppIcon/diag.txt` 对账。",
-
-  "why": "用户长期在用 ThemeCore 0.5.1，要求架构与它一致，同时保留我们新加的角标/阴影/文件夹/控制中心等功能。",
-  "guard": "旧架构名不出现；ThemeCore 与本工程 Prefs/ThemeCorePlusPrefs 不改；SpringBoard 注入插件构造函数阶段不碰 UIKit；装包/注销需用户点头；jbroot 运行时探测不写死。",
-
-  "buglog_rule": "用户 2026-11-05 23:15 定：注销后用户第一时间报的 bug 和他确认修好的项，必须当场落进本数组，一项一行，带 id/where/symptom/reported/proof/status/fix。不许只回在对话里。",
-  "buglog_status_legend": "已修（版本，用户确认） | 待验（已改，等装包/注销验证） | 待修（还没定位或没改） | 已取消",
+  "buglog_rule": "用户报的每条 bug 当场落这里，一项一行，带 where/symptom/status/fix。不许只回对话。",
+  "buglog_status_legend": "已修（版本，用户确认） | 待验（已改等验证） | 待修（还没定位或没改） | 拆解中",
 
   "buglog": [
-    {
-      "id": "B22",
-      "where": "注销重启",
-      "symptom": "注销后黑屏，要再进一次桌面才正常",
-      "reported": "2026-11-05T23:49 用户「注销重启二次桌面这个要重点修复解决它」",
-      "proof": "SpringBoard 无崩溃报告 → 不是崩溃，是启动被 watchdog 判超时杀掉重启",
-      "status": "待验（0.0.14）",
-      "fix": "① 构造函数不再同步挂 27 个站，改 dispatch_async 到 QOS_CLASS_UTILITY 串行队列（ThemeCore 的做法）；② 删掉我自创的 0.6 秒 dispatch_after 与 TCXStoreReady 闸门；③ TCXCountIcons 改 enumeratorAtPath: 惰性枚举，不再一次读全目录。"
-    },
-    {
-      "id": "B23",
-      "where": "桌面 ▸ 角标文字与图标",
-      "symptom": "角标的文字与图标从来没正常加载过（diag bdg=0）",
-      "reported": "2026-11-05T23:49 用户「文字夹图标我们从来没实现正常加载」",
-      "proof": "diag.txt: bdg=0，sites 里没有任何 SBIconBadgeView 站",
-      "status": "待验（0.0.11）",
-      "fix": "iOS 16 底板不是图（_backgroundView 是 systemRed+圆角），原挂的 _checkoutBackgroundImage 在 iOS 16 不存在。现在挂 layoutSubviews 塞主题图 + 清背景色；文字挂 +_checkoutImageForText:font:highlighted: 自绘并包成 SBHIconAccessoryCountedMapImageTuple；底板用 resizableImageWithCapInsets 保圆角；素材名 SBBadgeBG。"
-    },
-    {
-      "id": "B16",
-      "where": "桌面 ▸ 时钟",
-      "symptom": "时钟不显示",
-      "reported": "2026-11-05T23:21",
-      "proof": "sites 里只有 SBHClockApplicationIconImageView:contentsImage，没有 layoutSubviews 站",
-      "status": "待验（0.0.11）",
-      "fix": "layoutSubviews 由 UIView 继承、类自己不声明，原来用 TCXClassDeclaresSelector 判断永远 false → 改 respondsToSelector。"
-    },
-    {
-      "id": "B15",
-      "where": "桌面 ▸ 日历图标",
-      "symptom": "日历没有星期/日期，只剩「日历」两字",
-      "reported": "2026-11-05T23:21",
-      "proof": "三个主题的 Info.plist 都没有 CalendarIconDateSettings；液态玻璃是浅色底，默认白字看不见",
-      "status": "待验（0.0.11）",
-      "fix": "新增底图亮度探测（8x8 采样），主题没给 TextColor 时浅底用黑字、深底用白字。"
-    },
-    {
-      "id": "B13",
-      "where": "设置 ▸ AppIcon ▸ 选择主题",
-      "symptom": "点进「选择主题」只显示一行说明文字，没有主题行，无法选择",
-      "reported": "2026-11-05T23:20 用户「面板内无法打开选择主题」",
-      "proof": "磁盘上三个主题目录都各有 IconBundles + Info.plist，能被识别 → 是渲染问题不是扫描问题",
-      "status": "待验（0.0.9）",
-      "fix": "TCXThemeListController / TCXRootListController 的 -specifiers 原来只返回自己算的数组、没交给父类 -setSpecifiers:，Preferences 缓存是空的就一行都不画。现在懒加载一次后调 [self setSpecifiers:built] 走父类入口。"
-    },
-    {
-      "id": "B18",
-      "where": "控制中心 ▸ 模块图标",
-      "symptom": "控制中心图标是否被主题化，未知",
-      "reported": "2026-11-05T23:27 用户「控制中心图标不知道加载没这个要继续验证」",
-      "proof": "待取证：下拉控制中心目视；素材在 Bundles/com.apple.control-center.*Module/ 下",
-      "status": "待验",
-      "fix": "TCXBundleImages 挂 UIImage imageNamed:inBundle: 两个变体，按 bundle id + 素材名去主题里找。需用户目视确认。"
-    },
-    {
-      "id": "B19",
-      "where": "设置 ▸ AppIcon 那一行",
-      "symptom": "设置里那一行图标过大 / 只有文字没图标",
-      "reported": "2026-11-05",
-      "proof": "已补 icon=AppIcon.png 并把图打进 PreferenceLoader 目录与 Bundle 两处",
-      "status": "待验",
-      "fix": "入口 plist 加 icon 键；构建脚本把 AppIcon.png / @2x 打进两处。"
-    },
-    {
-      "id": "B14",
-      "where": "桌面 ▸ 文件夹",
-      "symptom": "文件夹图标不显示",
-      "reported": "2026-11-05T23:21",
-      "proof": "用户 2026-11-05T23:27 目视：文件夹内外 app 图标都加载了",
-      "status": "已修（0.0.8，用户确认）",
-      "fix": "layers 叠加 + 补挂载类"
-    },
-    {
-      "id": "B17",
-      "where": "桌面 ▸ 图标阴影",
-      "symptom": "图标阴影没生效",
-      "reported": "2026-11-05T23:27",
-      "proof": "用户 2026-11-05T23:27 目视：图标阴影已加载",
-      "status": "已修（0.0.8，用户确认）",
-      "fix": "阴影常开，加载主题 iPhoneShadow 素材"
-    },
-    {
-      "id": "B12",
-      "where": "桌面图标",
-      "symptom": "素材一个都没加载（白图标/原图）",
-      "reported": "2026-11-05T22:38",
-      "proof": "diag 显示 icon=515 hit=439、proc=SpringBoard、layers=3 → 图标已加载",
-      "status": "已修（0.0.8，诊断确认）",
-      "fix": "主题叠加 layers（逐层找素材）+ 补挂载类"
-    }
+    { "id": "B30", "where": "设置 ▸ AppIcon", "symptom": "设置面板完全是空的，没有任何项目", "reported": "2026-11-06T01:50 用户「设置面板是空的，没修复！」", "status": "待修", "fix": "待定位：TCXRootListController 的 specifiers 链路；对上 ThemeCore 面板怎么给 PSListController 喂 specifier" },
+    { "id": "B31", "where": "桌面 ▸ 时钟图标", "symptom": "时钟出现两套指针：系统一套 + 主题一套叠在一起", "reported": "2026-11-06T01:50 用户「时钟有二套指针；一套系统的一套我的美化素材里面的、只让我的指针素材生效，让系统的不要生效！」", "status": "待修", "fix": "主题指针贴上后要把系统自绘的指针子视图隐藏/移除，只留我们的一套" },
+    { "id": "B32", "where": "桌面 ▸ 文件夹（未打开状态）", "symptom": "文件夹未打开时不显示主题背景素材，打开才显示", "reported": "2026-11-06T01:50 用户「桌面文件夹终于出现图标加载了！只是要打开时显示加载素材（未打开时间不显示文件夹图标素材）」", "status": "待修", "fix": "SBFolderIconView/SBFolderIconBackgroundView 的关闭态背景没贴；要对齐打开态那条路径" },
+    { "id": "B33", "where": "桌面 ▸ 文件夹内图标", "symptom": "文件夹内图标溢出文件夹方框", "reported": "2026-11-06T01:50 用户「图标在文件夹内溢出文件夹方框了！」", "status": "待修", "fix": "mini 图布局/绘制尺寸用了大图标尺寸；要按文件夹格子尺寸裁切" },
+    { "id": "B34", "where": "桌面 ▸ 日历图标", "symptom": "日历文字是我们自己画的，没走主题素材的自定义（位置/颜色）", "reported": "2026-11-06T01:50 用户「这是你画上去的吧？！日历内的文字位置和颜色没有走我素材内的自定义！」", "status": "待修", "fix": "按 ThemeCore 的 CalendarIconDateSettings/CalendarIconDaySettings 逐字段应用；主题没给才回退默认" },
+    { "id": "B35", "where": "桌面 ▸ 日历图标", "symptom": "日历图标底图没加载出来", "reported": "2026-11-06T01:50 用户「图标没加载出来！」", "status": "待修", "fix": "检查主题里 mobilecal 素材名与查找规则" },
+    { "id": "B36", "where": "设置 ▸ AppIcon 那一行", "symptom": "设置内那个小图标素材没加载成功", "reported": "2026-11-06T01:50 用户「设置内的小图标素材没有实现成功加载！」", "status": "待修", "fix": "AppIconPreferenceLoader.plist 的 icon 键与图标文件位置" },
+    { "id": "B37", "where": "桌面 ▸ 图标阴影", "symptom": "阴影位置偏上，快压到图标中间了", "reported": "2026-11-06T01:50 用户「图标阴影位置不对太偏上了！已经快到图标中间位置了！」", "status": "待修", "fix": "阴影图放置的 offset / 尺寸；对照主题 iPhoneShadow 素材的实际留白" },
+    { "id": "B38", "where": "设置面板改开关/选主题", "symptom": "要注销桌面才生效；SnowBoard 不用注销就自加载", "reported": "2026-11-06T02:20 用户「分析一下它怎么实现这个功能的！我想在我们的新插件内也同样有这样的功能！」", "status": "拆解中", "fix": "全面分析 SnowBoard 1.5.37 的热重载链路" }
   ],
 
-  "pending": [
-    {
-      "what": "整体精简合并整合：本地内容 + 三样（AGENTS.md / skills / memories.json）+ 云端仓库",
-      "reported": "2026-11-06T00:07 用户「改天本地的内容和全部三样以及云端要整体精简合并整合一下」",
-      "status": "本轮已完成（AGENTS.md 1449→190 行；技能 30→24 个；scripts 里 120 个一次性 js 清到 5 个）",
-      "next": "后续每轮顺手维护：新内容并入已有条目，不新开重复"
-    },
-    {
-      "what": "包图标 Icon 字段（ThemeCore 用远程 URL，我们没图床）",
-      "status": "待用户给图床地址或确认不要",
-      "next": "有地址后写进 build-appicon.sh 的 control"
-    },
-    {
-      "what": "CountdownHUD 长岛长文字",
-      "status": "1.6.18 已装（用户那条线在做）",
-      "next": "不属本线，等用户反馈"
-    }
+  "done_confirmed": [
+    { "id": "B39", "what": "Bundles 全素材通用索引", "proof": "diag bundles=10 assets=160，扫到 10 个 bundle 160 张素材", "status": "已实现" },
+    { "id": "B15", "what": "日历文字显示", "proof": "用户确认「日历内文字显示加载了」", "status": "已实现（但样式没走主题，见 B34）" },
+    { "id": "B14", "what": "文件夹图标加载", "proof": "用户确认「桌面文件夹终于出现图标加载了」", "status": "部分实现（关闭态与溢出见 B32/B33）" }
   ],
 
-  "handoff": "新对话先跑 `sh scripts/resume.sh`。第一性原则见 AGENTS.md 首节。ThemeCore 0.5.1 的架构实证见技能 `themecore-architecture-first`（含怎么用 od+awk 抽 dylib 符号）。旧 ThemeCorePlus 线已废弃，其源码与 docs/cases 留作参考但不再维护。"
+  "next": "1) 全面分析 SnowBoard 1.5.37（热重载链路 + 面板 + 时钟/文件夹/阴影做法）2) 按分析结果一次性修 B30-B38",
+  "handoff": "新对话先跑 sh scripts/resume.sh。参考工程包：<jbroot>/var/mobile/Documents/wiki.qaq.apelin/第三方ai分析生成文件/越狱美化主题插件/"
 }

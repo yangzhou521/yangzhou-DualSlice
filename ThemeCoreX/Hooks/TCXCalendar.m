@@ -213,9 +213,11 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
         // 液态玻璃 / 角标：透明玻璃）的 Info.plist 里都没有它们，于是原来这句
         // return 让日历永远保持系统默认（用户 2026-11-05 23:21「日历没星期是日历等文字」）。
         // 改成走默认样式自己画：字体用系统等宽、颜色取白/黑、居中。
+        // 主题没声明这两个键时**不硬画**：系统本来就有星期/日期文字，
+        // 我们自己再画一层会盖住它、而且位置颜色都是猜的。
+        // 只有主题明确给了配置才接管（用户 2026-11-06「文字没走我素材内自定义预设」）。
         BOOL fromTheme = (dateSettings != nil || daySettings != nil);
-        if (!dateSettings) dateSettings = @{};
-        if (!daySettings)  daySettings  = @{};
+        if (!fromTheme) return image;
 
         // 主题没给 TextColor 时按底图亮度自动选：浅底用黑字、深底用白字。
         // 硬编码白色会让浅色主题（液态玻璃）的星期日期完全看不见。
@@ -234,9 +236,9 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
             sCalendarCache = [[NSCache alloc] init];
             sCalendarCache.countLimit = 16;
         }
-        NSString *key = [NSString stringWithFormat:@"cal|%@|%.0fx%.0f|%ld|%@",
+        NSString *key = [NSString stringWithFormat:@"cal|%@|%.0fx%.0f|%ld|%@|%lu",
                          store.themeName ?: @"none", size.width, size.height,
-                         (long)day, weekday ?: @""];
+                         (long)day, weekday ?: @"", (unsigned long)store.generation];
         UIImage *cached = [sCalendarCache objectForKey:key];
         if (cached) return cached;
 
@@ -249,24 +251,35 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
         UIImage *result = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
             [image drawInRect:CGRectMake(0, 0, size.width, size.height)];
 
-            // 没有 offset 时的落点：星期在上、日期在下（与 iOS 日历图标同排版）。
-            if (daySettings) {
-                UIFont *font = TCXCalendarFont(daySettings, size.width, 8.0);
+            // 位置按**主题配置的字体度量**算，不写死比例。
+            // 之前写死 height*0.24 / height*0.52，主题里 TextYoffset 只能微调，
+            // 结果星期和日号的位置永远不是主题要的（用户 2026-11-06 报的现象）。
+            // 现在的做法：两个文字块按各自字体高度纵向排列、整体居中，
+            // 主题的 TextXoffset / TextYoffset 作为**基准之上的微调**叠加。
+            UIFont *dayFont  = TCXCalendarFont(daySettings, size.width, 8.0);
+            UIFont *dateFont = TCXCalendarFont(dateSettings, size.width, 24.0);
+            CGPoint dayOffset  = TCXCalendarOffset(daySettings, size.width);
+            CGPoint dateOffset = TCXCalendarOffset(dateSettings, size.width);
+
+            CGFloat dayH  = dayFont.pointSize  * 1.15;
+            CGFloat dateH = dateFont.pointSize * 1.15;
+            CGFloat totalH = dayH + dateH;
+            CGFloat startY = (size.height - totalH) / 2.0;
+
+            if (daySettings.count > 0) {
                 UIColor *color = TCXCalendarColor(daySettings[@"TextColor"]) ?: autoColor;
                 NSShadow *shadow = TCXCalendarShadow(daySettings, size.width);
-                CGPoint offset = TCXCalendarOffset(daySettings, size.width);
-                TCXCalendarDrawText(weekday, font, color, shadow,
-                                    CGPointMake(size.width / 2.0 + offset.x,
-                                                size.height * 0.24 + offset.y));
+                TCXCalendarDrawText(weekday, dayFont, color, shadow,
+                                    CGPointMake(size.width / 2.0 + dayOffset.x,
+                                                startY + dayH / 2.0 + dayOffset.y));
             }
-            if (dateSettings) {
-                UIFont *font = TCXCalendarFont(dateSettings, size.width, 24.0);
+            if (dateSettings.count > 0) {
                 UIColor *color = TCXCalendarColor(dateSettings[@"TextColor"]) ?: autoColor;
                 NSShadow *shadow = TCXCalendarShadow(dateSettings, size.width);
-                CGPoint offset = TCXCalendarOffset(dateSettings, size.width);
-                TCXCalendarDrawText([NSString stringWithFormat:@"%ld", (long)day], font, color, shadow,
-                                    CGPointMake(size.width / 2.0 + offset.x,
-                                                size.height * 0.52 + offset.y));
+                TCXCalendarDrawText([NSString stringWithFormat:@"%ld", (long)day],
+                                    dateFont, color, shadow,
+                                    CGPointMake(size.width / 2.0 + dateOffset.x,
+                                                startY + dayH + dateH / 2.0 + dateOffset.y));
             }
         }];
 
