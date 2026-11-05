@@ -22,7 +22,7 @@ set -eu
 # ── 包身份：换版本时只改这里 ＋ ThemeCoreX/Sources/TCXVersion.h 的 TCX_VERSION ──
 PRODUCT=AppIcon
 PACKAGE_ID=com.yangzhou.appicon
-VERSION=0.0.1
+VERSION=0.0.2
 NAME=AppIcon
 AUTHOR=yangzhou
 DESCRIPTION="轻量化桌面图标主题插件，修改图标、图标角标及图标阴影如此轻松，覆盖绝大部分区域，时钟日历可动态图标。作者 yangzhou。"
@@ -172,6 +172,11 @@ mkdir -p "$STAGE/Library/PreferenceLoader/Preferences/AppIcon"
 cp Support/AppIconPreferenceLoader.plist \
    "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/Root.plist"
 plutil -lint "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/Root.plist"
+# 设置里那一行的图标：入口 plist 的 icon=AppIcon.png 相对**入口目录**与 Bundle 目录都能找，
+# 两处都放一份，避免不同 PreferenceLoader 版本找法不一致时又变成「只有文字没有图标」。
+cp Support/AppIcon.png Support/AppIcon@2x.png \
+   "$STAGE/Library/PreferenceLoader/Preferences/AppIcon/"
+cp Support/AppIcon.png Support/AppIcon@2x.png "$PREFS_BUNDLE/"
 
 # postinst / postrm：与 ThemeCore 0.5.1 同形状（建 Themes 与 Preferences 目录、踢 sharingd）。
 cat > "$STAGE/DEBIAN/postinst" <<'POSTINST'
