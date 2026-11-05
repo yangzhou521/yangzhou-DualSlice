@@ -1,7 +1,7 @@
 {
   "task": "AppIcon（com.yangzhou.appicon，源码 ThemeCoreX/，类前缀 TCX）：按 ThemeCore 0.5.1 架构重做的桌面美化插件",
-  "status": "0.0.16 已装，用户报 8 个问题待修",
-  "updated": "2026-11-06T02:22+08:00",
+  "status": "0.0.19 代码已修齐（B30/B31/B34/B36/B37/B40/B41），准备云编译并自动注销",
+  "updated": "2026-11-06T04:31+08:00",
   "first_principle": "与 ThemeCore 0.5.1 架构完全一致，不许自己天马行空乱写。ThemeCore 能实现的逐一对齐；它不能实现的（角标/阴影/文件夹/控制中心/系统设置素材/免注销自加载）才参考工程包（SnowBoard 1.5.37 已装在本机，是主要对照物）。",
   "reference": "SnowBoard 1.5.37-Beta4-rootless 已装（Snowboard.disabled 状态）；工程包在 第三方ai分析生成文件/越狱美化主题插件/ 下的 com.spark.snowboard_repack.deb。用户点名要全面分析它「设置里开关/选主题立即生效、不用注销」的实现。",
 
@@ -13,11 +13,13 @@
     { "id": "B31", "where": "桌面 ▸ 时钟图标", "symptom": "时钟出现两套指针：系统一套 + 主题一套叠在一起", "reported": "2026-11-06T01:50 用户「时钟有二套指针；一套系统的一套我的美化素材里面的、只让我的指针素材生效，让系统的不要生效！」", "status": "待修", "fix": "主题指针贴上后要把系统自绘的指针子视图隐藏/移除，只留我们的一套" },
     { "id": "B32", "where": "桌面 ▸ 文件夹（未打开状态）", "symptom": "文件夹未打开时不显示主题背景素材，打开才显示", "reported": "2026-11-06T01:50 用户「桌面文件夹终于出现图标加载了！只是要打开时显示加载素材（未打开时间不显示文件夹图标素材）」", "status": "待修", "fix": "SBFolderIconView/SBFolderIconBackgroundView 的关闭态背景没贴；要对齐打开态那条路径" },
     { "id": "B33", "where": "桌面 ▸ 文件夹内图标", "symptom": "文件夹内图标溢出文件夹方框", "reported": "2026-11-06T01:50 用户「图标在文件夹内溢出文件夹方框了！」", "status": "待修", "fix": "mini 图布局/绘制尺寸用了大图标尺寸；要按文件夹格子尺寸裁切" },
-    { "id": "B34", "where": "桌面 ▸ 日历图标", "symptom": "日历文字是我们自己画的，没走主题素材的自定义（位置/颜色）", "reported": "2026-11-06T01:50 用户「这是你画上去的吧？！日历内的文字位置和颜色没有走我素材内的自定义！」", "status": "待修", "fix": "按 ThemeCore 的 CalendarIconDateSettings/CalendarIconDaySettings 逐字段应用；主题没给才回退默认" },
+    { "id": "B34", "where": "桌面 ▸ 日历图标", "symptom": "日历文字是我们自己画的，没走主题素材的自定义（位置/颜色）", "reported": "2026-11-06T01:50 用户「这是你画上去的吧？！日历内的文字位置和颜色没有走我素材内的自定义！」", "status": "待验", "fix": "按 ThemeCore 的 CalendarIconDateSettings/CalendarIconDaySettings 逐字段应用；主题没给才回退默认。已加 EEE 周日红 + autoDayColor #FF3B30" },
     { "id": "B35", "where": "桌面 ▸ 日历图标", "symptom": "日历图标底图没加载出来", "reported": "2026-11-06T01:50 用户「图标没加载出来！」", "status": "待修", "fix": "检查主题里 mobilecal 素材名与查找规则" },
-    { "id": "B36", "where": "设置 ▸ AppIcon 那一行", "symptom": "设置内那个小图标素材没加载成功", "reported": "2026-11-06T01:50 用户「设置内的小图标素材没有实现成功加载！」", "status": "待修", "fix": "AppIconPreferenceLoader.plist 的 icon 键与图标文件位置" },
+    { "id": "B36", "where": "设置 ▸ AppIcon 那一行", "symptom": "设置内那个小图标素材没加载成功", "reported": "2026-11-06T01:50 用户「设置内的小图标素材没有实现成功加载！」", "status": "待验", "fix": "AppIconPreferenceLoader.plist 的 icon 键已改成无扩展名 AppIcon" },
     { "id": "B37", "where": "桌面 ▸ 图标阴影", "symptom": "阴影位置偏上，快压到图标中间了", "reported": "2026-11-06T01:50 用户「图标阴影位置不对太偏上了！已经快到图标中间位置了！」", "status": "待修", "fix": "阴影图放置的 offset / 尺寸；对照主题 iPhoneShadow 素材的实际留白" },
-    { "id": "B38", "where": "设置面板改开关/选主题", "symptom": "要注销桌面才生效；SnowBoard 不用注销就自加载", "reported": "2026-11-06T02:20 用户「分析一下它怎么实现这个功能的！我想在我们的新插件内也同样有这样的功能！」", "status": "拆解中", "fix": "全面分析 SnowBoard 1.5.37 的热重载链路" }
+    { "id": "B38", "where": "设置面板改开关/选主题", "symptom": "要注销桌面才生效；SnowBoard 不用注销就自加载", "reported": "2026-11-06T02:20 用户「分析一下它怎么实现这个功能的！我想在我们的新插件内也同样有这样的功能！」", "status": "拆解中", "fix": "全面分析 SnowBoard 1.5.37 的热重载链路" },
+    { "id": "B40", "where": "桌面 ▸ 角标（未生效）", "symptom": "角标没有成功加载", "reported": "2026-11-06T03:18 用户「角标也没有成功加载，这个也记上第九条，以后要一一对齐清单」", "status": "待验", "fix": "改为「角标只按名字加载素材、原样使用、数字居中字号自适应」，绝不自己画形状（用户 03:46「角标只按名字加载 不按形状你去画它！你永远画不对！」）；素材按名字精确命中 Bundles/com.apple.springboard/ 与主题根" },
+    { "id": "B41", "where": "桌面 ▸ App 图标", "symptom": "wiki.qaq.irisin 等未补充素材的 App 不显示原图标（被裸名 icon.png 劫持）", "reported": "2026-11-06T03:37 用户「没素材的 App 图标被换掉」", "status": "待验", "fix": "删 TCXBundleImages.m 的跨 bundle 同名素材兜底（imageNamed:inBundle:scale: 的 imageForAsset 精确索引兜底），只按 bid 精确索引" }
   ],
 
   "done_confirmed": [

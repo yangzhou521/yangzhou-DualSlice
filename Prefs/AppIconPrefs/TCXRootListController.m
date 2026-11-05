@@ -41,10 +41,14 @@ enum {
 - (id)propertyForKey:(NSString *)key;
 @end
 
-@interface PSListController : UIViewController
+@interface PSListController : UIViewController {
+    NSArray *_specifiers;
+}
 - (NSArray *)specifiers;
 - (void)setSpecifiers:(NSArray *)specifiers;
 - (void)reloadSpecifiers;
+- (NSMutableArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
+- (NSMutableArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target bundle:(NSBundle *)bundle;
 @end
 
 #pragma mark - 偏好（与插件读的是同一个文件 com.yangzhou.appicon.plist）
@@ -264,6 +268,20 @@ static NSString *TCXEffectiveThemeName(void) {
 @end
 
 @implementation TCXRootListController
+
+- (NSArray *)specifiers {
+    if (!_specifiers) {
+        NSBundle *bundle = [NSBundle bundleForClass:[self class]];
+        NSMutableArray *specs = nil;
+        if ([self respondsToSelector:@selector(loadSpecifiersFromPlistName:target:bundle:)]) {
+            specs = [self loadSpecifiersFromPlistName:@"Root" target:self bundle:bundle];
+        } else if ([self respondsToSelector:@selector(loadSpecifiersFromPlistName:target:)]) {
+            specs = [self loadSpecifiersFromPlistName:@"Root" target:self];
+        }
+        _specifiers = specs ?: [super specifiers];
+    }
+    return _specifiers;
+}
 
 // 「刷新图标」：广播 Darwin 通知，SpringBoard 里的插件收到后重读主题、清图标缓存、
 // 当场重新出图（SnowBoard 的免注销做法）。

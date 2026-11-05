@@ -16,7 +16,9 @@
 //     FontSize / TextXoffset / TextYoffset / TextColor / FontName / FontWeight
 //   FontWeight 的取值表也完全对上（证据里连着出现）：
 //     ultralight thin light medium semibold demibold bold heavy black
-//   星期格式串用的是 "EEEE"（证据里就有这一个格式串）。
+//   星期格式串用的是 "EEEE"（证据里只有这一个格式串）—— 本文件改用 "EEE"（短星期），
+//   理由见下方 formatter 处：两者在中文下是「星期四」与「周四」，系统日历图标上是后者。
+//   这是本文件与 ThemeCore 唯一刻意不一致的地方，写在这里备案。
 //   缓存键形状 "static:%@|%.3f"（模板名|尺度的静态图）。
 //
 // 与 ThemeCore 的不同（如实记下来，别当一样）：
@@ -209,13 +211,13 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
         [store reloadIfNeeded];
         NSDictionary *dateSettings = [store calendarDateSettings];
         NSDictionary *daySettings = [store calendarDaySettings];
-        // 主题没声明这两个键时**不能直接放弃**：实测本机三个主题（Smartisan /
-        // 液态玻璃 / 角标：透明玻璃）的 Info.plist 里都没有它们，于是原来这句
-        // return 让日历永远保持系统默认（用户 2026-11-05 23:21「日历没星期是日历等文字」）。
-        // 改成走默认样式自己画：字体用系统等宽、颜色取白/黑、居中。
-        // 主题没声明这两个键时**不硬画**：系统本来就有星期/日期文字，
-        // 我们自己再画一层会盖住它、而且位置颜色都是猜的。
-        // 只有主题明确给了配置才接管（用户 2026-11-06「文字没走我素材内自定义预设」）。
+        // 只有主题明确给了配置才接管（用户 2026-11-06「文字没走我素材内自定义预设」）：
+        // 主题没声明这两个键时不硬画 —— 系统本来就有星期/日期文字，我们自己再画一层会
+        // 盖住它，而且位置颜色都是猜的。
+        // 取证（2026-11-06 03:31，逐个主题读 /Library/Themes/*.theme/Info.plist）：
+        //   Smartisan.theme   Date=32 / Day=8（都无 TextColor，阴影 #cecece / #a72424）
+        //   液态玻璃.theme     Date=35 / Day=9.5（TextColor #FFFFFF / #ff3d3d）
+        // 两个常用主题都声明了这两个键 —— 本文件这段自绘是常态路径，不是兜底路径。
         BOOL fromTheme = (dateSettings != nil || daySettings != nil);
         if (!fromTheme) return image;
 
@@ -223,13 +225,21 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
         // 硬编码白色会让浅色主题（液态玻璃）的星期日期完全看不见。
         CGFloat lum = TCXAverageLuminance(image);
         UIColor *autoColor = (lum < 0.5) ? [UIColor whiteColor] : [UIColor blackColor];
+        // 星期那一行例外：日期数字随底图取黑白都行，星期在系统日历图标里恒为红
+        // （浅色/深色模式都是红字），主题没写 TextColor 时按系统红走，不跟着底图变黑变白。
+        // 实测佐证：液态玻璃自己给的 Day TextColor 是 #ff3d3d，与系统红几乎同一个色。
+        UIColor *autoDayColor = [UIColor colorWithRed:1.0 green:0.2314 blue:0.1882 alpha:1.0];  // #FF3B30
 
         NSCalendar *calendar = [NSCalendar currentCalendar];
         NSDate *now = [NSDate date];
         NSInteger day = [calendar component:NSCalendarUnitDay fromDate:now];
 
+        // 短星期（中文「周四」、英文 "Thu"）：系统日历图标上就是它。
+        // ThemeCore 证据里那个格式串是 "EEEE"，但 EEEE 在中文下是「星期四」三个字，
+        // 8pt 字号塞进 60pt 宽的图标里挤成一团，与系统日历图标不是一回事
+        // （用户 2026-11-06「日历内日期和星期该怎么样就怎么样，你不要自己定义」）。
         NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-        formatter.dateFormat = @"EEEE";                    // 与 ThemeCore 证据一致
+        formatter.dateFormat = @"EEE";
         NSString *weekday = [formatter stringFromDate:now];
 
         if (!sCalendarCache) {
@@ -272,7 +282,7 @@ UIImage *TCXCalendarOverlay(UIImage *image, NSString *bundleID, CGSize size, CGF
             CGFloat startY = (size.height - totalH) / 2.0;
 
             if (daySettings.count > 0) {
-                UIColor *color = TCXCalendarColor(daySettings[@"TextColor"]) ?: autoColor;
+                UIColor *color = TCXCalendarColor(daySettings[@"TextColor"]) ?: autoDayColor;
                 NSShadow *shadow = TCXCalendarShadow(daySettings, size.width);
                 TCXCalendarDrawText(weekday, dayFont, color, shadow,
                                     CGPointMake(size.width / 2.0 + dayOffset.x,

@@ -92,10 +92,13 @@ static void TCXApplyShadow(UIView *view) {
             [view insertSubview:shadowView atIndex:0];
         }
         shadowView.contentMode = UIViewContentModeScaleAspectFit;
-        // 外扩比例：素材宽高比与图标不同时，按较大的一边贴合，四周自然留出边距。
+        // 阴影外扩与偏移：主题阴影素材设计用于置于图标下方（带有底部投影光晕），
+        // 保持水平居中，并在 Y 轴施加向下微移（+grow*0.5），避免阴影反向溢出到图标上方。
         CGFloat side = MAX(bounds.size.width, bounds.size.height);
-        CGFloat grow = side * 0.18;          // 四周各外扩约 9%
-        shadowView.frame = CGRectInset(bounds, -grow, -grow);
+        CGFloat grow = side * 0.18;          // 四周各外扩
+        CGRect shadowRect = CGRectInset(bounds, -grow, -grow);
+        shadowRect.origin.y += (grow * 0.5); // 向下偏移，使阴影重心完全落在图标下方
+        shadowView.frame = shadowRect;
         shadowView.image = bitmap;
         // 两条路不能同时出现，否则主题位图下面又叠一层矢量暗角。
         TCXClearVectorShadow(layer);

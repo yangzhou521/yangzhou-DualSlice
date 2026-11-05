@@ -132,8 +132,8 @@ void TCXClockInvalidate(void) {
 
 static UIImage *(*orig_clockContents_SBH)(id, SEL);
 static UIImage *(*orig_clockContents_SB)(id, SEL);
-static void (*orig_clockLayout_SBH)(id, SEL);
-static void (*orig_clockLayout_SB)(id, SEL);
+static UIImage *(*orig_clockSquareContents_SBH)(id, SEL);
+static UIImage *(*orig_clockSquareContents_SB)(id, SEL);
 
 static UIImage *TCXClockResolved(UIImage *original) {
     @try {
@@ -159,142 +159,55 @@ static UIImage *repl_clockContents_SB(id self, SEL _cmd) {
     return TCXClockResolved(original);
 }
 
+static UIImage *repl_clockSquareContents_SBH(id self, SEL _cmd) {
+    UIImage *original = orig_clockSquareContents_SBH ? orig_clockSquareContents_SBH(self, _cmd) : nil;
+    return TCXClockResolved(original);
+}
+
+static UIImage *repl_clockSquareContents_SB(id self, SEL _cmd) {
+    UIImage *original = orig_clockSquareContents_SB ? orig_clockSquareContents_SB(self, _cmd) : nil;
+    return TCXClockResolved(original);
+}
+
 // 一站一槽：SBH*/SB* 两个类各自的原实现槽（iOS 16 上是 SBH 那个）。
-static void TCXHookClockClass(NSString *name, IMP repl, IMP *slot) {
+//
+// 两个 selector 都挂：contentsImage（主）与 squareContentsImage（备，两家都有）。
+// 判断用 instancesRespondToSelector（继承也算）——contentsImage 是父类方法，
+// 用「类自己声明」会永远判 false 而挂不上，时钟就不显示（11-05 的误判）。
+// 两家「完美答案」（ThemeCore TCClockResource / SnowBoard SnowBoardClockIconHolder）
+// 都只在这条路上返回合成整图，时间由系统自己驱动。
+static void TCXHookClockSelector(NSString *name, SEL selector, IMP repl, IMP *slot) {
     Class cls = TCXClass(name);
     if (!cls) return;
-    if (!TCXClassDeclaresSelector(cls, @selector(contentsImage))) {
-        TCXNoteSite([name stringByAppendingString:@":nodecl"]);
+    if (![cls instancesRespondToSelector:selector]) {
+        TCXNoteSite([name stringByAppendingFormat:@":nodecl-%@",
+                     NSStringFromSelector(selector)]);
         return;
     }
     IMP original = NULL;
-    MSHookMessageEx(cls, @selector(contentsImage), repl, &original);
+    MSHookMessageEx(cls, selector, repl, &original);
     if (original) {
         *slot = original;
-        TCXNoteSite([name stringByAppendingString:@":contentsImage"]);
+        TCXNoteSite([name stringByAppendingFormat:@":%@",
+                     NSStringFromSelector(selector)]);
     }
 }
 
-#pragma mark - 呈现层：layoutSubviews 里贴表盘（iOS 16 真正生效的路径）
+#pragma mark - 挂站
 
-// 为什么必须再挂这一条：iOS 16 的时钟图标（SBHClockApplicationIconImageView）**不靠
-// -contentsImage 出图**，它自己在 layoutSubviews 里摆表盘与三根指针子视图。
-// 只挂 contentsImage 永远不会被调用 —— 用户 2026-11-05 23:21 报「时钟不显示」就是这个。
-// ThemeCore 0.5.1 的实测证据同样是这一点：
-//   clockv{found=1,last=layers:subs=6|face=y|h=y|m=y|dot=ours}
-// 即它找到那个视图后，按子视图逐个替换成主题素材。
-//
-// 实现：layoutSubviews 之后，拿主题合成好的整张表盘图，贴成视图最底层的一张
-// UIImageView（只贴一次，靠关联对象防重复），并把系统自绘的表盘子视图隐藏。
-// 指针仍由系统子视图走 —— 时间保持活的，不牺牲「动态」。
-
-@interface TCXClockOverlayView : UIImageView
-@end
-@implementation TCXClockOverlayView
-@end
-
-static void *kTCXClockOverlayKey = &kTCXClockOverlayKey;
-static void *kTCXClockTimerKey = &kTCXClockTimerKey;
-
-static void TCXClockApplyOverlay(UIView *view) {
-    if (!view) return;
-    @try {
-        if (!TCXPrefBool(@"Enabled", YES)) return;
-
-        CGSize size = view.bounds.size;
-        if (size.width < 8.0 || size.height < 8.0) return;
-
-        // 合成整张表盘（表盘 + 三针，按当前时间），复用已有的 TCXClockImage。
-        CGFloat scale = view.window.screen.scale > 0 ? view.window.screen.scale : 2.0;
-        UIImage *face = TCXClockImage(size, scale);
-        if (!face) return;
-
-        TCXClockOverlayView *overlay = objc_getAssociatedObject(view, kTCXClockOverlayKey);
-        if (!overlay) {
-            overlay = [[TCXClockOverlayView alloc] initWithFrame:view.bounds];
-            overlay.userInteractionEnabled = NO;
-            overlay.contentMode = UIViewContentModeScaleAspectFit;
-            overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-            [view insertSubview:overlay atIndex:0];
-            objc_setAssociatedObject(view, kTCXClockOverlayKey, overlay,
-                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            TCXNoteSite(@"SBHClockApplicationIconImageView:layoutSubviews");
-        }
-        overlay.frame = view.bounds;
-        overlay.image = face;
-
-        // 系统指针全隐藏后，时间要靠我们每秒重画一次才走。
-        // （不加这个，隐藏系统指针后会变成「静止的时钟」。）
-        if (!objc_getAssociatedObject(view, kTCXClockTimerKey)) {
-            __weak UIView *weakView = view;
-            NSTimer *timer = [NSTimer timerWithTimeInterval:1.0 repeats:YES
-                                                   block:^(NSTimer *t) {
-                UIView *strongView = weakView;
-                if (!strongView) { [t invalidate]; return; }
-                TCXClockOverlayView *ov = objc_getAssociatedObject(strongView, kTCXClockOverlayKey);
-                if (!ov) { [t invalidate]; return; }
-                CGSize sz = strongView.bounds.size;
-                if (sz.width < 8.0) return;
-                CGFloat sc = strongView.window.screen.scale > 0 ? strongView.window.screen.scale : 2.0;
-                UIImage *img = TCXClockImage(sz, sc);
-                if (img) ov.image = img;
-            }];
-            [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
-            objc_setAssociatedObject(view, kTCXClockTimerKey, timer,
-                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-
-        // 只让**我们**的指针生效：系统那套表盘 + 三根指针（CALayer 或子视图）全部隐藏。
-        // 之前只隐藏「铺满视图的 UIImageView」，系统的指针是 CALayer/小视图，没被隐藏，
-        // 于是出现两套指针叠在一起（用户 2026-11-06 01:50 报的）。
-        for (UIView *sub in view.subviews) {
-            if (sub == overlay) continue;
-            sub.hidden = YES;
-        }
-        // 指针也可能直接画在 view.layer 的子层上，一并藏掉（overlay 是 UIView，不受影响）。
-        for (CALayer *layer in view.layer.sublayers) {
-            if (!layer.hidden) layer.hidden = YES;
-        }
-    } @catch (NSException *exception) {
-        TCXRecordError([NSString stringWithFormat:@"clock:%@", exception.reason]);
-    }
-}
-
-static void repl_clockLayout_SBH(id self, SEL _cmd) {
-    orig_clockLayout_SBH ? orig_clockLayout_SBH(self, _cmd) : (void)0;
-    TCXClockApplyOverlay((UIView *)self);
-}
-
-static void repl_clockLayout_SB(id self, SEL _cmd) {
-    orig_clockLayout_SB ? orig_clockLayout_SB(self, _cmd) : (void)0;
-    TCXClockApplyOverlay((UIView *)self);
-}
-
-static void TCXHookClockLayout(NSString *name, IMP repl, IMP *slot) {
-    Class cls = TCXClass(name);
-    if (!cls) return;
-    // 注意：layoutSubviews 是 UIView 的方法，子类**不自己声明**它。
-    // 用「类自己声明」那套判断（TCXClassDeclaresSelector）会永远返回 false，
-    // 于是这条永远挂不上 —— 用户 2026-11-05 23:21 报「时钟不显示」就是这个。
-    // 正确判断：类是否响应这个 selector（继承来的也算）。
-    if (![cls respondsToSelector:@selector(layoutSubviews)]) return;
-    IMP original = NULL;
-    MSHookMessageEx(cls, @selector(layoutSubviews), repl, &original);
-    if (original) {
-        *slot = original;
-        TCXNoteSite([name stringByAppendingString:@":layoutSubviews"]);
-    }
-}
-
+// 两家「完美答案」的时钟只走 contentsImage / squareContentsImage 返回合成整图，
+// 时间由系统自己驱动；没有 layoutSubviews 叠加层（那是发明，导致两套指针）。
 void TCXInstallClockHooks(void) {
-    TCXHookClockClass(@"SBHClockApplicationIconImageView",
-                      (IMP)&repl_clockContents_SBH, (IMP *)&orig_clockContents_SBH);
-    TCXHookClockClass(@"SBClockApplicationIconImageView",
-                      (IMP)&repl_clockContents_SB, (IMP *)&orig_clockContents_SB);
-
-    // iOS 16 真正生效的那条（见上面注释）：呈现层贴表盘。
-    TCXHookClockLayout(@"SBHClockApplicationIconImageView",
-                       (IMP)&repl_clockLayout_SBH, (IMP *)&orig_clockLayout_SBH);
-    TCXHookClockLayout(@"SBClockApplicationIconImageView",
-                       (IMP)&repl_clockLayout_SB, (IMP *)&orig_clockLayout_SB);
+    TCXHookClockSelector(@"SBHClockApplicationIconImageView",
+                         @selector(contentsImage),
+                         (IMP)&repl_clockContents_SBH, (IMP *)&orig_clockContents_SBH);
+    TCXHookClockSelector(@"SBClockApplicationIconImageView",
+                         @selector(contentsImage),
+                         (IMP)&repl_clockContents_SB, (IMP *)&orig_clockContents_SB);
+    TCXHookClockSelector(@"SBHClockApplicationIconImageView",
+                         @selector(squareContentsImage),
+                         (IMP)&repl_clockSquareContents_SBH, (IMP *)&orig_clockSquareContents_SBH);
+    TCXHookClockSelector(@"SBClockApplicationIconImageView",
+                         @selector(squareContentsImage),
+                         (IMP)&repl_clockSquareContents_SB, (IMP *)&orig_clockSquareContents_SB);
 }

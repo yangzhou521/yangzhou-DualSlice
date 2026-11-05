@@ -24,9 +24,16 @@ static UIImage *TCXBundleLookup(NSString *name, NSBundle *bundle) {
     [store reloadIfNeeded];
     NSString *base = [name stringByDeletingPathExtension];
     // 通用索引：Bundles/<bid>/ 下所有素材一律生效（含 com.apple.springboard 的
-    // 时钟/文件夹素材，以及用户以后新加的任何 bundle 目录）。
+    // 时钟/文件夹/角标素材，以及用户以后新加的任何 bundle 目录）。
+    //
+    // ⚠️ 绝不再退回 [store imageNamed:inBundle:scale:]。那个方法为了兜住 springboard 素材
+    // 会跨目录找「同名」素材（<主题>/Bundles/com.apple.springboard/ → <主题>/IconBundles/
+    // → 主题根）；而本站挂在 UIImage imageNamed:inBundle: 上，命中的是**整个 SpringBoard**
+    // 里所有按 bundle 取图的地方 —— 任何 App 请求自己叫 icon / Icon 的资源，都会被换成
+    // 主题里的同名素材。2026-11-06 实测（B41）：当前主题层第一个是「角标：透明玻璃」，
+    // 它的角标底板正好叫 IconBundles/icon.png（裸名 icon），于是没素材的 App
+    // （wiki.qaq.irisin 等）桌面图标被换成这张透明玻璃底板，用户看到「原本的图标没了」。
     UIImage *img = [store imageForAsset:base inBundle:bid];
-    if (!img) img = [store imageNamed:base inBundle:bid scale:3.0];
     if (img) TCXCountIconHit(bid);
     return img;
 }
