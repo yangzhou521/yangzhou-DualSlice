@@ -1,0 +1,12 @@
+/* AppIcon 面板中文文案 */
+"GENERAL" = "通用";
+"ENABLED" = "启用插件";
+"THEME_SECTION" = "主题";
+"SELECT_THEME" = "选择主题";
+"REFRESH_ICONS" = "刷新图标";
+"STYLE_SECTION" = "样式";
+"ICON_CORNER_MASK" = "图标圆角遮罩";
+"SHADOW_ENABLED" = "图标阴影";
+"BADGE_ENABLED" = "图标角标";
+"CLOCK_ENABLED" = "时钟动态图标";
+"CALENDAR_ENABLED" = "日历动态图标";

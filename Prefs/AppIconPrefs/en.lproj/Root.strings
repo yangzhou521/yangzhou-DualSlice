@@ -1,0 +1,12 @@
+/* AppIcon panel strings */
+"GENERAL" = "General";
+"ENABLED" = "Enabled";
+"THEME_SECTION" = "Theme";
+"SELECT_THEME" = "Select Theme";
+"REFRESH_ICONS" = "Refresh Icons";
+"STYLE_SECTION" = "Style";
+"ICON_CORNER_MASK" = "Round Icon Mask";
+"SHADOW_ENABLED" = "Icon Shadow";
+"BADGE_ENABLED" = "Icon Badge";
+"CLOCK_ENABLED" = "Live Clock Icon";
+"CALENDAR_ENABLED" = "Live Calendar Icon";
