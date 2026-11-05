@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release (countdownhud-v1.6.16)
+    name: Release (countdownhud-v1.6.17)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -133,10 +133,17 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          tag_name: countdownhud-v1.6.16
-          name: CountdownHUD v1.6.16
+          tag_name: countdownhud-v1.6.17
+          name: CountdownHUD v1.6.17
           body: |
             SpringBoard 侧自绘倒计时胶囊：注销 / 装包前的「N 秒后注销」提示。
+
+            v1.6.17：**长岛也用系统容器 125×37 + 字号下调**（用户 23:31「长岛和系统灵动岛大小
+            不一致 文字过大」）。1.6.16 还把长文案切到 145×47，但那个矩形在本机只是一只匿名
+            UIView —— 系统真正的容器 `SBSystemApertureContainerView` 在任何内容下都是
+            125×37（实测候选里三条系统容器全是 125,18,125,37），跟匿名 UIView 走就比系统岛
+            大一圈。现在长文案一律用 125×37，靠多行 + 缩字号放下；字号基准从高度 ÷ 3 降到
+            高度 ÷ 3.6（125×37 → 10.3pt），解决文字过大。
 
             v1.6.16：**胶囊正文不再截断**。1.6.15 的纯文案仍沿用单行时代的「留前 32 个字」，
             实测一条 32 字以上的通知在岛上结尾变成「…」，后半截直接丢了。现在胶囊正文完整显示
@@ -319,4 +326,4 @@ jobs:
         run: |
           set -euo pipefail
           DEB=$(ls release/*.deb | head -n 1)
-          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.16/$(basename "$DEB")"
+          echo "::notice title=deb-url::https://github.com/${{ github.repository }}/releases/download/countdownhud-v1.6.17/$(basename "$DEB")"

@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.16";
+static NSString *const CHVersion = @"1.6.17";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -341,14 +341,18 @@ static double CHPillScore(NSString *cls, CGRect r, BOOL inApertureWindow) {
     if ([cls rangeOfString:@"Label" options:NSCaseInsensitiveSearch].location != NSNotFound) {
         score -= 0.8;
     }
-    if (gWantLongIsland) {
-        // v1.6.12 长文字：偏好**展开态**标准矩形（145×47），离它越近分越高。
-        score -= (fabs(r.size.width - CHIslandExpandedWidth) +
-                  fabs(r.size.height - CHIslandExpandedHeight)) * 0.25;
-    } else {
-        // 短文字：偏好**紧凑态**标准矩形（125×37），离它越近分越高。
+    // v1.6.16（用户 23:31「长岛和系统灵动岛大小不一致 文字过大」）：**不再选 145×47**。
+    // 那个矩形在本机只是一只匿名 UIView，系统真正的容器 SBSystemApertureContainerView
+    // 在任何内容下都是 125×37（实测 CountdownHUDIslandCandidates 三条 A 前缀候选全是
+    // 125,18,125,37，唯独一只无名 UIView 是 115,17,145,47）。跟它=比系统岛大一圈。
+    // 现在长文案也用系统容器 125×37，靠多行 + 缩字号放下，尺寸与系统完全一致。
+    {
         score -= (fabs(r.size.width - CHIslandCompactWidth) +
                   fabs(r.size.height - CHIslandCompactHeight)) * 0.25;
+        if ([cls rangeOfString:@"SystemApertureContainer"
+                        options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            score += 2.0; // 系统真正的容器优先
+        }
     }
     return score;
 }
@@ -478,16 +482,13 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
         ? [NSString stringWithFormat:@"%@|lvl=%.0f", CHClassNameOf(bestWindow), bestWindow.windowLevel]
         : @"-";
 
-    // v1.6.12 吸附：量到的候选若落在系统两态之一附近（±16×±12），就**严格取标准矩形**
-    // —— 未展开 125×37、展开 145×47；横向永远居中，y 保持候选的中心（跟着
-    // VisibleIsland / DynamicX 的 yPos 走）。这样「未展开」「展开」的尺寸、上下左右位置
-    // 与原系统灵动岛完全一致，不再随候选的 ±1pt 抖动。
-    CGFloat wantW = gWantLongIsland ? CHIslandExpandedWidth : CHIslandCompactWidth;
-    CGFloat wantH = gWantLongIsland ? CHIslandExpandedHeight : CHIslandCompactHeight;
+    // v1.6.16（用户 23:31「长岛和系统灵动岛大小不一致」）：**一律吸附到系统容器 125×37**。
+    // 长短都同一档 —— 本机系统容器 SBSystemApertureContainerView 在任何内容下都是
+    // 125×37，那只 145×47 是匿名 UIView（不是系统的岛），跟着它就会比系统岛大一圈。
+    CGFloat wantW = CHIslandCompactWidth;
+    CGFloat wantH = CHIslandCompactHeight;
     if (fabs(bestRect.size.width - wantW) <= 16.0 && fabs(bestRect.size.height - wantH) <= 12.0) {
-        // v1.6.15：吸附后**直接复用系统岛候选的原点**（本机实测紧凑 125,18,125,37、
-        // 展开 115,17,145,47，都水平居中），这样尺寸、上下左右位置与系统岛逐点相同，
-        // 不再自己算居中/取中心，避免 ±1pt 的视觉错位。
+        // 吸附后**复用系统岛候选的原点**：尺寸、上下左右位置与系统岛逐点相同。
         CGFloat cx = CGRectGetMidX(bestRect);
         CGFloat cy = CGRectGetMidY(bestRect);
         bestRect.size.width = wantW;
@@ -606,9 +607,12 @@ static void CHHandlePillTap(void) {
 //   基准回到「高度 ÷ 3」（紧凑 125×37 → 12.3pt、展开 145×47 → 15.7pt），
 //   这就是贴着眼睛合适的尺寸；只有内容**真的放不下**才由 CHLayoutLabelContent
 //   逐级缩小（下限 CH_TEXT_MIN_FONT）。1.6.13 的「÷6 再砍半」= 7.8pt 已作废。
+// v1.6.16（用户 23:31「文字过大」）：基准从高度 ÷ 3 降到高度 ÷ 3.6。
+//   125×37 的容器：12.3pt → 10.3pt（一行能放下的短提示），多行再按下面的循环往下收。
+//   1.6.13 的「÷6 再砍半」= 6.2pt 又太小（用户 22:46 说过），所以取中间档。
 static CGFloat CHPreferredFontSize(CGFloat height) {
-    CGFloat size = height / 3.0;
-    size = MAX(CH_TEXT_MIN_FONT, MIN(size, 16.0));
+    CGFloat size = height / 3.6;
+    size = MAX(CH_TEXT_MIN_FONT, MIN(size, 14.0));
     return size;
 }
 
