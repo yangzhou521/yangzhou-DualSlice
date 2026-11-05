@@ -210,6 +210,11 @@ static id TCXThemeResult(id result, NSString *bundleID, CGFloat scale) {
     UIImage *themed = [store imageForBundleID:bundleID size:image.size scale:scale];
     if (!themed) return result;
 
+    // 日历同样要从这里过一遍：SpringBoard 的桌面出图走的是
+    // applicationIconImageForBundleIdentifier 这类 bundle id 站，与组 A 的 info 站是两条路，
+    // 漏了这条日历就只有底图、没有星期与日期。
+    themed = TCXCalendarOverlay(themed, bundleID, themed.size, scale);
+
     TCXCountIconHit(bundleID);
     return themed;
 }

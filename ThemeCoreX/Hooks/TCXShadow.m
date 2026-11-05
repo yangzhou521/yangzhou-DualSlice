@@ -4,57 +4,112 @@
 #import "TCXPrivate.h"
 #import "TCXPrefs.h"
 #import "TCXDiag.h"
+#import "TCXStore.h"
 
 // 图标阴影层。
 //
-// 做法：挂 SBIconImageView 的 layoutSubviews，在原实现跑完之后给自己的 layer 装
-// shadowPath（圆角矩形，半径与图标一致）+ 可配置的颜色/透明度/模糊/偏移。
+// 两条路，按主题有没有素材自动选：
+//   ① 主题给了阴影位图（<主题>/Bundles/AnemoneEffects|Iconomatic|Effects/*shadow*.png，
+//      见 TCXStore 的 shadowImage）→ 在图标视图最底层垫一个 UIImageView，Iconomatic 那套做法；
+//      位图自带外扩透明边距，按图标 bounds 铺满就是主题作者想要的效果。
+//   ② 主题没给 → 退回纯矢量阴影（shadowPath 圆角矩形 + 可配置颜色/透明度/模糊/偏移），
+//      零素材也有克制的立体感。
 //
-// 为什么不用「再加一个 CALayer 影子层」：
-//   多一层就多一次布局与合成，图标数量一多就掉帧；直接改本层阴影是零成本。
-//   代价是会与系统自带阴影叠加（系统那层很淡），所以参数默认走克制值，
-//   并且 ShadowEnabled 可以一键关掉做 A/B 对比。
+// 为什么不再无条件用 CALayer 阴影：Iconomatic 类主题的阴影是画好的 PNG（含底部渐变与边距），
+// 用矢量阴影盖上去会与主题作者的设计打架，看着脏。
 //
-// 与 ThemeCore 的关系：它操心的是 Iconomatic 位图阴影（主题包里的 shadow png）；
-// 我们这条是纯矢量阴影，不读素材也能出效果，两者可以同时存在。
+// 注意：签名（上次下发的参数）挂在**视图自己**身上，不能用全局变量 —— 桌面上图标尺寸各异，
+// 共用一个全局签名会让第二个图标误判「已经设过了」而跳过，也会让 A 的设置被 B 的判断顶掉。
 
-static void (*orig_layoutSubviews)(id, SEL);
+void TCXCountShadow(void);
+void TCXNoteSite(NSString *site);
 
-static NSString *sLastShadowSignature = nil;
+static const NSInteger kTCXShadowTag = 0x7C0F02;
+static char kTCXShadowSignatureKey;
+
+static UIImageView *TCXShadowSubview(UIView *view) {
+    for (UIView *sub in view.subviews) {
+        if (sub.tag == kTCXShadowTag) return (UIImageView *)sub;
+    }
+    return nil;
+}
+
+static void TCXClearVectorShadow(CALayer *layer) {
+    if (layer.shadowOpacity != 0.0f || layer.shadowPath != NULL) {
+        layer.shadowOpacity = 0.0f;
+        layer.shadowPath = NULL;
+    }
+}
 
 static void TCXApplyShadow(UIView *view) {
     if (!TCXPrefBool(@"Enabled", YES)) return;
-    if (!TCXPrefBool(@"ShadowEnabled", YES)) return;
 
     CALayer *layer = view.layer;
     CGRect bounds = view.bounds;
     if (bounds.size.width < 8.0 || bounds.size.height < 8.0) return;
+
+    NSString *previous = objc_getAssociatedObject(view, &kTCXShadowSignatureKey);
+
+    // 关掉时要有一次清理，否则关开关后旧阴影会一直挂在已经布局过的图标上。
+    if (!TCXPrefBool(@"ShadowEnabled", YES)) {
+        if (![previous isEqualToString:@"off"]) {
+            [TCXShadowSubview(view) removeFromSuperview];
+            TCXClearVectorShadow(layer);
+            objc_setAssociatedObject(view, &kTCXShadowSignatureKey, @"off",
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        return;
+    }
+
+    TCXStore *store = [TCXStore shared];
+    [store reloadIfNeeded];
+    UIImage *bitmap = store.shadowImage;
 
     CGFloat radius = TCXPrefDouble(@"ShadowRadius", 4.0);
     CGFloat opacity = TCXPrefDouble(@"ShadowOpacity", 0.24);
     CGFloat offsetY = TCXPrefDouble(@"ShadowOffsetY", 1.0);
     CGFloat corner = bounds.size.width * 0.2237f;
 
-    // 同一尺寸不重复下发（图标滚动时 layoutSubviews 会被狂调，每帧重设阴影很浪费）。
-    NSString *signature = [NSString stringWithFormat:@"%.0f|%.2f|%.2f|%.2f",
-                           bounds.size.width, radius, opacity, offsetY];
-    CGPathRef existing = layer.shadowPath;
-    if (existing && sLastShadowSignature && [sLastShadowSignature isEqualToString:signature]) {
-        return;
-    }
-    sLastShadowSignature = signature;
+    NSString *signature = [NSString stringWithFormat:@"%.1f|%.0f|%.2f|%.2f|%.2f|%@",
+                           bounds.size.width, bounds.size.height, radius, opacity, offsetY,
+                           bitmap ? (store.themeName ?: @"bitmap") : @"vector"];
+    if (previous && [previous isEqualToString:signature]) return;   // 滚动时 layoutSubviews 会被狂调
+    objc_setAssociatedObject(view, &kTCXShadowSignatureKey, signature,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-    layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:bounds
-                                                 cornerRadius:corner].CGPath;
-    layer.shadowColor = [UIColor blackColor].CGColor;
-    layer.shadowOpacity = (float)opacity;
-    layer.shadowRadius = radius;
-    layer.shadowOffset = CGSizeMake(0, offsetY);
-    // 图标视图本身不该裁掉阴影。
-    layer.masksToBounds = NO;
+    if (bitmap) {
+        // ① 位图阴影：垫在图标内容下面，主题 PNG 自己带边距与外扩。
+        UIImageView *shadowView = TCXShadowSubview(view);
+        if (![shadowView isKindOfClass:[UIImageView class]]) {
+            shadowView = [[UIImageView alloc] initWithFrame:bounds];
+            shadowView.tag = kTCXShadowTag;
+            shadowView.userInteractionEnabled = NO;
+            shadowView.contentMode = UIViewContentModeScaleToFill;
+            shadowView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [view insertSubview:shadowView atIndex:0];
+        }
+        shadowView.frame = bounds;
+        shadowView.image = bitmap;
+        // 两条路不能同时出现，否则主题位图下面又叠一层矢量暗角。
+        TCXClearVectorShadow(layer);
+        layer.masksToBounds = NO;
+    } else {
+        // ② 无素材：矢量阴影直接改本层，零额外图层。
+        [TCXShadowSubview(view) removeFromSuperview];
+        layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:bounds
+                                                      cornerRadius:corner].CGPath;
+        layer.shadowColor = [UIColor blackColor].CGColor;
+        layer.shadowOpacity = (float)opacity;
+        layer.shadowRadius = radius;
+        layer.shadowOffset = CGSizeMake(0, offsetY);
+        // 图标视图本身不该裁掉阴影。
+        layer.masksToBounds = NO;
+    }
 
     TCXCountShadow();
 }
+
+static void (*orig_layoutSubviews)(id, SEL);
 
 static void repl_layoutSubviews(id self, SEL _cmd) {
     if (orig_layoutSubviews) orig_layoutSubviews(self, _cmd);

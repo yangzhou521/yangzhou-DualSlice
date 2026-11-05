@@ -1,6 +1,7 @@
 #import "TCXStore.h"
 #import "TCXPaths.h"
 #import "TCXPrefs.h"
+#import <objc/runtime.h>
 
 // 主题库实现。素材根只有一个：<jbroot>/Library/Themes（TCXPaths.h 第三条铁律）。
 
