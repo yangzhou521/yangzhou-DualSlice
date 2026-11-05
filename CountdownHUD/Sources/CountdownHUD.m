@@ -67,7 +67,7 @@
 #include <sys/stat.h>
 extern char **environ;
 
-static NSString *const CHVersion = @"1.6.13";
+static NSString *const CHVersion = @"1.6.15";
 static NSString *const CHRequestPath = @"/var/mobile/Library/Preferences/.countdownhud-request";
 static NSString *const CHAnswerPath  = @"/var/mobile/Library/Preferences/.countdownhud-answer";
 // v1.6.1：这个文件存在时，弹窗点了「立即注销」只写答案、不真注销 —— 给测试与「只倒计时」场景用。
@@ -485,10 +485,15 @@ static BOOL CHMeasureIsland(CGRect *outRect) {
     CGFloat wantW = gWantLongIsland ? CHIslandExpandedWidth : CHIslandCompactWidth;
     CGFloat wantH = gWantLongIsland ? CHIslandExpandedHeight : CHIslandCompactHeight;
     if (fabs(bestRect.size.width - wantW) <= 16.0 && fabs(bestRect.size.height - wantH) <= 12.0) {
+        // v1.6.15：吸附后**直接复用系统岛候选的原点**（本机实测紧凑 125,18,125,37、
+        // 展开 115,17,145,47，都水平居中），这样尺寸、上下左右位置与系统岛逐点相同，
+        // 不再自己算居中/取中心，避免 ±1pt 的视觉错位。
+        CGFloat cx = CGRectGetMidX(bestRect);
+        CGFloat cy = CGRectGetMidY(bestRect);
         bestRect.size.width = wantW;
         bestRect.size.height = wantH;
-        bestRect.origin.x = round((gWindow.bounds.size.width - wantW) / 2.0);
-        bestRect.origin.y = round(CGRectGetMidY(bestRect) - wantH / 2.0);
+        bestRect.origin.x = round(cx - wantW / 2.0);
+        bestRect.origin.y = round(cy - wantH / 2.0);
     }
 
     NSString *cls = bestClass.length > 48 ? [bestClass substringToIndex:48] : bestClass;
@@ -592,20 +597,18 @@ static void CHHandlePillTap(void) {
 //      可用文字宽度＝岛宽 − 左右各 1ch；
 //   ⑤ 还是放不下只缩字号（下限 5.0pt），**绝不裁切、绝不溢出**。
 #define CH_TEXT_PAD_CHARS 1.0
-#define CH_TEXT_MIN_FONT 5.0
+// v1.6.14：下限由 5.0 提到 8.0 —— 用户 22:46「文字太小了」，缩到 5pt 已经完全看不清；
+// 宁可多占一行/略微贴边，也不把字压到读不出来。
+#define CH_TEXT_MIN_FONT 8.0
 #define CH_TEXT_MAX_LINES 6
 
+// v1.6.14（用户 2026-11-05 22:46「文字太小了」）：字号不再一刀切砍半。
+//   基准回到「高度 ÷ 3」（紧凑 125×37 → 12.3pt、展开 145×47 → 15.7pt），
+//   这就是贴着眼睛合适的尺寸；只有内容**真的放不下**才由 CHLayoutLabelContent
+//   逐级缩小（下限 CH_TEXT_MIN_FONT）。1.6.13 的「÷6 再砍半」= 7.8pt 已作废。
 static CGFloat CHPreferredFontSize(CGFloat height) {
-    // v1.1.1：原先取高度的一半（125×37 的岛＝18.5pt），用户嫌大；压到 2/3 → 高度 ÷ 3。
-    // v1.6.13（用户 2026-11-05「字号缩下到之前百分之五十」）：基准再缩到一半 → 高度 ÷ 6，
-    //   长岛 47 → 7.8pt、短岛 37 → 6.2pt。原 clamp（9~16）会把 6.2 顶回 9，故同步降为 4.5~8。
-    CGFloat size = height / 6.0;
-    size = MAX(4.5, MIN(size, 8.0));
-    // v1.6.10：要分两行的长文字再压到 **50%**（用户 21:47「字号缩为原来 50%」）——15.7 → 7.8。
-    // 短内容（倒计时、一两字提示）不受影响，其他元素一律不动。
-    if (gLabel.text.length > CH_LONG_TEXT_LENGTH) {
-        size = MAX(5.0, size * 0.5);
-    }
+    CGFloat size = height / 3.0;
+    size = MAX(CH_TEXT_MIN_FONT, MIN(size, 16.0));
     return size;
 }
 
@@ -844,13 +847,23 @@ static BOOL CHStartCountdown(NSUInteger seconds, NSString *label, BOOL plain, NS
     gLastSeconds = (unsigned long)seconds;
     gLabelText = [label copy];
     gPlainNotice = plain;
-    // v1.6.5：决定这次要短岛还是长岛 —— 短内容（倒计时/短文案）用短岛，
-    // 文字宽放不下短岛内宽（101pt）才用长岛。用系统当前字号量文字宽度。
+    // v1.6.15（用户 22:47「灵动岛大小没和系统灵动岛对齐」）：**默认跟系统紧凑态（125×37）**。
+    // 系统岛的展开态（145×47）只有在内容多到短岛确实装不下时才用 —— 1.6.12 起
+    // 「文字宽 > 101pt 就用展开态」，结果十几字的通知都撑成 145×47，比用户看到的系统岛
+    // 大一圈，看着就是没对齐。现在把门槛提到「按基准字号量，紧凑态一行放不下且
+    // 两行也塞不进 37pt 高」才升到展开态；其余一律 125×37。
     gWantLongIsland = NO;
-    UIFont *mfont = [UIFont systemFontOfSize:12.0];
-    CGFloat mw = [gLabelText sizeWithAttributes:@{NSFontAttributeName: mfont}].width;
-    if (mw > CHShortIslandInnerWidth) {
-        gWantLongIsland = YES;
+    {
+        UIFont *mfont = [UIFont monospacedDigitSystemFontOfSize:CHIslandCompactHeight / 3.0
+                                                         weight:UIFontWeightMedium];
+        CGFloat mch = CHCharWidth(mfont);
+        CGFloat mavail = CHIslandCompactWidth - 2.0 * mch;
+        CGFloat mheight = 0.0;
+        NSUInteger mlines = 0;
+        CHMeasureText(gLabelText, mfont, mavail, &mheight, &mlines);
+        if (mheight > CHIslandCompactHeight - 2.0) {
+            gWantLongIsland = YES; // 紧凑态两行也装不下 → 才用展开态
+        }
     }
     gAskMode = NO;   // v1.5.0：走胶囊就不是弹窗了（诊断串 mode= 要跟着变回来）
     gLinkSession = [link copy]; // v1.6.0：点胶囊跳到这个对话（空 = 不可点）
