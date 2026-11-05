@@ -91,6 +91,28 @@ od -c "$F" | awk '{for(i=2;i<=NF;i++){if($i ~ /^\\0/){if(s!=""){print s; s=""}el
 
 ---
 
+## 🔴 最后一版（正式版）收尾要求（2026-11-06 01:22 定，不许忘）
+
+用户原话：「最后一版本要全面检查架构上和 ThemeCore 是否一致！日志诊断在最后一个正式版本删掉，
+也删除多余没用的检测验证手段和代码文件和其它没用的构建等，最后要做到架构上干净整洁！」
+
+**发正式版之前，必须做完这四件事：**
+
+1. **全面对照 ThemeCore 架构**：逐项过一遍（构造函数 / 过滤器 / 依赖 / 挂站类与选择器 /
+   素材路径 / 配置键 / 通知），凡不一致的要么改成一致，要么写明「ThemeCore 无此功能，依据 X」。
+2. **删诊断**：`TCXDiag.h` 整套、`TCXWriteDiagnostics`、`diag.txt` 写入、诊断键、
+   以及各模块里的 `TCXNoteSite` / `TCXCountIconLook` / `TCXCountIconHit` /
+   `TCXCountBadgeLook` / `TCXCountShadow` 计数。
+3. **删调试/验证残留**：`TCXProbe*`、临时探针、只用来验证的字段（如 `bundles=` / `assets=`）、
+   `docs/breakpoints/` 里已完成的、`scripts/` 里一次性脚本、`.tmp/` 下解包残留。
+4. **删没用的构建**：`scripts/build-*.sh` 里已废弃插件的（themecoreplus / sileowallpaper /
+   dualslice 等）、对应 workflow、以及 Release 里不再维护的 tag。
+
+**标准**：正式版源码里不出现「诊断」「探针」「验证」「临时」这类字样的残留；
+构建脚本只留当前在做的插件。
+
+---
+
 ## 开工第 0 步（新对话 / 复活 / 换人，都先做）
 
 ```sh
