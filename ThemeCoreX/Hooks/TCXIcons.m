@@ -408,6 +408,14 @@ void TCXInstallIconHooks(void) {
         @"SBFolderIconImageSharedCache",
         @"SBHCalendarApplicationIcon",
         @"SBCalendarApplicationIcon",
+        // 日历/时钟在 iOS 16 走 ImageProvider，不经过 SBIcon 那几条，
+        // 漏了它日历主题图就不生效（ThemeCore 0.5.1 实测挂了这两个站）。
+        @"SBCalendarIconImageProvider",
+        // 书签 / 占位 / 同播共享这几类图也各自出图，ThemeCore 一并有站。
+        @"SBHBookmarkIcon",
+        @"SBPlaceholderIcon",
+        @"SBInCallPresentationScreenSharingIcon",
+        @"SBFolderIcon",
         @"SBWidgetIcon",
         @"SBHLibraryPodCategoryIcon",
         @"SBHLibraryAdditionalItemsIndicatorIcon",

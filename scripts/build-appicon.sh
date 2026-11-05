@@ -22,7 +22,7 @@ set -eu
 # ── 包身份：换版本时只改这里 ＋ ThemeCoreX/Sources/TCXVersion.h 的 TCX_VERSION ──
 PRODUCT=AppIcon
 PACKAGE_ID=com.yangzhou.appicon
-VERSION=0.0.6
+VERSION=0.0.7
 NAME=AppIcon
 AUTHOR=yangzhou
 DESCRIPTION="轻量化桌面图标主题插件，修改图标、图标角标及图标阴影如此轻松，覆盖绝大部分区域，时钟日历可动态图标。作者 yangzhou。"
@@ -241,7 +241,7 @@ Installed-Size: $INSTALLED_SIZE
 Maintainer: $AUTHOR
 Architecture: $ARCH_TAG
 Version: $VERSION
-Depends: mobilesubstrate (>= 0.9.5000), firmware (>= $MIN_IOS)
+Depends: mobilesubstrate (>= 0.9.5000), preferenceloader, firmware (>= $MIN_IOS)
 Pre-Depends: rootless-compat (>= 0.9)
 Description: $DESCRIPTION
 Name: $NAME
