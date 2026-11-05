@@ -388,6 +388,11 @@ void TCXInstallIconHooks(void) {
         @"ISImageDescriptor",
         // —— SpringBoard 图标对象（ThemeCore 有）——
         @"SBApplicationIcon",
+        // 这三个 ThemeCore 0.5.1 字符串表里没有，但 SnowBoard（成熟主题引擎）实测有，
+        // 是图标生图链的基础类；0.0.15 一刀删掉后文件夹内图标变成「打开才显示」，加回。
+        @"SBIcon",
+        @"SBLeafIcon",
+        @"SBFolderIcon",
         @"SBHIconImageCache",
         @"SBFolderIconImageCache",
         @"SBFolderIconImageSharedCache",

@@ -18,13 +18,15 @@ static UIImage *(*origNamedInBundleConfig)(id, SEL, NSString *, NSBundle *, id);
 static UIImage *TCXBundleLookup(NSString *name, NSBundle *bundle) {
     if (![name isKindOfClass:[NSString class]] || !name.length) return nil;
     NSString *bid = bundle.bundleIdentifier;
-    if (!bid.length || [bid isEqualToString:@"com.apple.springboard"]) return nil; // 桌面资源走专用站
+    if (!bid.length) return nil;
     if (!TCXPrefBool(@"Enabled", YES)) return nil;
     TCXStore *store = [TCXStore shared];
     [store reloadIfNeeded];
-    if (!store.themePath) return nil;
     NSString *base = [name stringByDeletingPathExtension];
-    UIImage *img = [store imageNamed:base inBundle:bid scale:3.0];
+    // 通用索引：Bundles/<bid>/ 下所有素材一律生效（含 com.apple.springboard 的
+    // 时钟/文件夹素材，以及用户以后新加的任何 bundle 目录）。
+    UIImage *img = [store imageForAsset:base inBundle:bid];
+    if (!img) img = [store imageNamed:base inBundle:bid scale:3.0];
     if (img) TCXCountIconHit(bid);
     return img;
 }

@@ -8,6 +8,10 @@
 @interface TCXStore () {
     NSMutableDictionary<NSString *, NSString *> *_iconPathCache;
     NSCache<NSString *, UIImage *> *_imageCache;
+    // 通用 Bundles 索引：bid -> @{ 资源基名(小写) -> 完整路径 }。
+    // reload 时把每层主题 Bundles/<bid>/ 下的**所有文件**整个扫进来，
+    // 与素材名无关 —— 用户以后往 Bundles 里新加任何素材，reload 一次就自动生效。
+    NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSString *> *> *_bundleAssets;
     NSString *_themeName;
     NSString *_themePath;
     NSArray<NSString *> *_themePaths;
@@ -33,6 +37,7 @@
         _iconPathCache = [NSMutableDictionary dictionary];
         _imageCache = [[NSCache alloc] init];
         _imageCache.countLimit = 320;
+        _bundleAssets = [NSMutableDictionary dictionary];
         _generation = 1;
         [self reload];
     }
@@ -97,6 +102,45 @@ static NSUInteger TCXCountIconsCached(NSString *themePath) {
     return n;
 }
 
+// 把一层主题 Bundles/<bid>/ 下的**所有素材**登记进索引。
+// 不挑名字、不挑目录 —— 控制中心模块、系统设置、springboard、AnemoneEffects、
+// 以及用户以后新建的任何 bundle 目录，全都自动收进来。
+// 键用「资源基名小写」（去掉 @2x/@3x/-large/~iphone/.png 等后缀），
+// 这样系统传来的 name 无论带不带后缀都能命中。
+static NSString *TCXAssetKey(NSString *fileName) {
+    NSString *base = [fileName stringByDeletingPathExtension];
+    for (NSString *suffix in @[@"@3x~iphone", @"@2x~iphone", @"@3x~ipad", @"@2x~ipad",
+                               @"@3x", @"@2x", @"~iphone", @"~ipad", @"-large"]) {
+        if ([base hasSuffix:suffix]) { base = [base substringToIndex:base.length - suffix.length]; break; }
+    }
+    return base.lowercaseString;
+}
+
+static void TCXIndexBundlesForLayer(NSString *layer,
+                                    NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSString *> *> *out) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *bundles = [layer stringByAppendingPathComponent:@"Bundles"];
+    NSArray<NSString *> *bids = [fm contentsOfDirectoryAtPath:bundles error:NULL] ?: @[];
+    for (NSString *bid in bids) {
+        if ([bid hasPrefix:@"."] || [bid isEqualToString:@"IconBundles"]) continue;
+        NSString *dir = [bundles stringByAppendingPathComponent:bid];
+        BOOL isDir = NO;
+        if (![fm fileExistsAtPath:dir isDirectory:&isDir] || !isDir) continue;
+        NSDirectoryEnumerator *en = [fm enumeratorAtPath:dir];
+        NSMutableDictionary<NSString *, NSString *> *table = out[bid];
+        if (!table) { table = [NSMutableDictionary dictionary]; out[bid] = table; }
+        for (NSString *rel in en) {
+            NSString *ext = rel.pathExtension.lowercaseString;
+            if (![ext isEqualToString:@"png"] && ![ext isEqualToString:@"jpg"] &&
+                ![ext isEqualToString:@"jpeg"]) continue;
+            NSString *key = TCXAssetKey(rel.lastPathComponent);
+            if (!key.length) continue;
+            // 叠加层：先扫到的层优先（reload 按顺序调用本函数），不要被后面的层覆盖。
+            if (!table[key]) table[key] = [dir stringByAppendingPathComponent:rel];
+        }
+    }
+}
+
 - (void)reload {
     _themeName = nil;
     _themePath = nil;
@@ -107,6 +151,7 @@ static NSUInteger TCXCountIconsCached(NSString *themePath) {
     _iconCount = 0;
     [_iconPathCache removeAllObjects];
     [_imageCache removeAllObjects];
+    [_bundleAssets removeAllObjects];
 
     NSString *wanted = TCXPrefString(@"ActiveTheme");
     _lastPreference = wanted ?: @"";
@@ -172,6 +217,9 @@ static NSUInteger TCXCountIconsCached(NSString *themePath) {
             if (![path isEqualToString:picked]) [layers addObject:path];
         }
         _themePaths = layers;
+        // 按叠加层顺序扫 Bundles —— 先扫到的层优先，逐层补齐。
+        // 这样 Bundles 里现在有的、以后新加的素材，reload 一次就全部登记，不用改代码。
+        for (NSString *layer in layers) TCXIndexBundlesForLayer(layer, _bundleAssets);
     } else {
         _themePaths = @[];
     }
@@ -414,7 +462,35 @@ static NSArray<NSString *> *TCXResourceFileNames(NSString *name, CGFloat scale) 
     return found;
 }
 
+// 通用 Bundles 素材入口：不依赖素材名，直接查 reload 时扫好的索引。
+// 任何 imageNamed:inBundle: 来问，只要这个 bid 的目录里有对应基名的图就返回。
+- (UIImage *)imageForAsset:(NSString *)name inBundle:(NSString *)bundleID {
+    if (name.length == 0 || bundleID.length == 0) return nil;
+    NSDictionary<NSString *, NSString *> *table = _bundleAssets[bundleID];
+    if (!table) return nil;
+    NSString *path = table[TCXAssetKey(name)];
+    if (!path) return nil;
+
+    NSString *key = [NSString stringWithFormat:@"res-idx|%@|%lu", path, (unsigned long)_generation];
+    UIImage *cached = [_imageCache objectForKey:key];
+    if (cached) return cached;
+    UIImage *image = TCXImageFromFile(path);
+    if (image) [_imageCache setObject:image forKey:key];
+    return image;
+}
+
+- (NSUInteger)indexedBundleCount { return _bundleAssets.count; }
+- (NSUInteger)indexedAssetCount {
+    NSUInteger n = 0;
+    for (NSDictionary *table in _bundleAssets.allValues) n += table.count;
+    return n;
+}
+
 - (UIImage *)imageNamed:(NSString *)name inBundle:(NSString *)bundleID scale:(CGFloat)scale {
+    // 先走通用索引（覆盖 Bundles 下所有素材，含用户以后新加的）；
+    // 索引没命中再退回按名字拼路径的旧规则。
+    UIImage *indexed = [self imageForAsset:name inBundle:bundleID];
+    if (indexed) return indexed;
     NSString *path = [self resourcePathForName:name bundleID:bundleID scale:scale];
     if (!path) return nil;
 

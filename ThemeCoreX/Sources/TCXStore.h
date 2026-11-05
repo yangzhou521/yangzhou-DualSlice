@@ -47,6 +47,13 @@
 // 主题里的某一 bundle 目录下的资源。
 - (UIImage *)imageNamed:(NSString *)name inBundle:(NSString *)bundleID scale:(CGFloat)scale;
 
+// 通用 Bundles 素材入口：查 reload 时扫好的索引，覆盖 Bundles/<bid>/ 下所有素材
+// （含用户以后新加的），不依赖具体素材名。
+- (UIImage *)imageForAsset:(NSString *)name inBundle:(NSString *)bundleID;
+// 索引里已登记的 bundle 数 / 素材数（诊断用）。
+- (NSUInteger)indexedBundleCount;
+- (NSUInteger)indexedAssetCount;
+
 // 阴影素材（AnemoneEffects / Iconomatic / Effects 里名字含 Shadow 的那张）。
 - (UIImage *)shadowImage;
 

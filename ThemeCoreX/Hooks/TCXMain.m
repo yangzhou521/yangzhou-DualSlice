@@ -65,11 +65,13 @@ void TCXWriteDiagnostics(BOOL force) {
                    : [@(pn ?: "?") isEqualToString:@"iconservicesagent"] ? @"iconservice"
                    : @"other";
     NSString *text = [NSString stringWithFormat:
-        @"v=%s;proc=%@;role=%@;hooked=%lu;sites=%@;theme=%@;layers=%lu;icon=%lu;hit=%lu;bdg=%lu;shd=%lu;last=%@;err=%@",
+        @"v=%s;proc=%@;role=%@;hooked=%lu;sites=%@;theme=%@;layers=%lu;bundles=%lu;assets=%lu;icon=%lu;hit=%lu;bdg=%lu;shd=%lu;last=%@;err=%@",
         TCX_VERSION, @(pn ?: "?"), role,
         (unsigned long)sSites.count, TCXSiteList(),
         store.themeName ?: @"none",
         (unsigned long)[store layerCount],
+        (unsigned long)[store indexedBundleCount],
+        (unsigned long)[store indexedAssetCount],
         (unsigned long)sIconLook, (unsigned long)sIconHit,
         (unsigned long)sBadgeLook, (unsigned long)sShadowApplied,
         sLastBundle ?: @"-", sLastError ?: @"-"];
@@ -110,5 +112,9 @@ __attribute__((constructor)) static void TCXInitialize(void) {
         } @catch (NSException *exception) {
             TCXRecordError([NSString stringWithFormat:@"%@:%@", exception.name, exception.reason]);
         }
+
+        // 诊断是我们自己的取证设施（ThemeCore 没有诊断，但删了就没法验证），
+        // 挂完站写一次，文件 IO 只此一次，不在启动关键路径之前。
+        TCXWriteDiagnostics(YES);
     }
 }
